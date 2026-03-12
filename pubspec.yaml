@@ -1,0 +1,42 @@
+name: restaurant_customer
+description: "Restaurant Customer App"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.6.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dio: ^5.4.0
+  flutter_dotenv: ^6.0.0
+  http: ^1.3.0
+
+  supabase_flutter: ^2.5.6
+  mapbox_maps_flutter: ^2.4.1
+  cupertino_icons: ^1.0.8
+  shared_preferences: ^2.2.2
+  geolocator: ^10.1.0
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
+  url_launcher: ^6.2.6
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - .env
+
+  # ✅ Fonts only (NO assets section)
+  fonts:
+    - family: Cairo
+      fonts:
+        - asset: assets/fonts/Cairo-Regular.ttf
+
