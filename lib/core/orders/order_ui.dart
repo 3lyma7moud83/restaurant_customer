@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'order_status_utils.dart';
@@ -65,7 +66,7 @@ class OrderStatusBadge extends StatelessWidget {
   }
 }
 
-class OrderSectionCard extends StatelessWidget {
+class OrderSectionCard extends StatefulWidget {
   const OrderSectionCard({
     super.key,
     required this.child,
@@ -76,22 +77,49 @@ class OrderSectionCard extends StatelessWidget {
   final EdgeInsets padding;
 
   @override
+  State<OrderSectionCard> createState() => _OrderSectionCardState();
+}
+
+class _OrderSectionCardState extends State<OrderSectionCard> {
+  bool _hovered = false;
+
+  void _setHovered(bool value) {
+    if (!mounted || _hovered == value) {
+      return;
+    }
+    setState(() => _hovered = value);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: padding,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: AppTheme.border.withValues(alpha: 0.75)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x10000000),
-            blurRadius: 22,
-            offset: Offset(0, 12),
+    final animationDuration =
+        kIsWeb ? Duration.zero : AppTheme.sectionTransitionDuration;
+    final shadowColor =
+        _hovered ? const Color(0x18000000) : const Color(0x10000000);
+
+    return MouseRegion(
+      onEnter: (_) => _setHovered(true),
+      onExit: (_) => _setHovered(false),
+      child: AnimatedContainer(
+        duration: animationDuration,
+        curve: AppTheme.emphasizedCurve,
+        padding: widget.padding,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(
+            color: AppTheme.border.withValues(alpha: _hovered ? 0.95 : 0.75),
           ),
-        ],
+          boxShadow: [
+            BoxShadow(
+              color: shadowColor,
+              blurRadius: _hovered ? 28 : 22,
+              offset: Offset(0, _hovered ? 16 : 12),
+            ),
+          ],
+        ),
+        child: widget.child,
       ),
-      child: child,
     );
   }
 }
@@ -101,7 +129,7 @@ class ScaleOnTap extends StatefulWidget {
     super.key,
     required this.child,
     this.onTap,
-    this.scale = 0.98,
+    this.scale = 0.97,
   });
 
   final Widget child;
@@ -124,17 +152,28 @@ class _ScaleOnTapState extends State<ScaleOnTap> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (_) => _setPressed(true),
-      onTapUp: (_) => _setPressed(false),
-      onTapCancel: () => _setPressed(false),
-      onTap: widget.onTap,
-      child: AnimatedScale(
-        scale: _pressed ? widget.scale : 1,
-        duration: const Duration(milliseconds: 120),
-        curve: Curves.easeOut,
-        child: widget.child,
+    final animationDuration =
+        kIsWeb ? Duration.zero : AppTheme.microInteractionDuration;
+    return MouseRegion(
+      cursor:
+          widget.onTap == null ? MouseCursor.defer : SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTapDown: widget.onTap == null ? null : (_) => _setPressed(true),
+        onTapUp: widget.onTap == null ? null : (_) => _setPressed(false),
+        onTapCancel: widget.onTap == null ? null : () => _setPressed(false),
+        onTap: widget.onTap,
+        child: AnimatedScale(
+          scale: _pressed ? widget.scale : 1,
+          duration: animationDuration,
+          curve: AppTheme.emphasizedCurve,
+          child: AnimatedOpacity(
+            opacity: _pressed ? 0.94 : 1,
+            duration: animationDuration,
+            curve: AppTheme.emphasizedCurve,
+            child: widget.child,
+          ),
+        ),
       ),
     );
   }

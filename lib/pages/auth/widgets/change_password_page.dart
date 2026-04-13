@@ -14,6 +14,12 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
   final passCtrl = TextEditingController();
   bool loading = false;
 
+  @override
+  void dispose() {
+    passCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _change() async {
     if (passCtrl.text.length < 6) {
       _toast('كلمة السر ضعيفة');
@@ -54,10 +60,12 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
 
   @override
   Widget build(BuildContext context) {
+    final viewInsets = MediaQuery.of(context).viewInsets.bottom;
+
     return Scaffold(
       appBar: AppBar(title: const Text('تغيير كلمة السر')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
+      body: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + viewInsets),
         child: Column(
           children: [
             TextField(
@@ -66,11 +74,21 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
               decoration: const InputDecoration(hintText: 'كلمة السر الجديدة'),
             ),
             const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: loading ? null : _change,
-              child: loading
-                  ? const CircularProgressIndicator()
-                  : const Text('تغيير'),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: loading ? null : _change,
+                child: loading
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text('تغيير'),
+              ),
             ),
           ],
         ),

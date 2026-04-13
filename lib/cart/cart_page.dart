@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -27,8 +28,7 @@ class CartPage extends StatefulWidget {
   State<CartPage> createState() => _CartPageState();
 }
 
-class _CartPageState extends State<CartPage>
-    with SingleTickerProviderStateMixin {
+class _CartPageState extends State<CartPage> {
   final supabase = Supabase.instance.client;
   final ProfileService _profileService = ProfileService();
   final nameCtrl = TextEditingController();
@@ -36,8 +36,7 @@ class _CartPageState extends State<CartPage>
   final addressCtrl = TextEditingController();
   final houseNumberCtrl = TextEditingController();
 
-  late final AnimationController _anim;
-  late final Animation<double> _fade;
+  bool _contentVisible = kIsWeb;
 
   bool loadingProfile = true;
   bool creatingOrder = false;
@@ -49,11 +48,6 @@ class _CartPageState extends State<CartPage>
   @override
   void initState() {
     super.initState();
-    _anim = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 280),
-    );
-    _fade = CurvedAnimation(parent: _anim, curve: Curves.easeOutCubic);
     addressCtrl.addListener(_handleAddressChanged);
     houseNumberCtrl.addListener(_handleHouseNumberChanged);
     unawaited(_loadProfile());
@@ -84,7 +78,6 @@ class _CartPageState extends State<CartPage>
 
   @override
   void dispose() {
-    _anim.dispose();
     nameCtrl.dispose();
     phoneCtrl.dispose();
     addressCtrl.dispose();
@@ -107,8 +100,10 @@ class _CartPageState extends State<CartPage>
       }
     } finally {
       if (mounted) {
-        setState(() => loadingProfile = false);
-        _anim.forward();
+        setState(() {
+          loadingProfile = false;
+          _contentVisible = true;
+        });
       }
     }
   }
@@ -199,8 +194,11 @@ class _CartPageState extends State<CartPage>
 
     final lat = (result['lat'] as num?)?.toDouble();
     final lng = (result['lng'] as num?)?.toDouble();
-    final fullAddress = (result['fullAddress'] ?? '').toString().trim();
-    final houseNumber = (result['houseNumber'] ?? '').toString().trim();
+    final fullAddress =
+        (result['address'] ?? result['fullAddress'] ?? '').toString().trim();
+    final houseNumber = (result['house_number'] ?? result['houseNumber'] ?? '')
+        .toString()
+        .trim();
     final customerName = (result['customerName'] ?? '').toString().trim();
     final customerPhone = (result['customerPhone'] ?? '').toString().trim();
 
@@ -342,7 +340,7 @@ class _CartPageState extends State<CartPage>
 
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(
+        AppTheme.platformPageRoute(
           builder: (_) => OrderDetailsPage(orderId: orderId),
         ),
       );
@@ -411,7 +409,7 @@ class _CartPageState extends State<CartPage>
     final status =
         order == null ? null : resolveOrderStatus(order['status']?.toString());
 
-    final route = MaterialPageRoute<void>(
+    final route = AppTheme.platformPageRoute<void>(
       builder: (_) => status != null && status.canTrack
           ? OrderTrackingPage(orderId: orderId)
           : OrderDetailsPage(orderId: orderId),
@@ -454,11 +452,17 @@ class _CartPageState extends State<CartPage>
       appBar: AppBar(title: const Text('السلة')),
       body: loadingProfile
           ? const Center(child: CircularProgressIndicator())
-          : FadeTransition(
-              opacity: _fade,
+          : AnimatedOpacity(
+              opacity: _contentVisible ? 1 : 0,
+              duration:
+                  kIsWeb ? Duration.zero : const Duration(milliseconds: 240),
+              curve: Curves.easeOutCubic,
               child: cart.items.isEmpty && !cart.isLocked
                   ? const _CartEmptyState()
                   : ListView(
+                      physics: AppTheme.bouncingScrollPhysics,
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                       children: [
                         if (cart.isLocked) ...[
@@ -716,14 +720,19 @@ class _SectionCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              if (trailing != null) trailing!,
-              if (trailing != null) const Spacer(),
-              Text(
-                title,
-                style: const TextStyle(
-                  color: AppTheme.text,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
+              if (trailing != null) Flexible(child: trailing!),
+              if (trailing != null) const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  title,
+                  textAlign: TextAlign.right,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppTheme.text,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ],
@@ -1012,7 +1021,7 @@ class _CustomerInfoSheetState extends State<_CustomerInfoSheet> {
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeOutCubic,
       padding: EdgeInsets.only(bottom: viewInsets.bottom),
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1054,9 +1063,12 @@ class _CustomerInfoSheetState extends State<_CustomerInfoSheet> {
               ),
             ),
             const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _submit,
-              child: const Text('حفظ ومتابعة الطلب'),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _submit,
+                child: const Text('حفظ ومتابعة الطلب'),
+              ),
             ),
           ],
         ),

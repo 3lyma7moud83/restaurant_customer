@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../core/theme/app_theme.dart';
 import '../pages/auth/login_page.dart';
 
 class SessionExpiredException implements Exception {
@@ -38,21 +39,11 @@ class SessionManager {
     _hadAuthenticatedSession = _client.auth.currentSession != null;
 
     _authSubscription = _client.auth.onAuthStateChange.listen((data) {
-      final event = data.event;
       final session = data.session;
-
       if (session != null) {
         _hadAuthenticatedSession = true;
       }
-
-      if (event == AuthChangeEvent.signedOut) {
-        if (_hadAuthenticatedSession) {
-          unawaited(redirectToLogin());
-        }
-      }
     });
-
-    await ensureValidSession();
   }
 
   Future<void> dispose() async {
@@ -78,9 +69,10 @@ class SessionManager {
       return session;
     }
 
-    return _refreshSessionOrRedirect(
+    final refreshed = await _refreshSessionOrRedirect(
       requireSession: requireSession,
     );
+    return refreshed ?? _client.auth.currentSession;
   }
 
   Future<T?> runWithValidSession<T>(
@@ -137,7 +129,7 @@ class SessionManager {
 
       navigator
           .pushAndRemoveUntil(
-            MaterialPageRoute<void>(
+            AppTheme.platformPageRoute<void>(
               builder: (_) => const LoginPage(),
             ),
             (_) => false,
@@ -175,9 +167,11 @@ class SessionManager {
   Future<Session?> _performRefresh({
     required bool requireSession,
   }) async {
+    final sessionBeforeRefresh = _client.auth.currentSession;
+
     try {
       final response = await _client.auth.refreshSession();
-      final session = response.session;
+      final session = response.session ?? _client.auth.currentSession;
 
       if (session == null) {
         await _handleInvalidSession(
@@ -188,7 +182,10 @@ class SessionManager {
 
       _hadAuthenticatedSession = true;
       return session;
-    } on AuthException catch (_) {
+    } on AuthException catch (error) {
+      if (_isTransientAuthError(error.message)) {
+        return sessionBeforeRefresh;
+      }
       await _handleInvalidSession(
         redirectToLoginPage: requireSession || _hadAuthenticatedSession,
       );
@@ -208,9 +205,7 @@ class SessionManager {
   Future<void> _handleInvalidSession({
     required bool redirectToLoginPage,
   }) async {
-    try {
-      await _client.auth.signOut();
-    } catch (_) {}
+    _hadAuthenticatedSession = false;
 
     if (redirectToLoginPage) {
       await redirectToLogin();
@@ -238,6 +233,22 @@ class SessionManager {
         normalized.contains('session expired') ||
         normalized.contains('refresh token') ||
         normalized.contains('invalid jwt');
+  }
+
+  bool _isTransientAuthError(String message) {
+    final normalized = message.toLowerCase();
+    return normalized.contains('network') ||
+        normalized.contains('socket') ||
+        normalized.contains('timed out') ||
+        normalized.contains('timeout') ||
+        normalized.contains('failed host lookup') ||
+        normalized.contains('connection') ||
+        normalized.contains('fetch') ||
+        normalized.contains('temporarily unavailable') ||
+        normalized.contains('try again later') ||
+        normalized.contains('status code 429') ||
+        normalized.contains('status code 500') ||
+        normalized.contains('status code 503');
   }
 }
 

@@ -5,6 +5,8 @@ import 'session_manager.dart';
 
 class ItemsService {
   static final _client = Supabase.instance.client;
+  static const Duration _cacheTtl = Duration(minutes: 5);
+  static final Map<String, _ItemsCacheEntry> _itemsCache = {};
 
   static void _ensureManager() {
     final role = _client.auth.currentUser?.userMetadata?['role'];
@@ -15,13 +17,20 @@ class ItemsService {
 
   static Future<List<Map<String, dynamic>>> fetchByCategory({
     required String categoryId,
+    bool forceRefresh = false,
   }) async {
     try {
+      final cacheKey = categoryId.trim();
+      final cached = forceRefresh ? null : _itemsCache[cacheKey];
+      if (cached != null && !cached.isExpired) {
+        return cached.value;
+      }
+
       final res =
           await SessionManager.instance.runWithValidSession<List<dynamic>>(
         () => _client
             .from('items')
-            .select()
+            .select('id, name, price, image_url')
             .eq('category_id', categoryId)
             .order('created_at', ascending: false),
       );
@@ -29,7 +38,15 @@ class ItemsService {
         return const [];
       }
 
-      return List<Map<String, dynamic>>.from(res);
+      final items = res
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList(growable: false);
+      _itemsCache[cacheKey] = _ItemsCacheEntry(
+        value: items,
+        cachedAt: DateTime.now(),
+      );
+      return items;
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'items_service.fetchByCategory',
@@ -69,6 +86,7 @@ class ItemsService {
       throw const SessionExpiredException();
     }
 
+    _itemsCache.remove(categoryId.trim());
     return res;
   }
 
@@ -91,6 +109,8 @@ class ItemsService {
     if (updated != true) {
       throw const SessionExpiredException();
     }
+
+    _itemsCache.clear();
   }
 
   static Future<void> updateItemImageUrl({
@@ -110,6 +130,8 @@ class ItemsService {
     if (updated != true) {
       throw const SessionExpiredException();
     }
+
+    _itemsCache.clear();
   }
 
   static Future<void> deleteItem({
@@ -126,5 +148,20 @@ class ItemsService {
     if (deleted != true) {
       throw const SessionExpiredException();
     }
+
+    _itemsCache.clear();
   }
+}
+
+class _ItemsCacheEntry {
+  const _ItemsCacheEntry({
+    required this.value,
+    required this.cachedAt,
+  });
+
+  final List<Map<String, dynamic>> value;
+  final DateTime cachedAt;
+
+  bool get isExpired =>
+      DateTime.now().difference(cachedAt) > ItemsService._cacheTtl;
 }

@@ -26,6 +26,9 @@ class _OrdersPageState extends State<OrdersPage> {
   final _supabase = Supabase.instance.client;
 
   late final RealtimeChannelController _ordersChannelController;
+  Timer? _ordersRealtimeDebounce;
+  final Set<String> _pendingRealtimeOrderIds = <String>{};
+  bool _needsRealtimeFullRefresh = false;
 
   bool _loading = true;
   String? _userId;
@@ -41,7 +44,7 @@ class _OrdersPageState extends State<OrdersPage> {
       topicPrefix: 'customer-orders-page-${identityHashCode(this)}',
       onSubscribed: (didReconnect) async {
         if (didReconnect) {
-          await _loadOrders();
+          await _loadOrders(forceRefresh: true);
         }
       },
     );
@@ -51,6 +54,7 @@ class _OrdersPageState extends State<OrdersPage> {
 
   @override
   void dispose() {
+    _ordersRealtimeDebounce?.cancel();
     unawaited(_ordersChannelController.dispose());
     super.dispose();
   }
@@ -69,7 +73,10 @@ class _OrdersPageState extends State<OrdersPage> {
     _listenToOrders();
   }
 
-  Future<void> _loadOrders({bool showLoader = false}) async {
+  Future<void> _loadOrders({
+    bool showLoader = false,
+    bool forceRefresh = false,
+  }) async {
     final userId = _userId;
     if (showLoader && mounted) {
       setState(() {
@@ -90,7 +97,10 @@ class _OrdersPageState extends State<OrdersPage> {
     }
 
     try {
-      final result = await OrdersService.getCustomerOrders(userId);
+      final result = await OrdersService.getCustomerOrders(
+        userId,
+        forceRefresh: forceRefresh,
+      );
       if (!mounted) {
         return;
       }
@@ -133,7 +143,7 @@ class _OrdersPageState extends State<OrdersPage> {
             table: 'orders',
             filter: PostgresChangeFilter(
               type: PostgresChangeFilterType.eq,
-              column: 'user_id',
+              column: 'customer_id',
               value: userId,
             ),
             callback: _handleOrdersChange,
@@ -148,25 +158,71 @@ class _OrdersPageState extends State<OrdersPage> {
         if (orderId == null || orderId.isEmpty) {
           return;
         }
-        _removeOrder(orderId);
+        _pendingRealtimeOrderIds.add(orderId);
+        _needsRealtimeFullRefresh = true;
         break;
       case PostgresChangeEvent.insert:
+        _needsRealtimeFullRefresh = true;
+        final orderId = payload.newRecord['id']?.toString();
+        if (orderId == null || orderId.isEmpty) {
+          return;
+        }
+        _pendingRealtimeOrderIds.add(orderId);
+        break;
       case PostgresChangeEvent.update:
         final orderId = payload.newRecord['id']?.toString();
         if (orderId == null || orderId.isEmpty) {
           return;
         }
-        unawaited(_refreshOrder(orderId));
+        _pendingRealtimeOrderIds.add(orderId);
         break;
       case PostgresChangeEvent.all:
         break;
     }
+
+    _scheduleRealtimeRefresh();
+  }
+
+  void _scheduleRealtimeRefresh() {
+    _ordersRealtimeDebounce?.cancel();
+    _ordersRealtimeDebounce = Timer(
+      const Duration(milliseconds: 250),
+      () {
+        if (!mounted) {
+          return;
+        }
+
+        final pendingIds = Set<String>.from(_pendingRealtimeOrderIds);
+        final needsFullRefresh =
+            _needsRealtimeFullRefresh || pendingIds.length != 1;
+
+        _pendingRealtimeOrderIds.clear();
+        _needsRealtimeFullRefresh = false;
+
+        if (needsFullRefresh || pendingIds.isEmpty) {
+          unawaited(_loadOrders(forceRefresh: true));
+          return;
+        }
+
+        final orderId = pendingIds.first;
+        final existsInList = _orders.any(
+          (order) => OrdersService.idOf(order) == orderId,
+        );
+        if (!existsInList) {
+          unawaited(_loadOrders(forceRefresh: true));
+          return;
+        }
+
+        unawaited(_refreshOrder(orderId));
+      },
+    );
   }
 
   Future<void> _refreshOrder(String orderId) async {
     final row = await OrdersService.getOrderById(
       orderId,
       userId: _userId,
+      forceRefresh: true,
     );
     if (!mounted) {
       return;
@@ -286,7 +342,7 @@ class _OrdersPageState extends State<OrdersPage> {
     }
 
     final status = OrdersService.statusStageOf(order);
-    final route = MaterialPageRoute<void>(
+    final route = AppTheme.platformPageRoute<void>(
       builder: (_) => status == OrderStatusStage.accepted ||
               status == OrderStatusStage.onTheWay
           ? OrderTrackingPage(orderId: orderId)
@@ -324,7 +380,8 @@ class _OrdersPageState extends State<OrdersPage> {
                     ? _OrdersErrorState(
                         key: const ValueKey('error'),
                         message: _errorMessage!,
-                        onRetry: () => _loadOrders(showLoader: true),
+                        onRetry: () =>
+                            _loadOrders(showLoader: true, forceRefresh: true),
                       )
                     : _OrdersEmptyState(
                         key: const ValueKey('empty'),
@@ -332,8 +389,10 @@ class _OrdersPageState extends State<OrdersPage> {
                       )
                 : RefreshIndicator(
                     key: const ValueKey('list'),
-                    onRefresh: _loadOrders,
+                    onRefresh: () => _loadOrders(forceRefresh: true),
                     child: ListView.builder(
+                      physics: AppTheme.bouncingScrollPhysics,
+                      cacheExtent: 640,
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                       itemCount: _orders.length,
                       itemBuilder: (context, index) {
@@ -360,9 +419,11 @@ class _OrdersPageState extends State<OrdersPage> {
                           },
                           child: Padding(
                             padding: const EdgeInsets.only(bottom: 14),
-                            child: _OrderCard(
-                              order: order,
-                              onTap: () => _openOrder(order),
+                            child: RepaintBoundary(
+                              child: _OrderCard(
+                                order: order,
+                                onTap: () => _openOrder(order),
+                              ),
                             ),
                           ),
                         );
@@ -502,16 +563,23 @@ class _InfoRow extends StatelessWidget {
       children: [
         Icon(icon, size: 18, color: const Color(0xFF667085)),
         const SizedBox(width: 8),
-        Text(
-          '$label: ',
-          style: const TextStyle(
-            color: Color(0xFF667085),
-            fontWeight: FontWeight.w600,
+        Flexible(
+          child: Text(
+            '$label: ',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF667085),
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
+        const SizedBox(width: 4),
         Expanded(
           child: Text(
             value,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               color: Color(0xFF101828),
               fontWeight: FontWeight.w700,

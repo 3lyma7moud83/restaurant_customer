@@ -4,11 +4,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../core/realtime/realtime_channel_controller.dart';
 import '../core/location/location_helper.dart';
+import '../core/realtime/realtime_channel_controller.dart';
+import '../core/services/error_logger.dart';
+import '../core/theme/app_theme.dart';
+import '../services/restaurant_feed_utils.dart';
 import '../services/restaurants_service.dart';
-import '../widgets/restaurant_card_components.dart';
 import '../widgets/restaurant_info_sheet.dart';
+import '../widgets/restaurants_grid_section.dart';
 import 'restaurant_menu_page.dart';
 
 class RestaurantsPage extends StatefulWidget {
@@ -21,14 +24,17 @@ class RestaurantsPage extends StatefulWidget {
 class _RestaurantsPageState extends State<RestaurantsPage> {
   final _supabase = Supabase.instance.client;
   late final RealtimeChannelController _restaurantsChannelController;
-
-  List<Map<String, dynamic>> restaurants = [];
-  List<Map<String, dynamic>> filtered = [];
-
-  bool loading = true;
+  late final ValueNotifier<_RestaurantsUiState> _uiState =
+      ValueNotifier<_RestaurantsUiState>(const _RestaurantsUiState.initial());
+  double? _userLat;
+  double? _userLng;
 
   final TextEditingController _searchController = TextEditingController();
+  final ValueNotifier<String> _searchQuery = ValueNotifier<String>('');
   Timer? _restaurantsRefreshDebounce;
+  int _loadRequestId = 0;
+
+  _RestaurantsUiState get _state => _uiState.value;
 
   @override
   void initState() {
@@ -42,7 +48,7 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
         }
       },
     );
-    _load();
+    _load(showLoader: true);
     _listenToRestaurants();
     _searchController.addListener(_handleSearchChanged);
   }
@@ -51,6 +57,8 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
   void dispose() {
     _searchController.removeListener(_handleSearchChanged);
     _searchController.dispose();
+    _searchQuery.dispose();
+    _uiState.dispose();
     _restaurantsRefreshDebounce?.cancel();
     unawaited(_restaurantsChannelController.dispose());
     super.dispose();
@@ -58,146 +66,305 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
 
   void _listenToRestaurants() {
     _restaurantsChannelController.subscribe((client, channelName) {
-      return client.channel(channelName).onPostgresChanges(
-            event: PostgresChangeEvent.all,
+      return client
+          .channel(channelName)
+          .onPostgresChanges(
+            event: PostgresChangeEvent.insert,
             schema: 'public',
             table: 'managers',
-            callback: (_) => _scheduleRestaurantsRefresh(),
+            callback: _handleRestaurantInsert,
+          )
+          .onPostgresChanges(
+            event: PostgresChangeEvent.update,
+            schema: 'public',
+            table: 'managers',
+            callback: _handleRestaurantUpdate,
+          )
+          .onPostgresChanges(
+            event: PostgresChangeEvent.delete,
+            schema: 'public',
+            table: 'managers',
+            callback: _handleRestaurantDelete,
           );
     });
   }
 
+  void _handleRestaurantInsert(PostgresChangePayload payload) {
+    RestaurantsService.invalidateListCaches();
+    _upsertRestaurantFromRealtimeRecord(
+      payload.newRecord,
+      insertAtTopIfMissing: true,
+    );
+  }
+
+  void _handleRestaurantUpdate(PostgresChangePayload payload) {
+    RestaurantsService.invalidateListCaches();
+    _upsertRestaurantFromRealtimeRecord(payload.newRecord);
+  }
+
+  void _handleRestaurantDelete(PostgresChangePayload payload) {
+    RestaurantsService.invalidateListCaches();
+    final restaurantId = RestaurantFeedUtils.realtimeRestaurantIdOf(
+      payload.oldRecord,
+    );
+    if (restaurantId.isEmpty) {
+      _scheduleRestaurantsRefresh();
+      return;
+    }
+    _removeRestaurantRealtime(restaurantId);
+  }
+
+  void _upsertRestaurantFromRealtimeRecord(
+    Map<dynamic, dynamic> record, {
+    bool insertAtTopIfMissing = false,
+  }) {
+    final normalized = RestaurantsService.normalizeRealtimeManagerRow(record);
+    if (normalized == null) {
+      return;
+    }
+
+    final restaurantId = RestaurantsService.restaurantIdOf(normalized);
+    if (restaurantId.isEmpty) {
+      return;
+    }
+
+    final withinRange = RestaurantsService.isWithinDeliveryRange(
+      restaurant: normalized,
+      customerLat: _userLat,
+      customerLng: _userLng,
+    );
+    if (!withinRange) {
+      _removeRestaurantRealtime(restaurantId);
+      return;
+    }
+
+    _upsertRestaurantRealtime(
+      normalized,
+      insertAtTopIfMissing: insertAtTopIfMissing,
+    );
+  }
+
   void _scheduleRestaurantsRefresh() {
     _restaurantsRefreshDebounce?.cancel();
+    final debounceDuration = kIsWeb
+        ? const Duration(milliseconds: 420)
+        : const Duration(milliseconds: 300);
     _restaurantsRefreshDebounce = Timer(
-      const Duration(milliseconds: 300),
+      debounceDuration,
       () {
         if (!mounted) {
           return;
         }
-        unawaited(_load());
+        unawaited(_load(forceRefresh: true));
       },
     );
   }
 
-  Future<void> _load({bool showLoader = false}) async {
-    if (mounted) {
-      if (showLoader) {
-        setState(() => loading = true);
-      }
+  Future<void> _load({
+    bool showLoader = false,
+    bool forceRefresh = false,
+  }) async {
+    final requestId = ++_loadRequestId;
+    if (showLoader && mounted) {
+      _updateUiState(
+        _state.copyWith(
+          loading: true,
+          hasError: false,
+        ),
+      );
     }
 
     try {
       final location = await LocationHelper.requestAndGetLocation();
+      final userLat = location?.lat;
+      final userLng = location?.lng;
+
       final fetchedRestaurants = location == null
-          ? await RestaurantsService.getAllActive()
+          ? await RestaurantsService.getAllActive(forceRefresh: forceRefresh)
           : await RestaurantsService.getNearby(
               latitude: location.lat,
               longitude: location.lng,
+              forceRefresh: forceRefresh,
             );
 
-      if (!mounted) return;
-      _applyRestaurantsSnapshot(fetchedRestaurants, isLoading: false);
-    } catch (_) {
-      if (!mounted) return;
-      _applyRestaurantsSnapshot(const [], isLoading: false);
+      if (!mounted || requestId != _loadRequestId) {
+        return;
+      }
+
+      _userLat = userLat;
+      _userLng = userLng;
+
+      final ranged = RestaurantFeedUtils.filterByRange(
+        source: fetchedRestaurants,
+        customerLat: _userLat,
+        customerLng: _userLng,
+      );
+      _applyRestaurantsSnapshot(
+        ranged,
+        isLoading: false,
+        hasLoadError: false,
+      );
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'restaurants_page.load',
+        error: error,
+        stack: stack,
+      );
+
+      if (!mounted || requestId != _loadRequestId) {
+        return;
+      }
+
+      _applyRestaurantsSnapshot(
+        _state.restaurants,
+        isLoading: false,
+        hasLoadError: true,
+      );
     }
   }
 
   void _applyRestaurantsSnapshot(
     List<Map<String, dynamic>> nextRestaurants, {
     required bool isLoading,
+    required bool hasLoadError,
   }) {
-    final merged = _reuseRestaurantMaps(nextRestaurants);
-    final nextFiltered = _filterRestaurants(merged, _searchController.text);
-    final listChanged = !_sameIdentityList(restaurants, merged);
-    final filteredChanged = !_sameIdentityList(filtered, nextFiltered);
+    final currentState = _state;
+    final currentRestaurants = currentState.restaurants;
+    final merged = RestaurantFeedUtils.reuseRestaurantMaps(
+      currentRestaurants,
+      nextRestaurants,
+    );
+    final listChanged =
+        !RestaurantFeedUtils.sameIdentityList(currentRestaurants, merged);
 
-    if (!listChanged && !filteredChanged && loading == isLoading) {
+    if (!listChanged &&
+        currentState.loading == isLoading &&
+        currentState.hasError == hasLoadError) {
       return;
     }
 
-    setState(() {
-      restaurants = merged;
-      filtered = nextFiltered;
-      loading = isLoading;
-    });
+    _updateUiState(
+      currentState.copyWith(
+        restaurants: merged,
+        loading: isLoading,
+        hasError: hasLoadError,
+      ),
+    );
   }
 
-  List<Map<String, dynamic>> _reuseRestaurantMaps(
-    List<Map<String, dynamic>> nextRestaurants,
-  ) {
-    final currentById = {
-      for (final restaurant in restaurants)
-        RestaurantsService.restaurantIdOf(restaurant): restaurant,
-    };
+  void _upsertRestaurantRealtime(
+    Map<String, dynamic> restaurant, {
+    bool insertAtTopIfMissing = false,
+  }) {
+    final currentRestaurants = _state.restaurants;
+    final restaurantId = RestaurantsService.restaurantIdOf(restaurant);
+    if (restaurantId.isEmpty) {
+      return;
+    }
 
-    return nextRestaurants.map((restaurant) {
-      final current =
-          currentById[RestaurantsService.restaurantIdOf(restaurant)];
-      if (current != null && mapEquals(current, restaurant)) {
-        return current;
+    final nextRestaurants = List<Map<String, dynamic>>.from(
+      currentRestaurants,
+    );
+    final index = nextRestaurants.indexWhere(
+      (item) => RestaurantsService.restaurantIdOf(item) == restaurantId,
+    );
+
+    if (index == -1) {
+      if (insertAtTopIfMissing) {
+        nextRestaurants.insert(0, restaurant);
+      } else {
+        nextRestaurants.add(restaurant);
       }
-      return restaurant;
-    }).toList(growable: false);
+      _applyRestaurantsSnapshot(
+        nextRestaurants,
+        isLoading: false,
+        hasLoadError: false,
+      );
+      return;
+    }
+
+    final current = nextRestaurants[index];
+    if (identical(current, restaurant) || mapEquals(current, restaurant)) {
+      return;
+    }
+
+    nextRestaurants[index] = restaurant;
+    _applyRestaurantsSnapshot(
+      nextRestaurants,
+      isLoading: false,
+      hasLoadError: false,
+    );
   }
 
-  bool _sameIdentityList(
-    List<Map<String, dynamic>> current,
-    List<Map<String, dynamic>> next,
-  ) {
-    if (current.length != next.length) {
-      return false;
+  void _removeRestaurantRealtime(String restaurantId) {
+    final currentRestaurants = _state.restaurants;
+    final nextRestaurants = currentRestaurants
+        .where(
+            (item) => RestaurantsService.restaurantIdOf(item) != restaurantId)
+        .toList(growable: false);
+
+    if (nextRestaurants.length == currentRestaurants.length) {
+      return;
     }
 
-    for (var i = 0; i < current.length; i++) {
-      if (!identical(current[i], next[i])) {
-        return false;
-      }
-    }
-
-    return true;
+    _applyRestaurantsSnapshot(
+      nextRestaurants,
+      isLoading: false,
+      hasLoadError: false,
+    );
   }
 
   void _handleSearchChanged() {
-    _applySearch(_searchController.text);
-  }
-
-  List<Map<String, dynamic>> _filterRestaurants(
-    List<Map<String, dynamic>> source,
-    String text,
-  ) {
-    final q = text.trim().toLowerCase();
-    if (q.isEmpty) {
-      return List<Map<String, dynamic>>.from(source);
-    }
-
-    return source
-        .where((restaurant) =>
-            RestaurantsService.cardNameOf(restaurant).toLowerCase().contains(q))
-        .toList(growable: false);
-  }
-
-  void _applySearch(String text) {
-    final nextFiltered = _filterRestaurants(restaurants, text);
-    if (_sameIdentityList(filtered, nextFiltered)) {
+    final text = _searchController.text;
+    if (_searchQuery.value == text) {
       return;
     }
-    setState(() => filtered = nextFiltered);
+    _searchQuery.value = text;
   }
 
-  int _calcGridCount(double width) {
-    if (width >= 1200) return 5;
-    if (width >= 900) return 4;
-    if (width >= 600) return 3;
-    return 2;
+  Future<void> _refreshRestaurants() {
+    return _load(forceRefresh: true);
   }
 
-  double _calcCardAspectRatio(double width) {
-    if (width >= 1200) return 1.02;
-    if (width >= 900) return 0.98;
-    if (width >= 600) return 0.94;
-    return 0.9;
+  void _openRestaurantMenu(
+    BuildContext context,
+    Map<String, dynamic> restaurant,
+  ) {
+    final managerId = RestaurantsService.managerIdOf(restaurant);
+    final restaurantId = RestaurantsService.restaurantIdOf(restaurant);
+    final restaurantName = RestaurantsService.restaurantNameOf(restaurant);
+
+    if (managerId.isEmpty || restaurantId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('بيانات المطعم غير مكتملة حالياً.')),
+      );
+      return;
+    }
+
+    Navigator.push(
+      context,
+      AppTheme.platformPageRoute(
+        builder: (_) => RestaurantMenuPage(
+          managerId: managerId,
+          restaurantId: restaurantId,
+          restaurantName: restaurantName,
+        ),
+      ),
+    );
+  }
+
+  void _updateUiState(_RestaurantsUiState nextState) {
+    final current = _uiState.value;
+    if (identical(current, nextState) ||
+        (current.loading == nextState.loading &&
+            current.hasError == nextState.hasError &&
+            RestaurantFeedUtils.sameIdentityList(
+              current.restaurants,
+              nextState.restaurants,
+            ))) {
+      return;
+    }
+    _uiState.value = nextState;
   }
 
   @override
@@ -205,95 +372,85 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
-        child: loading
-            ? const Center(
-                child: CircularProgressIndicator(
-                  color: Colors.orange,
-                ),
-              )
-            : Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'كل المطاعم',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _RestaurantsSearchField(controller: _searchController),
-                    const SizedBox(height: 16),
-                    Expanded(
-                      child: filtered.isEmpty
-                          ? const _RestaurantsEmptyState()
-                          : LayoutBuilder(
-                              builder: (context, constraints) {
-                                final count =
-                                    _calcGridCount(constraints.maxWidth);
-                                final aspectRatio =
-                                    _calcCardAspectRatio(constraints.maxWidth);
-
-                                return GridView.builder(
-                                  cacheExtent: 720,
-                                  itemCount: filtered.length,
-                                  gridDelegate:
-                                      SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: count,
-                                    mainAxisSpacing: 14,
-                                    crossAxisSpacing: 14,
-                                    childAspectRatio: aspectRatio,
-                                  ),
-                                  itemBuilder: (_, i) {
-                                    final restaurant = filtered[i];
-                                    final managerId =
-                                        RestaurantsService.managerIdOf(
-                                      restaurant,
-                                    );
-                                    final restaurantId =
-                                        RestaurantsService.restaurantIdOf(
-                                      restaurant,
-                                    );
-                                    final restaurantName =
-                                        RestaurantsService.restaurantNameOf(
-                                      restaurant,
-                                    );
-
-                                    return RestaurantListCard(
-                                      name: RestaurantsService.cardNameOf(
-                                        restaurant,
-                                      ),
-                                      imageUrl: RestaurantsService.cardImageOf(
-                                        restaurant,
-                                      ),
-                                      onInfoTap: () => showRestaurantInfoSheet(
-                                        context,
-                                        restaurant: restaurant,
-                                      ),
-                                      onTap: () {
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (_) => RestaurantMenuPage(
-                                              managerId: managerId,
-                                              restaurantId: restaurantId,
-                                              restaurantName: restaurantName,
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                    );
-                                  },
-                                );
-                              },
-                            ),
-                    ),
-                  ],
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'كل المطاعم',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
+              const SizedBox(height: 12),
+              _RestaurantsSearchField(controller: _searchController),
+              const SizedBox(height: 16),
+              Expanded(
+                child: ValueListenableBuilder<_RestaurantsUiState>(
+                  valueListenable: _uiState,
+                  builder: (context, state, _) {
+                    return RestaurantsGridSection(
+                      loading: state.loading,
+                      hasError: state.hasError,
+                      restaurants: state.restaurants,
+                      searchQueryListenable: _searchQuery,
+                      onRefresh: _refreshRestaurants,
+                      loadingSkeletonKey: 'restaurants-loading',
+                      errorKey: 'restaurants-error',
+                      emptyKey: 'restaurants-empty',
+                      gridKey: 'restaurants-grid',
+                      emptyStateBuilder: (_) => _RestaurantsEmptyState(
+                        onRetry: _refreshRestaurants,
+                      ),
+                      errorStateBuilder: (_) => _RestaurantsErrorState(
+                        onRetry: _refreshRestaurants,
+                      ),
+                      onRestaurantInfoTap: (context, restaurant) {
+                        showRestaurantInfoSheet(
+                          context,
+                          restaurant: restaurant,
+                        );
+                      },
+                      onRestaurantTap: _openRestaurantMenu,
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
+    );
+  }
+}
+
+class _RestaurantsUiState {
+  const _RestaurantsUiState({
+    required this.loading,
+    required this.hasError,
+    required this.restaurants,
+  });
+
+  const _RestaurantsUiState.initial()
+      : loading = true,
+        hasError = false,
+        restaurants = const [];
+
+  final bool loading;
+  final bool hasError;
+  final List<Map<String, dynamic>> restaurants;
+
+  _RestaurantsUiState copyWith({
+    bool? loading,
+    bool? hasError,
+    List<Map<String, dynamic>>? restaurants,
+  }) {
+    return _RestaurantsUiState(
+      loading: loading ?? this.loading,
+      hasError: hasError ?? this.hasError,
+      restaurants: restaurants ?? this.restaurants,
     );
   }
 }
@@ -328,30 +485,84 @@ class _RestaurantsSearchField extends StatelessWidget {
 }
 
 class _RestaurantsEmptyState extends StatelessWidget {
-  const _RestaurantsEmptyState();
+  const _RestaurantsEmptyState({
+    this.onRetry,
+  });
+
+  final Future<void> Function()? onRetry;
 
   @override
   Widget build(BuildContext context) {
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        children: const [
-          Icon(
+        children: [
+          const Icon(
             Icons.storefront_outlined,
             size: 58,
             color: Color(0xFF98A2B3),
           ),
-          SizedBox(height: 12),
-          Text(
+          const SizedBox(height: 12),
+          const Text(
             'لا توجد مطاعم حالياً',
             style: TextStyle(
               fontWeight: FontWeight.w800,
             ),
           ),
-          SizedBox(height: 6),
-          Text(
+          const SizedBox(height: 6),
+          const Text(
             'جرّب تغيير البحث أو إعادة المحاولة لاحقاً.',
             style: TextStyle(color: Color(0xFF667085)),
+            textAlign: TextAlign.center,
+          ),
+          if (onRetry != null) ...[
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: () => unawaited(onRetry!()),
+              child: const Text('تحديث'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _RestaurantsErrorState extends StatelessWidget {
+  const _RestaurantsErrorState({
+    required this.onRetry,
+  });
+
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.cloud_off_rounded,
+            size: 62,
+            color: Color(0xFF98A2B3),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'تعذر تحميل المطاعم',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'تحقق من الاتصال ثم أعد المحاولة.',
+            style: TextStyle(color: Color(0xFF667085)),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 12),
+          ElevatedButton(
+            onPressed: () => unawaited(onRetry()),
+            child: const Text('إعادة المحاولة'),
           ),
         ],
       ),

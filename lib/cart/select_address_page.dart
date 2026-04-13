@@ -1,13 +1,14 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../core/config/env.dart';
-import '../core/services/error_logger.dart';
 import '../core/location/location_service.dart';
+import '../core/services/error_logger.dart';
 import '../core/theme/app_theme.dart';
 
 class SelectAddressPage extends StatefulWidget {
@@ -37,8 +38,8 @@ class _SelectAddressPageState extends State<SelectAddressPage>
   final MapController _controller = MapController();
   final TextEditingController _addressController = TextEditingController();
   final TextEditingController _houseNumberController = TextEditingController();
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _phoneController = TextEditingController();
+  final FocusNode _addressFocusNode = FocusNode();
+  final FocusNode _houseNumberFocusNode = FocusNode();
 
   AnimationController? _moveController;
 
@@ -46,7 +47,6 @@ class _SelectAddressPageState extends State<SelectAddressPage>
   bool loadingAddress = false;
   bool locatingUser = false;
   bool _satelliteMode = false;
-  bool _detailsUnlocked = false;
   int _addressRequestId = 0;
 
   LatLng? _selectedPoint;
@@ -60,12 +60,13 @@ class _SelectAddressPageState extends State<SelectAddressPage>
     if (widget.initialLat != null && widget.initialLng != null) {
       _selectedPoint = LatLng(widget.initialLat!, widget.initialLng!);
     }
+
     _addressController.text = widget.initialAddress?.trim() ?? '';
     _houseNumberController.text = widget.initialHouseNumber?.trim() ?? '';
-    _nameController.text = widget.initialCustomerName?.trim() ?? '';
-    _phoneController.text = widget.initialCustomerPhone?.trim() ?? '';
+
     if (_selectedPoint != null) {
-      _statusMessage = 'تم تحميل الموقع الحالي. اضغط تأكيد العنوان للمتابعة.';
+      _statusMessage =
+          'تم تحميل الموقع الحالي. عدّل العنوان ثم اضغط تأكيد العنوان.';
     }
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -93,10 +94,11 @@ class _SelectAddressPageState extends State<SelectAddressPage>
   @override
   void dispose() {
     _moveController?.dispose();
+    _controller.dispose();
     _addressController.dispose();
     _houseNumberController.dispose();
-    _nameController.dispose();
-    _phoneController.dispose();
+    _addressFocusNode.dispose();
+    _houseNumberFocusNode.dispose();
     super.dispose();
   }
 
@@ -148,8 +150,18 @@ class _SelectAddressPageState extends State<SelectAddressPage>
     bool markAsCurrentLocation = false,
     String statusMessage = 'جارٍ تحديد العنوان...',
   }) async {
-    _setControllerValue(_addressController, '');
-    _setControllerValue(_houseNumberController, '');
+    _setControllerValue(
+      _addressController,
+      '',
+      focusNode: _addressFocusNode,
+      skipIfFocused: true,
+    );
+    _setControllerValue(
+      _houseNumberController,
+      '',
+      focusNode: _houseNumberFocusNode,
+      skipIfFocused: true,
+    );
 
     setState(() {
       if (markAsCurrentLocation) {
@@ -157,7 +169,6 @@ class _SelectAddressPageState extends State<SelectAddressPage>
       }
       _selectedPoint = point;
       loadingAddress = true;
-      _detailsUnlocked = false;
       _statusMessage = statusMessage;
     });
 
@@ -182,7 +193,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
     }
 
     final position = await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.high,
+      desiredAccuracy: LocationAccuracy.bestForNavigation,
     );
 
     return LatLng(position.latitude, position.longitude);
@@ -192,6 +203,11 @@ class _SelectAddressPageState extends State<SelectAddressPage>
     LatLng target, {
     double? zoom,
   }) async {
+    if (kIsWeb) {
+      _controller.move(target, zoom ?? 16.5);
+      return;
+    }
+
     try {
       final beginCenter = _controller.camera.center;
       final beginZoom = _controller.camera.zoom;
@@ -250,25 +266,39 @@ class _SelectAddressPageState extends State<SelectAddressPage>
     }
 
     if (details == null) {
-      _setControllerValue(_addressController, '');
+      _setControllerValue(
+        _addressController,
+        '',
+        focusNode: _addressFocusNode,
+        skipIfFocused: true,
+      );
       setState(() {
         loadingAddress = false;
         _statusMessage =
-            'تعذر تحديد العنوان تلقائيًا. يمكنك تأكيد الموقع ثم كتابة العنوان يدويًا.';
+            'تعذر تحديد العنوان تلقائيًا. يمكنك كتابة العنوان يدويًا ثم التأكيد.';
       });
       return;
     }
 
-    _setControllerValue(_addressController, details.address);
+    _setControllerValue(
+      _addressController,
+      details.address,
+      focusNode: _addressFocusNode,
+      skipIfFocused: true,
+    );
     if ((details.houseNumber ?? '').trim().isNotEmpty) {
-      _setControllerValue(_houseNumberController, details.houseNumber!.trim());
+      _setControllerValue(
+        _houseNumberController,
+        details.houseNumber!.trim(),
+        focusNode: _houseNumberFocusNode,
+        skipIfFocused: true,
+      );
     }
 
     setState(() {
       loadingAddress = false;
-      _statusMessage = _detailsUnlocked
-          ? 'أكمل تفاصيل التوصيل ثم احفظ العنوان.'
-          : 'تم تحديد الموقع. اضغط تأكيد العنوان للمتابعة.';
+      _statusMessage =
+          'تم تحديد الموقع. يمكنك تعديل العنوان ثم الضغط على تأكيد العنوان.';
     });
   }
 
@@ -276,48 +306,27 @@ class _SelectAddressPageState extends State<SelectAddressPage>
     await _selectPoint(point);
   }
 
-  void _unlockDetails() {
+  void _confirm() {
     if (_selectedPoint == null || loadingAddress) {
       return;
     }
 
-    FocusScope.of(context).unfocus();
-    setState(() {
-      _detailsUnlocked = true;
-      _statusMessage = 'أكمل تفاصيل التوصيل ثم احفظ العنوان.';
-    });
-  }
-
-  void _confirm() {
-    if (_selectedPoint == null || loadingAddress || !_detailsUnlocked) {
+    final address = _addressController.text.trim();
+    if (address.isEmpty) {
+      _showSnack('اكتب عنوان التوصيل قبل المتابعة.');
       return;
     }
 
-    final fullAddress = _addressController.text.trim();
-    if (fullAddress.isEmpty) {
-      _showSnack('اكتب عنوان التوصيل قبل الحفظ.');
-      return;
-    }
-
-    final customerName = _nameController.text.trim();
-    if (customerName.isEmpty) {
-      _showSnack('اكتب الاسم أولاً.');
-      return;
-    }
-
-    final customerPhone = _phoneController.text.trim();
-    if (customerPhone.length < 8) {
-      _showSnack('رقم الهاتف غير صحيح.');
-      return;
-    }
+    final houseNumber = _houseNumberController.text.trim();
 
     Navigator.pop(context, {
+      'address': address,
       'lat': _selectedPoint!.latitude,
       'lng': _selectedPoint!.longitude,
-      'fullAddress': fullAddress,
-      'houseNumber': _houseNumberController.text.trim(),
-      'customerName': customerName,
-      'customerPhone': customerPhone,
+      'house_number': houseNumber,
+      // Backward-compatible keys for existing consumers.
+      'fullAddress': address,
+      'houseNumber': houseNumber,
     });
   }
 
@@ -325,8 +334,16 @@ class _SelectAddressPageState extends State<SelectAddressPage>
     setState(() => _satelliteMode = !_satelliteMode);
   }
 
-  void _setControllerValue(TextEditingController controller, String value) {
+  void _setControllerValue(
+    TextEditingController controller,
+    String value, {
+    FocusNode? focusNode,
+    bool skipIfFocused = false,
+  }) {
     if (controller.text == value) {
+      return;
+    }
+    if (skipIfFocused && focusNode?.hasFocus == true) {
       return;
     }
 
@@ -452,7 +469,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
                               ),
                             const Spacer(),
                             Text(
-                              _detailsUnlocked ? 'تفاصيل التوصيل' : 'حدد موقعك',
+                              'حدد موقعك',
                               style: TextStyle(
                                 color: AppTheme.text,
                                 fontWeight: FontWeight.w800,
@@ -470,69 +487,29 @@ class _SelectAddressPageState extends State<SelectAddressPage>
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-                        AnimatedSize(
-                          duration: const Duration(milliseconds: 240),
-                          curve: Curves.easeOutCubic,
-                          child: AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 220),
-                            switchInCurve: Curves.easeOutCubic,
-                            switchOutCurve: Curves.easeInCubic,
-                            child: !_detailsUnlocked
-                                ? const SizedBox.shrink(
-                                    key: ValueKey('delivery-details-hidden'),
-                                  )
-                                : Column(
-                                    key: const ValueKey('delivery-details'),
-                                    children: [
-                                      const SizedBox(height: 14),
-                                      TextField(
-                                        controller: _addressController,
-                                        textAlign: TextAlign.right,
-                                        minLines: 2,
-                                        maxLines: 3,
-                                        decoration: const InputDecoration(
-                                          labelText: 'عنوان التوصيل',
-                                          hintText:
-                                              'اكتب العنوان إذا لم يتم التقاطه تلقائيًا',
-                                          prefixIcon: Icon(
-                                            Icons.location_on_outlined,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 12),
-                                      TextField(
-                                        controller: _nameController,
-                                        textAlign: TextAlign.right,
-                                        decoration: const InputDecoration(
-                                          labelText: 'الاسم',
-                                          hintText: 'اسم مستلم الطلب',
-                                          prefixIcon: Icon(Icons.person_outline),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 12),
-                                      TextField(
-                                        controller: _phoneController,
-                                        textAlign: TextAlign.right,
-                                        keyboardType: TextInputType.phone,
-                                        decoration: const InputDecoration(
-                                          labelText: 'رقم الهاتف',
-                                          hintText: '01xxxxxxxxx',
-                                          prefixIcon: Icon(Icons.phone_outlined),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 12),
-                                      TextField(
-                                        controller: _houseNumberController,
-                                        textAlign: TextAlign.right,
-                                        decoration: const InputDecoration(
-                                          labelText: 'رقم البيت',
-                                          hintText:
-                                              'مثال: شقة 12 - الدور الثالث',
-                                          prefixIcon: Icon(Icons.home_outlined),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                        const SizedBox(height: 14),
+                        TextField(
+                          controller: _addressController,
+                          focusNode: _addressFocusNode,
+                          textAlign: TextAlign.right,
+                          minLines: 2,
+                          maxLines: 3,
+                          decoration: const InputDecoration(
+                            labelText: 'عنوان التوصيل',
+                            hintText:
+                                'اكتب العنوان إذا لم يتم التقاطه تلقائيًا',
+                            prefixIcon: Icon(Icons.location_on_outlined),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _houseNumberController,
+                          focusNode: _houseNumberFocusNode,
+                          textAlign: TextAlign.right,
+                          decoration: const InputDecoration(
+                            labelText: 'رقم البيت',
+                            hintText: 'مثال: شقة 12 - الدور الثالث',
+                            prefixIcon: Icon(Icons.home_outlined),
                           ),
                         ),
                       ],
@@ -544,15 +521,9 @@ class _SelectAddressPageState extends State<SelectAddressPage>
                     child: ElevatedButton.icon(
                       onPressed: _selectedPoint == null || loadingAddress
                           ? null
-                          : (_detailsUnlocked ? _confirm : _unlockDetails),
-                      icon: Icon(
-                        _detailsUnlocked
-                            ? Icons.done_rounded
-                            : Icons.check_circle_outline_rounded,
-                      ),
-                      label: Text(
-                        _detailsUnlocked ? 'حفظ العنوان' : 'تأكيد العنوان',
-                      ),
+                          : _confirm,
+                      icon: const Icon(Icons.done_rounded),
+                      label: const Text('تأكيد العنوان'),
                     ),
                   ),
                 ],

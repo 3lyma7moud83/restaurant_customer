@@ -15,11 +15,23 @@ class LocationAddressDetails {
 }
 
 class LocationService {
+  static const Duration _addressCacheTtl = Duration(minutes: 8);
+  static const int _addressCacheMaxEntries = 80;
+  static final Map<String, _AddressCacheEntry> _addressCache =
+      <String, _AddressCacheEntry>{};
+
   static Future<LocationAddressDetails?> getAddressDetails({
     required double lat,
     required double lng,
     required String token,
   }) async {
+    final cacheKey = _cacheKey(lat, lng);
+    final now = DateTime.now();
+    final cached = _addressCache[cacheKey];
+    if (cached != null && now.difference(cached.savedAt) <= _addressCacheTtl) {
+      return cached.details;
+    }
+
     try {
       final url =
           "https://api.mapbox.com/geocoding/v5/mapbox.places/$lng,$lat.json"
@@ -27,7 +39,8 @@ class LocationService {
           "&types=address,neighborhood,locality,place"
           "&access_token=$token";
 
-      final res = await http.get(Uri.parse(url));
+      final res =
+          await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
       if (res.statusCode != 200) {
         return null;
       }
@@ -86,10 +99,18 @@ class LocationService {
         return null;
       }
 
-      return LocationAddressDetails(
+      final details = LocationAddressDetails(
         address: address,
         houseNumber: houseNumber,
       );
+      _addressCache[cacheKey] = _AddressCacheEntry(
+        details: details,
+        savedAt: now,
+      );
+      if (_addressCache.length > _addressCacheMaxEntries) {
+        _addressCache.remove(_addressCache.keys.first);
+      }
+      return details;
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'location_service.getAddressDetails',
@@ -128,4 +149,18 @@ class LocationService {
     }
     return text;
   }
+
+  static String _cacheKey(double lat, double lng) {
+    return '${lat.toStringAsFixed(5)},${lng.toStringAsFixed(5)}';
+  }
+}
+
+class _AddressCacheEntry {
+  const _AddressCacheEntry({
+    required this.details,
+    required this.savedAt,
+  });
+
+  final LocationAddressDetails details;
+  final DateTime savedAt;
 }

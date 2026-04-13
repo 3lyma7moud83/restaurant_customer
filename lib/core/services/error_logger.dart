@@ -23,11 +23,14 @@ class ErrorLogger {
         return;
       }
 
+      final errorText = _redactSecrets(error.toString());
+      final stackText = stack == null ? null : _redactSecrets(stack.toString());
+
       await client.from('system_errors').insert({
         'app_name': appName,
         'module': module,
-        'error_message': error.toString(),
-        'stack_trace': stack?.toString(),
+        'error_message': errorText,
+        'stack_trace': stackText,
         'user_id': client.auth.currentUser?.id,
       });
     } catch (_) {}
@@ -58,5 +61,29 @@ class ErrorLogger {
     } catch (_) {
       return null;
     }
+  }
+
+  static String _redactSecrets(String input) {
+    var output = input;
+
+    // Common query param used by Mapbox URLs and others.
+    output = output.replaceAllMapped(
+      RegExp(r'(access_token=)([^&\s]+)', caseSensitive: false),
+      (m) => '${m.group(1)}<redacted>',
+    );
+
+    // JWT-like tokens (including Supabase anon keys).
+    output = output.replaceAllMapped(
+      RegExp(r'eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+'),
+      (_) => '<redacted.jwt>',
+    );
+
+    // Mapbox public tokens typically start with `pk.`.
+    output = output.replaceAllMapped(
+      RegExp(r'pk\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+'),
+      (_) => '<redacted.mapbox>',
+    );
+
+    return output;
   }
 }

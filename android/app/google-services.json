@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "647981866689",
+    "project_id": "mat3amak-app-9d310",
+    "storage_bucket": "mat3amak-app-9d310.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:647981866689:android:de09ff80be4471c1bdfe40",
+        "android_client_info": {
+          "package_name": "com.example.restaurant_customer"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDVWEzicNiT8oy-_qA2MTEUgYQ-IZ9FvqY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

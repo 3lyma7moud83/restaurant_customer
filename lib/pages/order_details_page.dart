@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -8,6 +10,8 @@ import '../cart/cart_provider.dart';
 import '../core/orders/order_status_utils.dart';
 import '../core/orders/order_ui.dart';
 import '../core/realtime/realtime_channel_controller.dart';
+import '../core/services/error_logger.dart';
+import '../core/theme/app_theme.dart';
 import '../services/orders_service.dart';
 import 'order_tracking_page.dart';
 
@@ -28,6 +32,8 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
 
   late final RealtimeChannelController _orderChannelController;
   late final RealtimeChannelController _itemsChannelController;
+  Timer? _orderRefreshDebounce;
+  Timer? _itemsRefreshDebounce;
 
   bool _loading = true;
   String? _errorMessage;
@@ -43,7 +49,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
       topicPrefix: 'order-details-${widget.orderId}',
       onSubscribed: (didReconnect) async {
         if (didReconnect) {
-          await _loadData();
+          await _loadData(forceRefresh: true);
         }
       },
     );
@@ -53,7 +59,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
       topicPrefix: 'order-details-items-${widget.orderId}',
       onSubscribed: (didReconnect) async {
         if (didReconnect) {
-          await _loadItems();
+          await _loadItems(forceRefresh: true);
         }
       },
     );
@@ -64,6 +70,8 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
 
   @override
   void dispose() {
+    _orderRefreshDebounce?.cancel();
+    _itemsRefreshDebounce?.cancel();
     unawaited(_orderChannelController.dispose());
     unawaited(_itemsChannelController.dispose());
     super.dispose();
@@ -99,76 +107,154 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
     });
   }
 
-  Future<void> _loadData({bool showLoader = false}) async {
+  Future<void> _loadData({
+    bool showLoader = false,
+    bool forceRefresh = false,
+  }) async {
     if (showLoader && mounted) {
-      setState(() {
-        _loading = true;
-        _errorMessage = null;
-      });
+      _applySnapshot(
+        order: _order,
+        items: _items,
+        isLoading: true,
+        errorMessage: null,
+      );
     }
 
     try {
       final results = await Future.wait([
-        OrdersService.getOrderById(widget.orderId),
-        OrdersService.getOrderItems(widget.orderId),
+        OrdersService.getOrderById(
+          widget.orderId,
+          forceRefresh: forceRefresh,
+        ),
+        OrdersService.getOrderItems(
+          widget.orderId,
+          forceRefresh: forceRefresh,
+        ),
       ]);
 
       final order = results[0] as Map<String, dynamic>?;
-      final items = results[1] as List<Map<String, dynamic>>;
+      final fetchedItems = results[1] as List<Map<String, dynamic>>;
 
       if (!mounted) {
         return;
       }
 
       if (order == null) {
-        setState(() {
-          _order = null;
-          _items = const [];
-          _loading = false;
-          _errorMessage = 'تعذر العثور على الطلب.';
-        });
+        _applySnapshot(
+          order: null,
+          items: const [],
+          isLoading: false,
+          errorMessage: 'تعذر العثور على الطلب.',
+        );
         return;
       }
 
       CartProvider.maybeOf(context)?.syncOrderStatusFromRow(order);
+      var normalizedItems = fetchedItems.isEmpty
+          ? _itemsFromOrderPayload(order)
+          : _sortedItems(fetchedItems);
+      if (normalizedItems.isEmpty) {
+        normalizedItems = await _loadItemsFromOrderColumn();
+      }
 
-      setState(() {
-        _order = order;
-        _items = _sortedItems(items);
-        _loading = false;
-        _errorMessage = null;
-      });
-    } catch (_) {
+      _applySnapshot(
+        order: order,
+        items: normalizedItems,
+        isLoading: false,
+        errorMessage: null,
+      );
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'order_details_page.loadData',
+        error: error,
+        stack: stack,
+      );
       if (!mounted) {
         return;
       }
 
-      setState(() {
-        _loading = false;
-        _errorMessage = 'تعذر تحميل تفاصيل الطلب.';
-      });
+      _applySnapshot(
+        order: _order,
+        items: _items,
+        isLoading: false,
+        errorMessage: 'تعذر تحميل تفاصيل الطلب.',
+      );
     }
   }
 
-  Future<void> _loadItems() async {
+  Future<void> _loadItems({bool forceRefresh = false}) async {
     try {
-      final items = await OrdersService.getOrderItems(widget.orderId);
+      final items = await OrdersService.getOrderItems(
+        widget.orderId,
+        forceRefresh: forceRefresh,
+      );
       if (!mounted) {
         return;
       }
-      setState(() => _items = _sortedItems(items));
-    } catch (_) {}
+      if (items.isEmpty) {
+        var fallbackItems = const <Map<String, dynamic>>[];
+        final order = _order;
+        if (order != null) {
+          fallbackItems = _itemsFromOrderPayload(order);
+        }
+        if (fallbackItems.isEmpty) {
+          fallbackItems = await _loadItemsFromOrderColumn();
+        }
+        _applySnapshot(
+          order: _order,
+          items: fallbackItems,
+          isLoading: _loading,
+          errorMessage: _errorMessage,
+        );
+        return;
+      }
+      _applySnapshot(
+        order: _order,
+        items: _sortedItems(items),
+        isLoading: _loading,
+        errorMessage: _errorMessage,
+      );
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'order_details_page.loadItems',
+        error: error,
+        stack: stack,
+      );
+    }
   }
 
-  Future<void> _loadOrderOnly() async {
+  Future<void> _loadOrderOnly({bool forceRefresh = true}) async {
     try {
-      final order = await OrdersService.getOrderById(widget.orderId);
+      final order = await OrdersService.getOrderById(
+        widget.orderId,
+        forceRefresh: forceRefresh,
+      );
       if (!mounted || order == null) {
         return;
       }
       CartProvider.maybeOf(context)?.syncOrderStatusFromRow(order);
-      setState(() => _order = order);
-    } catch (_) {}
+      if (_items.isEmpty) {
+        _applySnapshot(
+          order: order,
+          items: _itemsFromOrderPayload(order),
+          isLoading: _loading,
+          errorMessage: _errorMessage,
+        );
+        return;
+      }
+      _applySnapshot(
+        order: order,
+        items: _items,
+        isLoading: _loading,
+        errorMessage: _errorMessage,
+      );
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'order_details_page.loadOrderOnly',
+        error: error,
+        stack: stack,
+      );
+    }
   }
 
   List<Map<String, dynamic>> _sortedItems(List<Map<String, dynamic>> items) {
@@ -181,21 +267,175 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
     return nextItems;
   }
 
+  void _applySnapshot({
+    required Map<String, dynamic>? order,
+    required List<Map<String, dynamic>> items,
+    required bool isLoading,
+    required String? errorMessage,
+  }) {
+    final nextOrder =
+        _order != null && order != null && mapEquals(_order, order)
+            ? _order
+            : order;
+    final nextItems = _reuseItems(items);
+    final hasOrderChanged = !mapEquals(_order, nextOrder);
+    final hasItemsChanged = !_sameItems(_items, nextItems);
+
+    if (!hasOrderChanged &&
+        !hasItemsChanged &&
+        _loading == isLoading &&
+        _errorMessage == errorMessage) {
+      return;
+    }
+
+    setState(() {
+      _order = nextOrder;
+      _items = nextItems;
+      _loading = isLoading;
+      _errorMessage = errorMessage;
+    });
+  }
+
+  List<Map<String, dynamic>> _reuseItems(List<Map<String, dynamic>> nextItems) {
+    if (nextItems.isEmpty) {
+      return const [];
+    }
+
+    final currentByKey = {
+      for (final item in _items) _itemKey(item): item,
+    };
+
+    return nextItems.map((item) {
+      final current = currentByKey[_itemKey(item)];
+      if (current != null && mapEquals(current, item)) {
+        return current;
+      }
+      return item;
+    }).toList(growable: false);
+  }
+
+  bool _sameItems(
+    List<Map<String, dynamic>> current,
+    List<Map<String, dynamic>> next,
+  ) {
+    if (current.length != next.length) {
+      return false;
+    }
+
+    for (var index = 0; index < current.length; index++) {
+      if (!identical(current[index], next[index])) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  String _itemKey(Map<String, dynamic> item) {
+    final itemId = OrdersService.itemIdOf(item);
+    if (itemId.isNotEmpty) {
+      return itemId;
+    }
+
+    return '${OrdersService.itemNameOf(item)}-'
+        '${OrdersService.quantityOfItem(item)}-'
+        '${OrdersService.itemPriceOf(item)}-'
+        '${OrdersService.createdAtOf(item).microsecondsSinceEpoch}';
+  }
+
+  List<Map<String, dynamic>> _itemsFromOrderPayload(
+    Map<String, dynamic> order,
+  ) {
+    final payload = order['items'];
+    if (payload == null) {
+      return const [];
+    }
+
+    List<dynamic> rawItems;
+    if (payload is List) {
+      rawItems = payload;
+    } else if (payload is String) {
+      try {
+        final decoded = jsonDecode(payload);
+        if (decoded is! List) {
+          return const [];
+        }
+        rawItems = decoded;
+      } catch (_) {
+        return const [];
+      }
+    } else {
+      return const [];
+    }
+
+    final normalized = <Map<String, dynamic>>[];
+    for (var index = 0; index < rawItems.length; index++) {
+      final raw = rawItems[index];
+      if (raw is! Map) {
+        continue;
+      }
+
+      final item = Map<String, dynamic>.from(raw);
+      final quantity = (OrdersService.toDouble(
+                item['qty'] ?? item['quantity'] ?? item['count'],
+              )?.round() ??
+              1)
+          .clamp(1, 9999);
+      final price = OrdersService.toDouble(
+            item['price'] ?? item['unit_price'] ?? item['line_price'],
+          ) ??
+          0;
+      normalized.add({
+        'item_name': (item['item_name'] ?? item['name'] ?? 'عنصر').toString(),
+        'qty': quantity,
+        'price': price,
+        'created_at': item['created_at'] ??
+            DateTime.fromMillisecondsSinceEpoch(index).toIso8601String(),
+      });
+    }
+
+    return _sortedItems(normalized);
+  }
+
+  Future<List<Map<String, dynamic>>> _loadItemsFromOrderColumn() async {
+    try {
+      final row = await _supabase
+          .from('orders')
+          .select('items')
+          .eq('id', widget.orderId)
+          .maybeSingle();
+      if (row == null) {
+        return const [];
+      }
+      return _itemsFromOrderPayload(Map<String, dynamic>.from(row));
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'order_details_page.loadItemsFromOrderColumn',
+        error: error,
+        stack: stack,
+      );
+      return const [];
+    }
+  }
+
   void _handleOrderChange(PostgresChangePayload payload) {
     if (payload.eventType == PostgresChangeEvent.delete) {
       if (!mounted) {
         return;
       }
-      setState(() {
-        _order = {
+      _applySnapshot(
+        order: {
           ...?_order,
           'status': 'cancelled',
-        };
-      });
+        },
+        items: _items,
+        isLoading: _loading,
+        errorMessage: _errorMessage,
+      );
       return;
     }
 
-    unawaited(_loadOrderOnly());
+    _scheduleOrderRefresh();
   }
 
   void _handleItemsChange(PostgresChangePayload payload) {
@@ -203,11 +443,27 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
       case PostgresChangeEvent.delete:
       case PostgresChangeEvent.insert:
       case PostgresChangeEvent.update:
-        unawaited(_loadItems());
+        _scheduleItemsRefresh();
         break;
       case PostgresChangeEvent.all:
         break;
     }
+  }
+
+  void _scheduleOrderRefresh() {
+    _orderRefreshDebounce?.cancel();
+    _orderRefreshDebounce = Timer(
+      const Duration(milliseconds: 250),
+      () => unawaited(_loadOrderOnly(forceRefresh: true)),
+    );
+  }
+
+  void _scheduleItemsRefresh() {
+    _itemsRefreshDebounce?.cancel();
+    _itemsRefreshDebounce = Timer(
+      const Duration(milliseconds: 250),
+      () => unawaited(_loadItems(forceRefresh: true)),
+    );
   }
 
   Future<void> _callRestaurant(String phone) async {
@@ -239,12 +495,15 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
                 ? _OrderDetailsErrorState(
                     key: const ValueKey('error'),
                     message: _errorMessage ?? 'تعذر تحميل الطلب.',
-                    onRetry: () => _loadData(showLoader: true),
+                    onRetry: () =>
+                        _loadData(showLoader: true, forceRefresh: true),
                   )
                 : RefreshIndicator(
                     key: const ValueKey('content'),
-                    onRefresh: _loadData,
+                    onRefresh: () => _loadData(forceRefresh: true),
                     child: ListView(
+                      physics: AppTheme.bouncingScrollPhysics,
+                      cacheExtent: 540,
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                       children: [
                         _HeaderCard(order: order),
@@ -268,7 +527,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
                             onPressed: () {
                               Navigator.push(
                                 context,
-                                MaterialPageRoute(
+                                AppTheme.platformPageRoute(
                                   builder: (_) => OrderTrackingPage(
                                     orderId: widget.orderId,
                                   ),
@@ -475,35 +734,46 @@ class _ItemsCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 14),
-          if (items.isEmpty)
-            const Text(
-              'لا توجد عناصر مرتبطة بهذا الطلب.',
-              style: TextStyle(color: Color(0xFF667085)),
-            )
-          else
-            ...items.map((item) {
-              final qty = OrdersService.quantityOfItem(item);
-              final price = OrdersService.itemPriceOf(item);
-              final lineTotal = price * qty;
+          AnimatedSize(
+            duration: AppTheme.sectionTransitionDuration,
+            curve: AppTheme.emphasizedCurve,
+            child: items.isEmpty
+                ? const Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      'لا توجد عناصر مرتبطة بهذا الطلب.',
+                      style: TextStyle(color: Color(0xFF667085)),
+                    ),
+                  )
+                : Column(
+                    children: items.map((item) {
+                      final qty = OrdersService.quantityOfItem(item);
+                      final price = OrdersService.itemPriceOf(item);
+                      final lineTotal = price * qty;
 
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '$qty x ${OrdersService.itemNameOf(item)}',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                    Text(
-                      formatPrice(lineTotal),
-                      style: const TextStyle(color: Color(0xFF475467)),
-                    ),
-                  ],
-                ),
-              );
-            }),
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '$qty x ${OrdersService.itemNameOf(item)}',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                            Text(
+                              formatPrice(lineTotal),
+                              style: const TextStyle(color: Color(0xFF475467)),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(growable: false),
+                  ),
+          ),
           const Divider(height: 28),
           Row(
             children: [
@@ -579,16 +849,23 @@ class _MetaRow extends StatelessWidget {
       children: [
         Icon(icon, size: 18, color: const Color(0xFF667085)),
         const SizedBox(width: 8),
-        Text(
-          '$label: ',
-          style: const TextStyle(
-            color: Color(0xFF667085),
-            fontWeight: FontWeight.w700,
+        Flexible(
+          child: Text(
+            '$label: ',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF667085),
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
+        const SizedBox(width: 4),
         Expanded(
           child: Text(
             value,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               color: Color(0xFF101828),
               fontWeight: FontWeight.w700,

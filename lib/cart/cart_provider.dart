@@ -4,8 +4,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../core/services/error_logger.dart';
 import '../core/orders/order_status_utils.dart';
+import '../core/services/error_logger.dart';
 import '../services/orders_service.dart';
 
 class CartItem {
@@ -51,27 +51,31 @@ class CartItem {
   }
 }
 
-class CartProvider extends InheritedWidget {
+class CartProvider extends InheritedNotifier<CartController> {
   const CartProvider({
     super.key,
-    required this.data,
+    required CartController controller,
     required super.child,
-  });
+  }) : super(notifier: controller);
 
-  final CartController data;
-
+  /// Watch (subscribes) — causes rebuilds on cart changes.
   static CartController of(BuildContext context) {
     final provider = context.dependOnInheritedWidgetOfExactType<CartProvider>();
-    return provider!.data;
+    final controller = provider?.notifier;
+    assert(controller != null, 'CartProvider not found in widget tree.');
+    return controller!;
   }
 
+  /// Read (no subscription) — safe to call from callbacks and services.
   static CartController? maybeOf(BuildContext context) {
-    return context.dependOnInheritedWidgetOfExactType<CartProvider>()?.data;
+    return context.getInheritedWidgetOfExactType<CartProvider>()?.notifier;
   }
 
-  @override
-  bool updateShouldNotify(covariant CartProvider oldWidget) {
-    return true;
+  /// Read (no subscription).
+  static CartController read(BuildContext context) {
+    final controller = maybeOf(context);
+    assert(controller != null, 'CartProvider not found in widget tree.');
+    return controller!;
   }
 }
 
@@ -84,10 +88,28 @@ class CartProviderWrapper extends StatefulWidget {
   final Widget child;
 
   @override
-  State<CartProviderWrapper> createState() => CartController();
+  State<CartProviderWrapper> createState() => _CartProviderWrapperState();
 }
 
-class CartController extends State<CartProviderWrapper> {
+class _CartProviderWrapperState extends State<CartProviderWrapper> {
+  late final CartController _controller = CartController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CartProvider(
+      controller: _controller,
+      child: widget.child,
+    );
+  }
+}
+
+class CartController extends ChangeNotifier {
   static const String _storageKey = 'customer_cart_state_v2';
 
   final Map<String, CartItem> _items = {};
@@ -101,6 +123,14 @@ class CartController extends State<CartProviderWrapper> {
   double _deliveryCost = 0;
   String? _activeOrderId;
   bool _restored = false;
+
+  Timer? _persistDebounce;
+  bool _persistPending = false;
+  bool _disposed = false;
+
+  CartController() {
+    unawaited(_restoreState());
+  }
 
   List<CartItem> get items => _items.values.toList(growable: false);
   String? get restaurantId => _restaurantId;
@@ -119,12 +149,6 @@ class CartController extends State<CartProviderWrapper> {
         0,
         (sum, item) => sum + (item.price * item.qty),
       );
-
-  @override
-  void initState() {
-    super.initState();
-    unawaited(_restoreState());
-  }
 
   int getQuantity(String id) {
     return _items[id]?.qty ?? 0;
@@ -159,8 +183,8 @@ class CartController extends State<CartProviderWrapper> {
       );
     }
 
-    setState(() {});
-    unawaited(_persistState());
+    _notify();
+    _schedulePersist();
   }
 
   void removeItem(String id) {
@@ -178,8 +202,8 @@ class CartController extends State<CartProviderWrapper> {
       _restaurantId = null;
     }
 
-    setState(() {});
-    unawaited(_persistState());
+    _notify();
+    _schedulePersist();
   }
 
   void deleteItem(String id) {
@@ -192,8 +216,8 @@ class CartController extends State<CartProviderWrapper> {
       _restaurantId = null;
     }
 
-    setState(() {});
-    unawaited(_persistState());
+    _notify();
+    _schedulePersist();
   }
 
   void clear() {
@@ -205,8 +229,8 @@ class CartController extends State<CartProviderWrapper> {
     _houseNumber = '';
     _deliveryCost = 0;
     _activeOrderId = null;
-    setState(() {});
-    unawaited(_persistState());
+    _notify();
+    _schedulePersist();
   }
 
   void setDeliveryLocation({
@@ -221,8 +245,8 @@ class CartController extends State<CartProviderWrapper> {
     if (houseNumber != null) {
       _houseNumber = houseNumber.trim();
     }
-    setState(() {});
-    unawaited(_persistState());
+    _notify();
+    _schedulePersist();
   }
 
   void setDeliveryAddress(String value) {
@@ -233,8 +257,8 @@ class CartController extends State<CartProviderWrapper> {
     }
 
     _deliveryAddress = nextValue;
-    setState(() {});
-    unawaited(_persistState());
+    // Avoid rebuild storms while typing in the address field.
+    _schedulePersist();
   }
 
   void setHouseNumber(String value) {
@@ -244,8 +268,8 @@ class CartController extends State<CartProviderWrapper> {
     }
 
     _houseNumber = nextValue;
-    setState(() {});
-    unawaited(_persistState());
+    // Avoid rebuild storms while typing in the house number field.
+    _schedulePersist();
   }
 
   void updateDeliveryCost(double value) {
@@ -255,14 +279,14 @@ class CartController extends State<CartProviderWrapper> {
     }
 
     _deliveryCost = nextValue;
-    setState(() {});
-    unawaited(_persistState());
+    _notify();
+    _schedulePersist();
   }
 
   Future<void> markOrderPlaced(String orderId) async {
     _activeOrderId = orderId;
-    setState(() {});
-    await _persistState();
+    _notify();
+    await _persistStateNow();
   }
 
   Future<void> refreshActiveOrderStatus() async {
@@ -306,8 +330,26 @@ class CartController extends State<CartProviderWrapper> {
     }
 
     _deliveryCost = nextDeliveryCost;
-    setState(() {});
-    unawaited(_persistState());
+    _notify();
+    _schedulePersist();
+  }
+
+  void _schedulePersist() {
+    if (!_restored) {
+      _persistPending = true;
+      return;
+    }
+
+    _persistPending = false;
+    _persistDebounce?.cancel();
+    _persistDebounce = Timer(const Duration(milliseconds: 250), () {
+      unawaited(_persistState());
+    });
+  }
+
+  Future<void> _persistStateNow() async {
+    _persistDebounce?.cancel();
+    await _persistState();
   }
 
   Future<void> _restoreState() async {
@@ -354,15 +396,17 @@ class CartController extends State<CartProviderWrapper> {
     }
 
     _restored = true;
-    if (mounted) {
-      setState(() {});
+    _notify();
+
+    if (_persistPending) {
+      _schedulePersist();
     }
 
     await refreshActiveOrderStatus();
   }
 
   Future<void> _persistState() async {
-    if (!_restored) {
+    if (!_restored || _disposed) {
       return;
     }
 
@@ -409,11 +453,17 @@ class CartController extends State<CartProviderWrapper> {
     return double.tryParse(value?.toString() ?? '');
   }
 
+  void _notify() {
+    if (_disposed) {
+      return;
+    }
+    notifyListeners();
+  }
+
   @override
-  Widget build(BuildContext context) {
-    return CartProvider(
-      data: this,
-      child: widget.child,
-    );
+  void dispose() {
+    _disposed = true;
+    _persistDebounce?.cancel();
+    super.dispose();
   }
 }

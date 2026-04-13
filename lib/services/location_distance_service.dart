@@ -19,9 +19,28 @@ class LocationDistanceService {
           "$toLng,$toLat"
           "?access_token=${AppEnv.mapboxToken}&overview=false";
 
-      final res = await http.get(Uri.parse(url));
+      final res =
+          await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
+
+      if (res.statusCode != 200) {
+        throw Exception('Mapbox directions failed (${res.statusCode})');
+      }
+
       final data = jsonDecode(res.body);
-      final distance = data["routes"][0]["distance"];
+      final routes = data is Map ? data['routes'] : null;
+      if (routes is! List || routes.isEmpty) {
+        throw Exception('Mapbox directions returned no routes');
+      }
+
+      final first = routes.first;
+      if (first is! Map) {
+        throw Exception('Invalid Mapbox directions response');
+      }
+
+      final distance = first['distance'];
+      if (distance is! num) {
+        throw Exception('Invalid distance value');
+      }
 
       return distance.toDouble();
     } catch (error, stack) {

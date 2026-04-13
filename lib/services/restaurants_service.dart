@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/services/error_logger.dart';
@@ -7,11 +9,29 @@ class RestaurantsService {
   RestaurantsService._();
 
   static final SupabaseClient _client = Supabase.instance.client;
-  static final Map<String, Map<String, dynamic>> _restaurantCache = {};
-  static final Map<String, int> _restaurantCacheScopes = {};
+  static final Map<String, _RestaurantCacheEntry> _restaurantCache = {};
+  static const Duration _listCacheTtl = Duration(minutes: 2);
+  static const Duration _restaurantCacheTtl = Duration(minutes: 10);
+  static List<Map<String, dynamic>>? _allActiveCache;
+  static DateTime? _allActiveCacheAt;
+  static final Map<String, _RestaurantListCacheEntry> _nearbyCache = {};
 
   static const int _orderScope = 2;
   static const int _detailsScope = 3;
+
+  static void invalidateListCaches() {
+    _allActiveCache = null;
+    _allActiveCacheAt = null;
+    _nearbyCache.clear();
+  }
+
+  static void invalidateRestaurantCacheById(String identifier) {
+    final id = identifier.trim();
+    if (id.isEmpty) {
+      return;
+    }
+    _restaurantCache.remove(id);
+  }
 
   static const String _listSelect = '''
       
@@ -20,6 +40,9 @@ class RestaurantsService {
       name,
       image_url,
   address,
+  lat,
+  lng,
+  service_radius_meters,
   open_time,
   close_time
     ''';
@@ -31,7 +54,8 @@ class RestaurantsService {
       name,
       image_url,
       lat,
-      lng
+      lng,
+      service_radius_meters
 
     ''';
 
@@ -46,6 +70,9 @@ class RestaurantsService {
       full_address,
       location_address,
       street_address,
+      lat,
+      lng,
+      service_radius_meters,
       street,
       district,
       city,
@@ -57,15 +84,29 @@ class RestaurantsService {
       restaurant_id,
       name,
       image_url,
+      phone,
       address,
+      lat,
+      lng,
+      service_radius_meters,
       open_time,
       close_time
     ''';
 
   /* ===================== ALL ===================== */
 
-  static Future<List<Map<String, dynamic>>> getAllActive() async {
+  static Future<List<Map<String, dynamic>>> getAllActive({
+    bool forceRefresh = false,
+  }) async {
     try {
+      final hasValidAllActiveCache = !forceRefresh &&
+          _allActiveCache != null &&
+          _allActiveCacheAt != null &&
+          DateTime.now().difference(_allActiveCacheAt!) <= _listCacheTtl;
+      if (hasValidAllActiveCache) {
+        return _allActiveCache!;
+      }
+
       final res =
           await SessionManager.instance.runWithValidSession<List<dynamic>>(
         () => _client.from('managers').select(_listSelect),
@@ -73,11 +114,14 @@ class RestaurantsService {
 
       if (res == null) return [];
 
-      return res
+      final restaurants = res
           .whereType<Map>()
           .map((row) =>
               _normalizeManagerRestaurant(Map<String, dynamic>.from(row)))
           .toList(growable: false);
+      _allActiveCache = restaurants;
+      _allActiveCacheAt = DateTime.now();
+      return restaurants;
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'restaurants_service.getAllActive',
@@ -93,8 +137,18 @@ class RestaurantsService {
   static Future<List<Map<String, dynamic>>> getNearby({
     required double latitude,
     required double longitude,
+    bool forceRefresh = false,
   }) async {
     try {
+      final cacheKey = _nearbyCacheKey(
+        latitude: latitude,
+        longitude: longitude,
+      );
+      final cachedNearby = forceRefresh ? null : _nearbyCache[cacheKey];
+      if (cachedNearby != null && !cachedNearby.isExpired) {
+        return cachedNearby.value;
+      }
+
       final rpcRows =
           await SessionManager.instance.runWithValidSession<List<dynamic>>(
         () => _client.rpc(
@@ -130,7 +184,7 @@ class RestaurantsService {
         requiredScope: _orderScope,
       );
 
-      return snapshots.map((row) {
+      final nearbyRestaurants = snapshots.map((row) {
         final identifier = _stringValue(row['restaurant_id']) ??
             _stringValue(row['manager_id']) ??
             '';
@@ -145,11 +199,17 @@ class RestaurantsService {
             'manager_id': _stringValue(row['manager_id']) ?? '',
             'lat': row['lat'],
             'lng': row['lng'],
+            'service_radius_meters': row['service_radius_meters'],
           },
         );
         _cacheRestaurant(merged, _orderScope);
         return merged;
       }).toList(growable: false);
+      _nearbyCache[cacheKey] = _RestaurantListCacheEntry(
+        value: nearbyRestaurants,
+        cachedAt: DateTime.now(),
+      );
+      return nearbyRestaurants;
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'restaurants_service.getNearby',
@@ -191,6 +251,7 @@ class RestaurantsService {
 
   static String managerIdOf(Map<String, dynamic> restaurant) {
     return _stringValue(restaurant['manager_id']) ??
+        _stringValue(restaurant['user_id']) ??
         _stringValue(restaurant['id']) ??
         '';
   }
@@ -198,6 +259,7 @@ class RestaurantsService {
   static String restaurantIdOf(Map<String, dynamic> restaurant) {
     return _stringValue(restaurant['restaurant_id']) ??
         _stringValue(restaurant['id']) ??
+        _stringValue(restaurant['manager_id']) ??
         '';
   }
 
@@ -245,6 +307,68 @@ class RestaurantsService {
     return _toDouble(restaurant['lng']) ??
         _toDouble(restaurant['longitude']) ??
         _toDouble(restaurant['restaurant_lng']);
+  }
+
+  static double? serviceRadiusMetersOf(Map<String, dynamic> restaurant) {
+    return _toDouble(restaurant['service_radius_meters']) ??
+        _toDouble(restaurant['service_radius']) ??
+        _toDouble(restaurant['radius_meters']);
+  }
+
+  static Map<String, dynamic>? normalizeRealtimeManagerRow(
+    Map<dynamic, dynamic> row,
+  ) {
+    final normalized =
+        _normalizeManagerRestaurant(Map<String, dynamic>.from(row));
+    final restaurantId = restaurantIdOf(normalized);
+    if (restaurantId.isEmpty) {
+      return null;
+    }
+    _cacheRestaurant(normalized, _orderScope);
+    return normalized;
+  }
+
+  static bool isWithinDeliveryRange({
+    required Map<String, dynamic> restaurant,
+    required double? customerLat,
+    required double? customerLng,
+  }) {
+    if (customerLat == null || customerLng == null) {
+      return true;
+    }
+    final lat = restaurantLatOf(restaurant);
+    final lng = restaurantLngOf(restaurant);
+    final radius = serviceRadiusMetersOf(restaurant);
+
+    if (lat == null || lng == null || radius == null || radius <= 0) {
+      return true;
+    }
+
+    final distance = haversineDistanceMeters(
+      fromLat: customerLat,
+      fromLng: customerLng,
+      toLat: lat,
+      toLng: lng,
+    );
+    return distance <= radius;
+  }
+
+  static double haversineDistanceMeters({
+    required double fromLat,
+    required double fromLng,
+    required double toLat,
+    required double toLng,
+  }) {
+    const earthRadius = 6371000.0;
+    final dLat = _degToRad(toLat - fromLat);
+    final dLng = _degToRad(toLng - fromLng);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_degToRad(fromLat)) *
+            math.cos(_degToRad(toLat)) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return earthRadius * c;
   }
 
   static String openingTimeOf(Map<String, dynamic> restaurant) {
@@ -355,7 +479,10 @@ class RestaurantsService {
   static Map<String, dynamic> _normalizeManagerRestaurant(
     Map<String, dynamic> row,
   ) {
-    final managerId = _stringValue(row['user_id']) ?? '';
+    final managerId = _stringValue(row['user_id']) ??
+        _stringValue(row['manager_id']) ??
+        _stringValue(row['id']) ??
+        '';
     final restaurantId = _stringValue(row['restaurant_id']) ?? managerId;
 
     final normalized = <String, dynamic>{
@@ -365,6 +492,7 @@ class RestaurantsService {
       'id': restaurantId,
       'restaurant_id': restaurantId,
       'manager_id': managerId,
+      'user_id': managerId,
 
       // basic info
       'name': _stringValue(row['name']) ?? 'مطعم',
@@ -375,6 +503,17 @@ class RestaurantsService {
       'address': _stringValue(row['address']),
       'full_address': _stringValue(row['full_address']),
       'location_address': _stringValue(row['location_address']),
+      'street_address': _stringValue(row['street_address']),
+      'street': _stringValue(row['street']),
+      'district': _stringValue(row['district']),
+      'city': _stringValue(row['city']),
+      'area': _stringValue(row['area']),
+      'governorate': _stringValue(row['governorate']),
+
+      // location
+      'lat': _toDouble(row['lat']),
+      'lng': _toDouble(row['lng']),
+      'service_radius_meters': _toDouble(row['service_radius_meters']),
 
       // times
       'open_time': _stringValue(row['open_time']),
@@ -519,35 +658,46 @@ class RestaurantsService {
 
   static Map<String, dynamic>? _cachedRestaurant(
       String identifier, int minScope) {
-    final restaurant = _restaurantCache[identifier];
-    if (restaurant == null) {
+    final entry = _restaurantCache[identifier];
+    if (entry == null) {
       return null;
     }
 
-    if ((_restaurantCacheScopes[identifier] ?? 0) < minScope) {
+    if (entry.isExpired) {
+      _restaurantCache.remove(identifier);
       return null;
     }
 
-    return restaurant;
+    if (entry.scope < minScope) {
+      return null;
+    }
+
+    return entry.value;
   }
 
   static void _cacheRestaurant(Map<String, dynamic> restaurant, int scope) {
     final restaurantId = restaurantIdOf(restaurant);
     final managerId = managerIdOf(restaurant);
+    final now = DateTime.now();
 
     void cacheKey(String key) {
       if (key.isEmpty) {
         return;
       }
 
-      final previous = _restaurantCache[key];
+      final previousEntry = _restaurantCache[key];
+      final previous = previousEntry == null || previousEntry.isExpired
+          ? null
+          : previousEntry.value;
       final merged = previous == null
           ? Map<String, dynamic>.from(restaurant)
           : <String, dynamic>{...previous, ...restaurant};
-      _restaurantCache[key] = merged;
-      final previousScope = _restaurantCacheScopes[key] ?? 0;
-      _restaurantCacheScopes[key] =
-          previousScope > scope ? previousScope : scope;
+      final previousScope = previousEntry?.scope ?? 0;
+      _restaurantCache[key] = _RestaurantCacheEntry(
+        value: merged,
+        scope: previousScope > scope ? previousScope : scope,
+        cachedAt: now,
+      );
     }
 
     cacheKey(restaurantId);
@@ -615,4 +765,44 @@ class RestaurantsService {
     }
     return null;
   }
+
+  static double _degToRad(double degree) {
+    return degree * (math.pi / 180.0);
+  }
+
+  static String _nearbyCacheKey({
+    required double latitude,
+    required double longitude,
+  }) {
+    return '${latitude.toStringAsFixed(3)}:${longitude.toStringAsFixed(3)}';
+  }
+}
+
+class _RestaurantListCacheEntry {
+  const _RestaurantListCacheEntry({
+    required this.value,
+    required this.cachedAt,
+  });
+
+  final List<Map<String, dynamic>> value;
+  final DateTime cachedAt;
+
+  bool get isExpired =>
+      DateTime.now().difference(cachedAt) > RestaurantsService._listCacheTtl;
+}
+
+class _RestaurantCacheEntry {
+  const _RestaurantCacheEntry({
+    required this.value,
+    required this.scope,
+    required this.cachedAt,
+  });
+
+  final Map<String, dynamic> value;
+  final int scope;
+  final DateTime cachedAt;
+
+  bool get isExpired =>
+      DateTime.now().difference(cachedAt) >
+      RestaurantsService._restaurantCacheTtl;
 }

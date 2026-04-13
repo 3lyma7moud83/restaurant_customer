@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '/core/services/error_logger.dart';
+import '/core/theme/app_theme.dart';
 import '/services/profile_service.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -43,13 +44,19 @@ class _ProfilePageState extends State<ProfilePage> {
 
     try {
       final data = await service.getOrCreateProfile();
+      if (!mounted) return;
 
       nameCtrl.text = (data['name'] ?? '').toString();
       phoneCtrl.text = (data['phone'] ?? '').toString();
 
       originalName = nameCtrl.text;
       originalPhone = phoneCtrl.text;
-    } catch (_) {
+    } catch (err, stack) {
+      await ErrorLogger.logError(
+        module: 'profile_page.loadProfile',
+        error: err,
+        stack: stack,
+      );
       error = ErrorLogger.userMessage;
     }
 
@@ -109,6 +116,8 @@ class _ProfilePageState extends State<ProfilePage> {
 
   @override
   Widget build(BuildContext context) {
+    final viewInsets = MediaQuery.of(context).viewInsets.bottom;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('الملف الشخصي'),
@@ -118,36 +127,44 @@ class _ProfilePageState extends State<ProfilePage> {
           ? const Center(child: CircularProgressIndicator())
           : error != null
               ? _errorView()
-              : RefreshIndicator(
-                  onRefresh: _loadProfile,
-                  child: ListView(
-                    padding: const EdgeInsets.all(16),
-                    children: [
-                      _field('الاسم', nameCtrl),
-                      _field(
-                        'رقم التليفون',
-                        phoneCtrl,
-                        keyboard: TextInputType.phone,
-                      ),
-                      const SizedBox(height: 24),
-                      SizedBox(
-                        height: 48,
-                        child: ElevatedButton(
-                          onPressed:
-                              (!hasChanges || saving) ? null : _saveProfile,
-                          child: saving
-                              ? const SizedBox(
-                                  width: 22,
-                                  height: 22,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Text('حفظ'),
+              : AnimatedPadding(
+                  duration: AppTheme.sectionTransitionDuration,
+                  curve: AppTheme.emphasizedCurve,
+                  padding: EdgeInsets.only(bottom: viewInsets),
+                  child: RefreshIndicator(
+                    onRefresh: _loadProfile,
+                    child: ListView(
+                      physics: AppTheme.bouncingScrollPhysics,
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      padding: const EdgeInsets.all(16),
+                      children: [
+                        _field('الاسم', nameCtrl),
+                        _field(
+                          'رقم التليفون',
+                          phoneCtrl,
+                          keyboard: TextInputType.phone,
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 24),
+                        SizedBox(
+                          height: 48,
+                          child: ElevatedButton(
+                            onPressed:
+                                (!hasChanges || saving) ? null : _saveProfile,
+                            child: saving
+                                ? const SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Text('حفظ'),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
     );

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/services/error_logger.dart';
+import '../services/session_manager.dart';
 
 class OrderChatPage extends StatefulWidget {
   final String orderId;
@@ -18,7 +19,8 @@ class _OrderChatPageState extends State<OrderChatPage> {
   final _controller = TextEditingController();
   final _supabase = Supabase.instance.client;
 
-  List messages = [];
+  List<Map<String, dynamic>> messages = [];
+  final Set<String> _messageIds = <String>{};
   RealtimeChannel? _channel;
 
   @override
@@ -42,14 +44,31 @@ class _OrderChatPageState extends State<OrderChatPage> {
   //================================
   Future<void> _load() async {
     try {
-      final res = await _supabase
-          .from("order_messages")
-          .select()
-          .eq("order_id", widget.orderId)
-          .order("created_at");
+      final res =
+          await SessionManager.instance.runWithValidSession<List<dynamic>>(
+        () => _supabase
+            .from("order_messages")
+            .select('id, sender_id, message, created_at')
+            .eq("order_id", widget.orderId)
+            .order("created_at"),
+        requireSession: true,
+      );
+      if (res == null || !mounted) return;
 
-      if (!mounted) return;
-      setState(() => messages = res);
+      final nextMessages = res
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList(growable: false);
+
+      _messageIds
+        ..clear()
+        ..addAll(
+          nextMessages
+              .map((m) => m['id']?.toString() ?? '')
+              .where((id) => id.isNotEmpty),
+        );
+
+      setState(() => messages = nextMessages);
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'order_chat_page.load',
@@ -79,10 +98,10 @@ class _OrderChatPageState extends State<OrderChatPage> {
           ),
           callback: (payload) {
             if (!mounted) return;
-            final newMsg = payload.newRecord;
-            final id = newMsg['id'];
-            final exists = id != null && messages.any((m) => m['id'] == id);
-            if (exists) return;
+            final newMsg = Map<String, dynamic>.from(payload.newRecord);
+            final id = newMsg['id']?.toString() ?? '';
+            if (id.isEmpty || _messageIds.contains(id)) return;
+            _messageIds.add(id);
             setState(() {
               messages.add(newMsg);
             });
@@ -101,11 +120,20 @@ class _OrderChatPageState extends State<OrderChatPage> {
     if (userId == null) return;
 
     try {
-      await _supabase.from("order_messages").insert({
-        "order_id": widget.orderId,
-        "sender_id": userId,
-        "message": text,
-      });
+      final sent = await SessionManager.instance.runWithValidSession<bool>(
+        () async {
+          await _supabase.from("order_messages").insert({
+            "order_id": widget.orderId,
+            "sender_id": userId,
+            "message": text,
+          });
+          return true;
+        },
+        requireSession: true,
+      );
+      if (sent != true) {
+        return;
+      }
 
       _controller.clear();
     } catch (error, stack) {
@@ -165,22 +193,28 @@ class _OrderChatPageState extends State<OrderChatPage> {
                       color: mine ? Colors.green : Colors.grey.shade300,
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: Text(msg["message"]),
+                    child: Text((msg["message"] ?? '').toString()),
                   ),
                 );
               },
             ),
           ),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(controller: _controller),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(controller: _controller),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.send),
+                    onPressed: _send,
+                  ),
+                ],
               ),
-              IconButton(
-                icon: const Icon(Icons.send),
-                onPressed: _send,
-              )
-            ],
+            ),
           )
         ],
       ),

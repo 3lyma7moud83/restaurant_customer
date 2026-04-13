@@ -1,170 +1,102 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../core/theme/app_theme.dart';
 
-class PressableScale extends StatefulWidget {
-  final Widget child;
-  final VoidCallback onTap;
-  final double pressedScale;
-  final Duration duration;
-  final BorderRadius borderRadius;
+const Duration _kCardAnimationDuration = AppTheme.sectionTransitionDuration;
+const BorderRadius _kRestaurantCardRadius = BorderRadius.all(
+  Radius.circular(22),
+);
 
-  const PressableScale({
+class AppCachedImage extends StatelessWidget {
+  const AppCachedImage({
     super.key,
-    required this.child,
-    required this.onTap,
-    this.pressedScale = 0.97,
-    this.duration = const Duration(milliseconds: 120),
-    this.borderRadius = const BorderRadius.all(Radius.circular(24)),
+    required this.imageUrl,
+    this.fit = BoxFit.cover,
+    this.borderRadius,
+    this.width,
+    this.height,
+    this.placeholder = const _ShimmerPlaceholder(),
+    this.errorWidget = const ImageFallback(),
   });
 
-  @override
-  State<PressableScale> createState() => _PressableScaleState();
-}
-
-class _PressableScaleState extends State<PressableScale> {
-  bool _pressed = false;
-
-  void _setPressed(bool value) {
-    if (_pressed == value) {
-      return;
-    }
-    setState(() => _pressed = value);
-  }
+  final String? imageUrl;
+  final BoxFit fit;
+  final BorderRadius? borderRadius;
+  final double? width;
+  final double? height;
+  final Widget placeholder;
+  final Widget errorWidget;
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedScale(
-      scale: _pressed ? widget.pressedScale : 1,
-      duration: widget.duration,
-      curve: Curves.easeOutCubic,
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: widget.borderRadius,
-        child: InkWell(
-          borderRadius: widget.borderRadius,
-          splashColor: const Color(0x1A000000),
-          highlightColor: Colors.transparent,
-          onTapDown: (_) => _setPressed(true),
-          onTapUp: (_) => _setPressed(false),
-          onTapCancel: () => _setPressed(false),
-          onTap: widget.onTap,
-          child: widget.child,
+    final normalizedUrl = imageUrl?.trim();
+    final imageChild = normalizedUrl == null || normalizedUrl.isEmpty
+        ? errorWidget
+        : Image.network(
+            normalizedUrl,
+            width: width,
+            height: height,
+            fit: fit,
+            filterQuality: FilterQuality.medium,
+            gaplessPlayback: true,
+            frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+              if (frame != null || wasSynchronouslyLoaded) {
+                return child;
+              }
+              return placeholder;
+            },
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) {
+                return child;
+              }
+              return placeholder;
+            },
+            errorBuilder: (_, __, ___) => errorWidget,
+          );
+
+    if (borderRadius == null) {
+      return imageChild;
+    }
+
+    return ClipRRect(
+      borderRadius: borderRadius!,
+      child: imageChild,
+    );
+  }
+}
+
+class RestaurantCardImage extends StatelessWidget {
+  const RestaurantCardImage({
+    super.key,
+    required this.imageUrl,
+  });
+
+  final String? imageUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    return AspectRatio(
+      aspectRatio: 1,
+      child: RepaintBoundary(
+        child: AppCachedImage(
+          imageUrl: imageUrl,
+          placeholder: const _ShimmerPlaceholder(),
+          errorWidget: const ImageFallback(),
         ),
       ),
     );
   }
 }
 
-class RestaurantCardImage extends StatelessWidget {
-  final String? imageUrl;
-  final double? width;
-  final double height;
-  final BorderRadius borderRadius;
-
-  const RestaurantCardImage({
-    super.key,
-    required this.imageUrl,
-    this.width,
-    this.height = 148,
-    this.borderRadius = const BorderRadius.all(Radius.circular(18)),
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: width ?? double.infinity,
-      height: height,
-      child: _FadeShimmerImage(
-        imageUrl: imageUrl,
-        borderRadius: borderRadius,
-      ),
-    );
-  }
-}
-
-class _FadeShimmerImage extends StatefulWidget {
-  final String? imageUrl;
-  final BorderRadius borderRadius;
-
-  const _FadeShimmerImage({
-    required this.imageUrl,
-    required this.borderRadius,
-  });
-
-  @override
-  State<_FadeShimmerImage> createState() => _FadeShimmerImageState();
-}
-
-class _FadeShimmerImageState extends State<_FadeShimmerImage> {
-  bool _loaded = false;
-
-  void _markLoaded() {
-    if (_loaded) {
-      return;
-    }
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        setState(() => _loaded = true);
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final imageUrl = widget.imageUrl?.trim();
-    if (imageUrl == null || imageUrl.isEmpty) {
-      return ImageFallback(borderRadius: widget.borderRadius);
-    }
-
-    return ClipRRect(
-      borderRadius: widget.borderRadius,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          if (!_loaded) const _ShimmerPlaceholder(),
-          AnimatedOpacity(
-            opacity: _loaded ? 1 : 0,
-            duration: const Duration(milliseconds: 280),
-            curve: Curves.easeOut,
-            child: Image.network(
-              imageUrl,
-              fit: BoxFit.cover,
-              loadingBuilder: (context, child, loadingProgress) {
-                if (loadingProgress == null) {
-                  _markLoaded();
-                }
-                return child;
-              },
-              errorBuilder: (context, error, stackTrace) {
-                _markLoaded();
-                return ImageFallback(borderRadius: widget.borderRadius);
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class ImageFallback extends StatelessWidget {
-  final BorderRadius borderRadius;
-
-  const ImageFallback({
-    super.key,
-    required this.borderRadius,
-  });
+  const ImageFallback({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: const Color(0xFFF1F1F1),
-        borderRadius: borderRadius,
-      ),
-      child: const Center(
+    return const DecoratedBox(
+      decoration: BoxDecoration(color: Color(0xFFF1F1F1)),
+      child: Center(
         child: Icon(
           Icons.storefront_rounded,
           color: Colors.black26,
@@ -176,11 +108,6 @@ class ImageFallback extends StatelessWidget {
 }
 
 class RestaurantListCard extends StatelessWidget {
-  final String name;
-  final String? imageUrl;
-  final VoidCallback onTap;
-  final VoidCallback? onInfoTap;
-
   const RestaurantListCard({
     super.key,
     required this.name,
@@ -189,156 +116,378 @@ class RestaurantListCard extends StatelessWidget {
     this.onInfoTap,
   });
 
+  final String name;
+  final String? imageUrl;
+  final VoidCallback onTap;
+  final VoidCallback? onInfoTap;
+
   @override
   Widget build(BuildContext context) {
-    final cardBorderRadius = BorderRadius.circular(22);
-
-    return PressableScale(
+    return _InteractiveRestaurantCard(
       onTap: onTap,
-      borderRadius: cardBorderRadius,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: cardBorderRadius,
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x16000000),
-              blurRadius: 16,
-              offset: Offset(0, 8),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          RepaintBoundary(
+            child: RestaurantCardImage(imageUrl: imageUrl),
+          ),
+          const Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.transparent,
+                      Color(0xB3000000),
+                    ],
+                    stops: [0.52, 1.0],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: onTap,
+                splashFactory: NoSplash.splashFactory,
+                overlayColor: WidgetStateProperty.resolveWith((states) {
+                  if (states.contains(WidgetState.pressed)) {
+                    return Colors.white.withValues(alpha: 0.08);
+                  }
+                  if (states.contains(WidgetState.hovered)) {
+                    return Colors.white.withValues(alpha: 0.04);
+                  }
+                  return null;
+                }),
+              ),
+            ),
+          ),
+          PositionedDirectional(
+            start: 12,
+            end: 12,
+            bottom: 12,
+            child: IgnorePointer(
+              child: _RestaurantCardOverlay(name: name),
+            ),
+          ),
+          if (onInfoTap != null)
+            PositionedDirectional(
+              top: 10,
+              start: 10,
+              child: Material(
+                color: Colors.white.withValues(alpha: 0.92),
+                borderRadius: BorderRadius.circular(14),
+                child: InkWell(
+                  onTap: onInfoTap,
+                  borderRadius: BorderRadius.circular(14),
+                  splashFactory: NoSplash.splashFactory,
+                  overlayColor: WidgetStateProperty.resolveWith((states) {
+                    if (states.contains(WidgetState.pressed)) {
+                      return AppTheme.primary.withValues(alpha: 0.08);
+                    }
+                    if (states.contains(WidgetState.hovered)) {
+                      return AppTheme.primary.withValues(alpha: 0.04);
+                    }
+                    return null;
+                  }),
+                  child: const Padding(
+                    padding: EdgeInsets.all(7),
+                    child: Icon(
+                      Icons.info_outline_rounded,
+                      size: 17,
+                      color: AppTheme.text,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class RestaurantGridSkeleton extends StatelessWidget {
+  const RestaurantGridSkeleton({
+    super.key,
+    required this.crossAxisCount,
+    this.itemCount = 6,
+    this.padding = EdgeInsets.zero,
+    this.physics,
+  });
+
+  final int crossAxisCount;
+  final int itemCount;
+  final EdgeInsets padding;
+  final ScrollPhysics? physics;
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.builder(
+      padding: padding,
+      physics: physics ?? const NeverScrollableScrollPhysics(),
+      cacheExtent: 360,
+      itemCount: itemCount,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: crossAxisCount,
+        mainAxisSpacing: 14,
+        crossAxisSpacing: 14,
+        childAspectRatio: 1,
+      ),
+      itemBuilder: (_, __) => const _RestaurantSkeletonCard(),
+    );
+  }
+}
+
+class _RestaurantCardOverlay extends StatelessWidget {
+  const _RestaurantCardOverlay({
+    required this.name,
+  });
+
+  final String name;
+
+  @override
+  Widget build(BuildContext context) {
+    final displayName = name.trim().isEmpty ? 'مطعم' : name;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          displayName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.right,
+          style: const TextStyle(
+            fontSize: 15,
+            height: 1.2,
+            fontWeight: FontWeight.w900,
+            color: Colors.white,
+          ),
+        ),
+        const SizedBox(height: 6),
+        const Row(
+          children: [
+            Icon(
+              Icons.arrow_back_rounded,
+              size: 16,
+              color: Color(0xDFFFFFFF),
+            ),
+            Spacer(),
+            Flexible(
+              child: Text(
+                'عرض القائمة',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Color(0xF2FFFFFF),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
             ),
           ],
         ),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final imageHeight =
-                (constraints.maxHeight * 0.62).clamp(104.0, 148.0);
+      ],
+    );
+  }
+}
 
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Stack(
-                  children: [
-                    RestaurantCardImage(
-                      imageUrl: imageUrl,
-                      height: imageHeight,
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(22),
-                      ),
-                    ),
-                    if (onInfoTap != null)
-                      PositionedDirectional(
-                        top: 10,
-                        start: 10,
-                        child: Material(
-                          color: Colors.white.withValues(alpha: 0.92),
-                          borderRadius: BorderRadius.circular(14),
-                          child: InkWell(
-                            onTap: onInfoTap,
-                            borderRadius: BorderRadius.circular(14),
-                            child: const Padding(
-                              padding: EdgeInsets.all(7),
-                              child: Icon(
-                                Icons.info_outline_rounded,
-                                size: 17,
-                                color: AppTheme.text,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
+class _RestaurantSkeletonCard extends StatelessWidget {
+  const _RestaurantSkeletonCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: EdgeInsets.zero,
+      elevation: 0,
+      surfaceTintColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(borderRadius: _kRestaurantCardRadius),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        fit: StackFit.expand,
+        children: const [
+          _ShimmerPlaceholder(),
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Color(0x40000000),
                   ],
+                  stops: [0.55, 1.0],
                 ),
-                Padding(
-                  padding: const EdgeInsetsDirectional.fromSTEB(12, 10, 12, 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        name.trim().isEmpty ? 'مطعم' : name,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.right,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          height: 1.2,
-                          fontWeight: FontWeight.w800,
-                          color: AppTheme.text,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: const [
-                          Icon(
-                            Icons.arrow_back_rounded,
-                            size: 16,
-                            color: Color(0xFF98A2B3),
-                          ),
-                          Spacer(),
-                          Text(
-                            'عرض القائمة',
-                            style: TextStyle(
-                              color: AppTheme.primary,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            );
-          },
+              ),
+            ),
+          ),
+          PositionedDirectional(
+            start: 12,
+            end: 12,
+            bottom: 12,
+            child: _SkeletonTextBlock(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SkeletonTextBlock extends StatelessWidget {
+  const _SkeletonTextBlock();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: const [
+        _SkeletonLine(width: 108),
+        SizedBox(height: 8),
+        _SkeletonLine(width: 82),
+      ],
+    );
+  }
+}
+
+class _SkeletonLine extends StatelessWidget {
+  const _SkeletonLine({
+    required this.width,
+  });
+
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Container(
+        width: width,
+        height: 10,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(999),
         ),
       ),
     );
   }
 }
 
-class _ShimmerPlaceholder extends StatefulWidget {
-  const _ShimmerPlaceholder();
+class _InteractiveRestaurantCard extends StatefulWidget {
+  const _InteractiveRestaurantCard({
+    required this.child,
+    required this.onTap,
+  });
+
+  final Widget child;
+  final VoidCallback onTap;
 
   @override
-  State<_ShimmerPlaceholder> createState() => _ShimmerPlaceholderState();
+  State<_InteractiveRestaurantCard> createState() =>
+      _InteractiveRestaurantCardState();
 }
 
-class _ShimmerPlaceholderState extends State<_ShimmerPlaceholder>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1100),
-  )..repeat();
+class _InteractiveRestaurantCardState
+    extends State<_InteractiveRestaurantCard> {
+  bool _pressed = false;
+  bool _hovered = false;
+  bool get _enableAnimations => !kIsWeb;
 
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
+  void _setPressed(bool value) {
+    if (_pressed == value || !mounted) {
+      return;
+    }
+    setState(() => _pressed = value);
+  }
+
+  void _setHovered(bool value) {
+    if (_hovered == value || !mounted) {
+      return;
+    }
+    setState(() => _hovered = value);
   }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) {
-        final slide = _controller.value;
-        return DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment(-1.6 + (2.2 * slide), -0.2),
-              end: Alignment(0.2 + (2.2 * slide), 0.2),
-              colors: const [
-                Color(0xFFE8E8E8),
-                Color(0xFFF5F5F5),
-                Color(0xFFE8E8E8),
+    final duration =
+        _enableAnimations ? _kCardAnimationDuration : Duration.zero;
+    final shadowColor = _pressed
+        ? const Color(0x14000000)
+        : _hovered
+            ? const Color(0x22000000)
+            : const Color(0x16000000);
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => _setHovered(true),
+      onExit: (_) {
+        _setHovered(false);
+        _setPressed(false);
+      },
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => _setPressed(true),
+        onPointerUp: (_) => _setPressed(false),
+        onPointerCancel: (_) => _setPressed(false),
+        child: AnimatedScale(
+          scale: _enableAnimations && _pressed ? 0.97 : 1,
+          duration:
+              _enableAnimations ? AppTheme.microInteractionDuration : duration,
+          curve: AppTheme.emphasizedCurve,
+          child: AnimatedContainer(
+            duration: duration,
+            curve: AppTheme.emphasizedCurve,
+            decoration: BoxDecoration(
+              borderRadius: _kRestaurantCardRadius,
+              boxShadow: [
+                BoxShadow(
+                  color: shadowColor,
+                  blurRadius: _enableAnimations
+                      ? (_pressed ? 18 : (_hovered ? 28 : 22))
+                      : 20,
+                  offset: _enableAnimations
+                      ? Offset(0, _pressed ? 8 : (_hovered ? 18 : 14))
+                      : const Offset(0, 12),
+                ),
               ],
-              stops: const [0.15, 0.5, 0.85],
+            ),
+            child: Material(
+              color: Colors.white,
+              borderRadius: _kRestaurantCardRadius,
+              clipBehavior: Clip.antiAlias,
+              child: widget.child,
             ),
           ),
-        );
-      },
+        ),
+      ),
+    );
+  }
+}
+
+class _ShimmerPlaceholder extends StatelessWidget {
+  const _ShimmerPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return const DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFFE8E8E8),
+            Color(0xFFF5F5F5),
+            Color(0xFFE8E8E8),
+          ],
+        ),
+      ),
     );
   }
 }

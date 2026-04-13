@@ -77,6 +77,13 @@ class OrdersService {
   OrdersService._();
 
   static final SupabaseClient _client = Supabase.instance.client;
+  static const Duration _cacheTtl = Duration(seconds: 30);
+  static final Map<String, _OrderCacheEntry<List<Map<String, dynamic>>>>
+      _customerOrdersCache = {};
+  static final Map<String, _OrderCacheEntry<Map<String, dynamic>>> _orderCache =
+      {};
+  static final Map<String, _OrderCacheEntry<List<Map<String, dynamic>>>>
+      _orderItemsCache = {};
 
   static const List<String> activeStatuses = [
     'pending',
@@ -84,39 +91,45 @@ class OrdersService {
     'on_the_way',
   ];
 
-  static const String _orderSelect = '''
-id,
-restaurant_id,
-customer_id,
-driver_id,
-status,
-total,
-delivery_cost,
-address,
-customer_name,
-customer_phone,
-lat,
-lng,
-receipt_number,
-items_total,
-created_at,
-house_number
-''';
+  static const List<String> _orderOwnerColumns = [
+    'customer_id',
+    'user_id',
+  ];
+  static const String _orderSelect = '*';
   static Future<List<Map<String, dynamic>>> getCustomerOrders(
-    String userId,
-  ) async {
+    String userId, {
+    bool forceRefresh = false,
+  }) async {
     try {
-      final rows =
-          await SessionManager.instance.runWithValidSession<List<dynamic>>(
-        () => _client
-            .from('orders')
-            .select(_orderSelect)
-            .eq('customer_id', userId)
-            .order('created_at', ascending: false),
-        requireSession: true,
+      final cacheKey = userId.trim();
+      final cached = _readCache(
+        _customerOrdersCache,
+        cacheKey,
+        forceRefresh: forceRefresh,
+      );
+      if (cached != null) {
+        return cached;
+      }
+
+      final rows = await _runOrderListQueryWithOwnerFallback(
+        userId: userId,
+        query: (ownerColumn) =>
+            SessionManager.instance.runWithValidSession<List<dynamic>>(
+          () => _client
+              .from('orders')
+              .select(_orderSelect)
+              .eq(ownerColumn, userId)
+              .order('created_at', ascending: false),
+          requireSession: true,
+        ),
       );
 
-      return _hydrateOrders(_mapRows(rows));
+      final orders = await _hydrateOrders(_mapRows(rows));
+      _writeCache(_customerOrdersCache, cacheKey, orders);
+      for (final order in orders) {
+        _writeOrderCache(order);
+      }
+      return orders;
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'orders_service.getCustomerOrders',
@@ -130,32 +143,31 @@ house_number
   static Future<Map<String, dynamic>?> getOrderById(
     String orderId, {
     String? userId,
+    bool forceRefresh = false,
   }) async {
     try {
-      final row = await SessionManager.instance
-          .runWithValidSession<Map<String, dynamic>?>(
-        () async {
-          var query =
-              _client.from('orders').select(_orderSelect).eq('id', orderId);
-          if (userId != null && userId.isNotEmpty) {
-            query = query.eq('customer_id', userId);
-          }
+      final cacheKey = orderId.trim();
+      final cached = _readCache(
+        _orderCache,
+        cacheKey,
+        forceRefresh: forceRefresh,
+      );
+      if (cached != null) {
+        return cached;
+      }
 
-          final data = await query.maybeSingle();
-          if (data == null) {
-            return null;
-          }
-
-          return Map<String, dynamic>.from(data);
-        },
-        requireSession: true,
+      final row = await _fetchOrderRow(
+        orderId: orderId,
+        userId: userId,
       );
 
       if (row == null) {
         return null;
       }
 
-      return _hydrateOrder(row);
+      final hydrated = await _hydrateOrder(row);
+      _writeOrderCache(hydrated);
+      return hydrated;
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'orders_service.getOrderById',
@@ -167,9 +179,20 @@ house_number
   }
 
   static Future<List<Map<String, dynamic>>> getOrderItems(
-    String orderId,
-  ) async {
+    String orderId, {
+    bool forceRefresh = false,
+  }) async {
     try {
+      final cacheKey = orderId.trim();
+      final cached = _readCache(
+        _orderItemsCache,
+        cacheKey,
+        forceRefresh: forceRefresh,
+      );
+      if (cached != null) {
+        return cached;
+      }
+
       final rows =
           await SessionManager.instance.runWithValidSession<List<dynamic>>(
         () => _client
@@ -180,7 +203,9 @@ house_number
         requireSession: true,
       );
 
-      return _mapRows(rows);
+      final items = _mapRows(rows);
+      _writeCache(_orderItemsCache, cacheKey, items);
+      return items;
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'orders_service.getOrderItems',
@@ -192,14 +217,17 @@ house_number
   }
 
   static Future<int> getActiveOrdersCount(String userId) async {
-    final rows =
-        await SessionManager.instance.runWithValidSession<List<dynamic>>(
-      () => _client
-          .from('orders')
-          .select('id')
-          .eq('customer_id', userId)
-          .inFilter('status', activeStatuses),
-      requireSession: true,
+    final rows = await _runOrderListQueryWithOwnerFallback(
+      userId: userId,
+      query: (ownerColumn) =>
+          SessionManager.instance.runWithValidSession<List<dynamic>>(
+        () => _client
+            .from('orders')
+            .select('id')
+            .eq(ownerColumn, userId)
+            .inFilter('status', activeStatuses),
+        requireSession: true,
+      ),
     );
 
     return rows?.length ?? 0;
@@ -213,10 +241,14 @@ house_number
       }
 
       try {
-        return await _createOrderViaRpc(input);
+        final orderId = await _createOrderViaRpc(input);
+        _customerOrdersCache.remove(input.userId.trim());
+        return orderId;
       } on PostgrestException catch (error) {
         if (_looksLikeMissingRpc(error)) {
-          return _createOrderDirect(input);
+          final orderId = await _createOrderDirect(input);
+          _customerOrdersCache.remove(input.userId.trim());
+          return orderId;
         }
         rethrow;
       }
@@ -463,7 +495,7 @@ house_number
     final restaurantMap =
         await RestaurantsService.getOrderRestaurantsByIds(restaurantIds);
 
-    return orders
+    final hydratedOrders = orders
         .map(
           (order) => _attachRestaurantData(
             order,
@@ -471,6 +503,10 @@ house_number
           ),
         )
         .toList(growable: false);
+    for (final order in hydratedOrders) {
+      _writeOrderCache(order);
+    }
+    return hydratedOrders;
   }
 
   static Future<Map<String, dynamic>> _hydrateOrder(
@@ -483,7 +519,9 @@ house_number
 
     final restaurantMap =
         await RestaurantsService.getOrderRestaurantsByIds([restaurantId]);
-    return _attachRestaurantData(order, restaurantMap[restaurantId]);
+    final hydrated = _attachRestaurantData(order, restaurantMap[restaurantId]);
+    _writeOrderCache(hydrated);
+    return hydrated;
   }
 
   static Map<String, dynamic> _attachRestaurantData(
@@ -535,29 +573,11 @@ house_number
 
   static Future<String> _createOrderDirect(CreateOrderInput input) async {
     final receiptNumber = _generateReceiptNumber();
-    final orderRow = await SessionManager.instance
-        .runWithValidSession<Map<String, dynamic>?>(
-      () async {
-        final data = await _client
-            .from('orders')
-            .insert({
-              'restaurant_id': input.restaurantId,
-              'receipt_number': receiptNumber,
-              'status': 'pending',
-              'total_price': input.totalPrice,
-              'delivery_cost': input.deliveryCost,
-              'address': input.address,
-              'customer_name': input.customerName,
-              'customer_phone': input.customerPhone,
-              'customer_lat': input.customerLat,
-              'customer_lng': input.customerLng,
-            })
-            .select('id')
-            .single();
-
-        return Map<String, dynamic>.from(data);
-      },
-      requireSession: true,
+    final orderRow = await _insertOrderRowWithFallback(
+      _buildDirectOrderInsertPayloads(
+        input: input,
+        receiptNumber: receiptNumber,
+      ),
     );
 
     final orderId = _stringValue(orderRow?['id']) ?? '';
@@ -588,15 +608,13 @@ house_number
     required double deliveryCost,
   }) async {
     try {
-      await SessionManager.instance.runWithValidSession<void>(
-        () async {
-          await _client.from('orders').update({
-            'user_id': userId,
-            'total_price': totalPrice,
-            'delivery_cost': deliveryCost,
-          }).eq('id', orderId);
-        },
-        requireSession: true,
+      await _updateOrderRowWithFallback(
+        orderId: orderId,
+        payloads: _buildOrderSynchronizationPayloads(
+          userId: userId,
+          totalPrice: totalPrice,
+          deliveryCost: deliveryCost,
+        ),
       );
     } catch (error, stack) {
       await ErrorLogger.logError(
@@ -615,6 +633,259 @@ house_number
             message.contains('function'));
   }
 
+  static Future<List<dynamic>?> _runOrderListQueryWithOwnerFallback({
+    required String userId,
+    required Future<List<dynamic>?> Function(String ownerColumn) query,
+  }) async {
+    List<dynamic>? fallbackResult;
+    PostgrestException? lastSchemaError;
+
+    for (final ownerColumn in _orderOwnerColumns) {
+      try {
+        final result = await query(ownerColumn);
+        if (result != null && result.isNotEmpty) {
+          return result;
+        }
+        fallbackResult ??= result;
+      } on PostgrestException catch (error) {
+        if (_isSchemaMismatchError(error)) {
+          lastSchemaError = error;
+          continue;
+        }
+        rethrow;
+      }
+    }
+
+    if (fallbackResult != null) {
+      return fallbackResult;
+    }
+    if (lastSchemaError != null) {
+      throw lastSchemaError;
+    }
+    return const [];
+  }
+
+  static Future<Map<String, dynamic>?> _fetchOrderRow({
+    required String orderId,
+    String? userId,
+  }) async {
+    final effectiveUserId =
+        _stringValue(userId) ?? _client.auth.currentUser?.id;
+    if (effectiveUserId == null || effectiveUserId.isEmpty) {
+      return SessionManager.instance.runWithValidSession<Map<String, dynamic>?>(
+        () async {
+          final row = await _client
+              .from('orders')
+              .select(_orderSelect)
+              .eq('id', orderId)
+              .maybeSingle();
+          return row == null ? null : Map<String, dynamic>.from(row);
+        },
+        requireSession: true,
+      );
+    }
+
+    var hadScopedQuery = false;
+    for (final ownerColumn in _orderOwnerColumns) {
+      try {
+        final row = await SessionManager.instance
+            .runWithValidSession<Map<String, dynamic>?>(
+          () async {
+            final data = await _client
+                .from('orders')
+                .select(_orderSelect)
+                .eq('id', orderId)
+                .eq(ownerColumn, effectiveUserId)
+                .maybeSingle();
+            return data == null ? null : Map<String, dynamic>.from(data);
+          },
+          requireSession: true,
+        );
+        hadScopedQuery = true;
+        if (row != null) {
+          return row;
+        }
+      } on PostgrestException catch (error) {
+        if (_isSchemaMismatchError(error)) {
+          continue;
+        }
+        rethrow;
+      }
+    }
+
+    if (hadScopedQuery) {
+      return null;
+    }
+
+    return SessionManager.instance.runWithValidSession<Map<String, dynamic>?>(
+      () async {
+        final row = await _client
+            .from('orders')
+            .select(_orderSelect)
+            .eq('id', orderId)
+            .maybeSingle();
+        return row == null ? null : Map<String, dynamic>.from(row);
+      },
+      requireSession: true,
+    );
+  }
+
+  static List<Map<String, dynamic>> _buildDirectOrderInsertPayloads({
+    required CreateOrderInput input,
+    required String receiptNumber,
+  }) {
+    final basePayload = <String, dynamic>{
+      'restaurant_id': input.restaurantId,
+      'receipt_number': receiptNumber,
+      'status': 'pending',
+      'delivery_cost': input.deliveryCost,
+      'address': input.address,
+      'customer_name': input.customerName,
+      'customer_phone': input.customerPhone,
+    };
+
+    return [
+      {
+        ...basePayload,
+        'customer_id': input.userId,
+        'total_price': input.totalPrice,
+        'customer_lat': input.customerLat,
+        'customer_lng': input.customerLng,
+      },
+      {
+        ...basePayload,
+        'customer_id': input.userId,
+        'total_price': input.totalPrice,
+        'lat': input.customerLat,
+        'lng': input.customerLng,
+      },
+      {
+        ...basePayload,
+        'customer_id': input.userId,
+        'total': input.totalPrice,
+        'lat': input.customerLat,
+        'lng': input.customerLng,
+      },
+      {
+        ...basePayload,
+        'user_id': input.userId,
+        'total': input.totalPrice,
+        'lat': input.customerLat,
+        'lng': input.customerLng,
+      },
+      {
+        ...basePayload,
+        'user_id': input.userId,
+        'total_price': input.totalPrice,
+        'customer_lat': input.customerLat,
+        'customer_lng': input.customerLng,
+      },
+    ];
+  }
+
+  static Future<Map<String, dynamic>?> _insertOrderRowWithFallback(
+    List<Map<String, dynamic>> payloads,
+  ) async {
+    PostgrestException? lastSchemaError;
+
+    for (final payload in payloads) {
+      try {
+        return await SessionManager.instance
+            .runWithValidSession<Map<String, dynamic>?>(
+          () async {
+            final data = await _client
+                .from('orders')
+                .insert(payload)
+                .select('id')
+                .single();
+            return Map<String, dynamic>.from(data);
+          },
+          requireSession: true,
+        );
+      } on PostgrestException catch (error) {
+        if (_isSchemaMismatchError(error)) {
+          lastSchemaError = error;
+          continue;
+        }
+        rethrow;
+      }
+    }
+
+    if (lastSchemaError != null) {
+      throw lastSchemaError;
+    }
+    throw const PostgrestException(message: 'تعذر إنشاء الطلب.');
+  }
+
+  static List<Map<String, dynamic>> _buildOrderSynchronizationPayloads({
+    required String userId,
+    required double totalPrice,
+    required double deliveryCost,
+  }) {
+    return [
+      {
+        'customer_id': userId,
+        'total_price': totalPrice,
+        'delivery_cost': deliveryCost,
+      },
+      {
+        'customer_id': userId,
+        'total': totalPrice,
+        'delivery_cost': deliveryCost,
+      },
+      {
+        'user_id': userId,
+        'total_price': totalPrice,
+        'delivery_cost': deliveryCost,
+      },
+      {
+        'user_id': userId,
+        'total': totalPrice,
+        'delivery_cost': deliveryCost,
+      },
+    ];
+  }
+
+  static Future<void> _updateOrderRowWithFallback({
+    required String orderId,
+    required List<Map<String, dynamic>> payloads,
+  }) async {
+    PostgrestException? lastSchemaError;
+
+    for (final payload in payloads) {
+      try {
+        await SessionManager.instance.runWithValidSession<void>(
+          () async {
+            await _client.from('orders').update(payload).eq('id', orderId);
+          },
+          requireSession: true,
+        );
+        return;
+      } on PostgrestException catch (error) {
+        if (_isSchemaMismatchError(error)) {
+          lastSchemaError = error;
+          continue;
+        }
+        rethrow;
+      }
+    }
+
+    if (lastSchemaError != null) {
+      throw lastSchemaError;
+    }
+  }
+
+  static bool _isSchemaMismatchError(PostgrestException error) {
+    final message = error.message.toLowerCase();
+    return error.code == 'PGRST204' ||
+        message.contains('schema cache') ||
+        message.contains('could not find') ||
+        (message.contains('column') &&
+            (message.contains('does not exist') ||
+                message.contains('not found') ||
+                message.contains('unknown')));
+  }
+
   static String _generateReceiptNumber() {
     final now = DateTime.now();
     final random = Random();
@@ -630,4 +901,58 @@ house_number
     }
     return text;
   }
+
+  static T? _readCache<T>(
+    Map<String, _OrderCacheEntry<T>> cache,
+    String key, {
+    required bool forceRefresh,
+  }) {
+    if (forceRefresh) {
+      return null;
+    }
+
+    final entry = cache[key];
+    if (entry == null || entry.isExpired) {
+      return null;
+    }
+
+    return entry.value;
+  }
+
+  static void _writeCache<T>(
+    Map<String, _OrderCacheEntry<T>> cache,
+    String key,
+    T value,
+  ) {
+    if (key.isEmpty) {
+      return;
+    }
+
+    cache[key] = _OrderCacheEntry(
+      value: value,
+      cachedAt: DateTime.now(),
+    );
+  }
+
+  static void _writeOrderCache(Map<String, dynamic> order) {
+    final orderId = idOf(order);
+    if (orderId.isEmpty) {
+      return;
+    }
+
+    _writeCache(_orderCache, orderId, order);
+  }
+}
+
+class _OrderCacheEntry<T> {
+  const _OrderCacheEntry({
+    required this.value,
+    required this.cachedAt,
+  });
+
+  final T value;
+  final DateTime cachedAt;
+
+  bool get isExpired =>
+      DateTime.now().difference(cachedAt) > OrdersService._cacheTtl;
 }

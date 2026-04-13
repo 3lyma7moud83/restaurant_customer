@@ -1,14 +1,54 @@
-allprojects {
+import org.gradle.authentication.http.BasicAuthentication
+
+buildscript {
     repositories {
         google()
         mavenCentral()
     }
+    dependencies {
+        classpath 'com.google.gms:google-services:4.3.15' // 🔥 مهم جدًا
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven {
+            url "https://api.mapbox.com/downloads/v2/releases/maven"
+            authentication {
+                basic(BasicAuthentication)
+            }
+            credentials {
+                username = "mapbox"
+                password =
+                        (project.findProperty("MAPBOX_DOWNLOADS_TOKEN")
+                                ?: System.getenv("MAPBOX_DOWNLOADS_TOKEN")
+                                ?: "")
+            }
+        }
+        maven {
+            url "https://api.mapbox.com/downloads/v2/snapshots/maven"
+            authentication {
+                basic(BasicAuthentication)
+            }
+            credentials {
+                username = "mapbox"
+                password =
+                        (project.findProperty("MAPBOX_DOWNLOADS_TOKEN")
+                                ?: System.getenv("MAPBOX_DOWNLOADS_TOKEN")
+                                ?: "")
+            }
+        }
+    }
 }
 
 rootProject.buildDir = "../build"
+
 subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
 }
+
 subprojects {
     project.evaluationDependsOn(":app")
 }
