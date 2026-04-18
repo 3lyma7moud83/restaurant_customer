@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class AppEnv {
@@ -9,10 +10,11 @@ class AppEnv {
     'prod',
   };
   static const String _defaultEnvironment = 'dev';
+  static const String _primaryEnvFile = 'assets/env/app.env';
 
   static bool _loaded = false;
   static String _activeEnvironment = _defaultEnvironment;
-  static String _loadedFile = '.env';
+  static String _loadedFile = _primaryEnvFile;
 
   static String get environment => _activeEnvironment;
   static String get loadedFile => _loadedFile;
@@ -36,59 +38,30 @@ class AppEnv {
       return;
     }
 
-    final requestedEnvironment = _resolveRequestedEnvironment();
-    final filesToTry = <String>[
-      if (requestedEnvironment != null) '.env.$requestedEnvironment',
-      '.env',
-    ];
-
-    StackTrace? lastLoadStack;
-    for (final file in filesToTry) {
-      try {
-        await dotenv.load(fileName: file);
-        _loadedFile = file;
-        _activeEnvironment = _resolveActiveEnvironment(
-          requestedEnvironment: requestedEnvironment,
-          envValueFromFile: dotenv.env['APP_ENV'],
-          loadedFile: file,
-        );
-        _validateRequiredValues();
-        _loaded = true;
-        return;
-      } catch (_, stack) {
-        lastLoadStack = stack;
-      }
-    }
-
-    Error.throwWithStackTrace(
-      StateError(
-        'Unable to load environment config. '
-        'Tried files: ${filesToTry.join(', ')}.',
-      ),
-      lastLoadStack ?? StackTrace.current,
-    );
-  }
-
-  static String? _resolveRequestedEnvironment() {
-    final fromDefine = const String.fromEnvironment(
-      'APP_ENV',
-      defaultValue: '',
-    );
-    if (fromDefine.trim().isEmpty) {
-      return null;
-    }
-
-    final normalized = _normalizeEnvironment(fromDefine);
-    if (normalized == null) {
-      throw StateError(
-        'Invalid APP_ENV="$fromDefine". Allowed values: dev, staging, prod.',
+    try {
+      await dotenv.load(fileName: _primaryEnvFile);
+      _loadedFile = _primaryEnvFile;
+      _activeEnvironment = _resolveActiveEnvironment(
+        envValueFromFile: dotenv.env['APP_ENV'],
+        loadedFile: _primaryEnvFile,
+      );
+      _validateRequiredValues();
+      _loaded = true;
+      debugPrint('ENV LOADED SUCCESSFULLY');
+    } catch (error, stack) {
+      debugPrint(
+        '[env] Unable to load environment file "$_primaryEnvFile": $error',
+      );
+      Error.throwWithStackTrace(
+        StateError(
+          'Unable to load environment config from $_primaryEnvFile.',
+        ),
+        stack,
       );
     }
-    return normalized;
   }
 
   static String _resolveActiveEnvironment({
-    required String? requestedEnvironment,
     required String? envValueFromFile,
     required String loadedFile,
   }) {
@@ -103,9 +76,6 @@ class AppEnv {
       );
     }
 
-    if (requestedEnvironment != null) {
-      return requestedEnvironment;
-    }
     if (normalizedFromFile != null) {
       return normalizedFromFile;
     }

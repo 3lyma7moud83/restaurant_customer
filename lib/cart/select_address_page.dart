@@ -52,7 +52,25 @@ class _SelectAddressPageState extends State<SelectAddressPage>
   LatLng? _selectedPoint;
   LatLng? _currentLocationPoint;
 
-  String get _mapboxToken => AppEnv.mapboxToken;
+  String? get _mapboxToken {
+    try {
+      final value = AppEnv.mapboxToken.trim();
+      return value.isEmpty ? null : value;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String get _tileUrlTemplate {
+    final token = _mapboxToken;
+    if (token == null) {
+      return 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+    }
+
+    return _satelliteMode
+        ? 'https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/256/{z}/{x}/{y}@2x?access_token=$token'
+        : 'https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/{z}/{x}/{y}@2x?access_token=$token';
+  }
 
   @override
   void initState() {
@@ -254,11 +272,24 @@ class _SelectAddressPageState extends State<SelectAddressPage>
   }
 
   Future<void> _resolveAddress(LatLng point) async {
+    final token = _mapboxToken;
+    if (token == null) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        loadingAddress = false;
+        _statusMessage =
+            'تعذر تحميل عنوان تلقائيًا بسبب إعدادات الخرائط. اكتب العنوان يدويًا ثم أكد.';
+      });
+      return;
+    }
+
     final requestId = ++_addressRequestId;
     final details = await LocationService.getAddressDetails(
       lat: point.latitude,
       lng: point.longitude,
-      token: _mapboxToken,
+      token: token,
     );
 
     if (!mounted || requestId != _addressRequestId) {
@@ -376,9 +407,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
             ),
             children: [
               TileLayer(
-                urlTemplate: _satelliteMode
-                    ? 'https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/256/{z}/{x}/{y}@2x?access_token=$_mapboxToken'
-                    : 'https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/{z}/{x}/{y}@2x?access_token=$_mapboxToken',
+                urlTemplate: _tileUrlTemplate,
               ),
               if (_currentLocationPoint != null)
                 MarkerLayer(

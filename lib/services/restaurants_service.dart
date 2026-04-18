@@ -287,6 +287,36 @@ class RestaurantsService {
     return restaurantImageOf(restaurant);
   }
 
+  static double cardRatingOf(Map<String, dynamic> restaurant) {
+    final rating = _toDouble(restaurant['rating']) ??
+        _toDouble(restaurant['avg_rating']) ??
+        _toDouble(restaurant['stars']) ??
+        _toDouble(restaurant['review_score']);
+    final normalized = rating == null ? 4.5 : rating.clamp(0, 5).toDouble();
+    return normalized;
+  }
+
+  static int cardDeliveryMinutesOf(Map<String, dynamic> restaurant) {
+    final minutes = (_toDouble(restaurant['delivery_time_min']) ??
+            _toDouble(restaurant['delivery_minutes']) ??
+            _toDouble(restaurant['eta_minutes']) ??
+            _toDouble(restaurant['eta_min']) ??
+            _toDouble(restaurant['prep_time_minutes']))
+        ?.round();
+    final normalized = minutes ?? 30;
+    return normalized.clamp(10, 180);
+  }
+
+  static double cardDeliveryFeeOf(Map<String, dynamic> restaurant) {
+    final fee = _toDouble(restaurant['delivery_fee']) ??
+        _toDouble(restaurant['delivery_cost']) ??
+        _toDouble(restaurant['fee']);
+    if (fee == null || !fee.isFinite || fee < 0) {
+      return 0;
+    }
+    return fee;
+  }
+
   static String restaurantAddressOf(Map<String, dynamic> restaurant) {
     return _stringValue(restaurant['address']) ??
         _stringValue(restaurant['full_address']) ??
@@ -518,6 +548,11 @@ class RestaurantsService {
       // times
       'open_time': _stringValue(row['open_time']),
       'close_time': _stringValue(row['close_time']),
+
+      // UI card metadata (optional from backend, with runtime defaults)
+      'rating': cardRatingOf(row),
+      'delivery_time_min': cardDeliveryMinutesOf(row),
+      'delivery_fee': cardDeliveryFeeOf(row),
     };
 
     return normalized;

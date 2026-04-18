@@ -19,7 +19,16 @@ const AndroidNotificationChannel _ordersNotificationChannel =
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await AppNotificationService.ensureFirebaseInitialized();
+  try {
+    await AppNotificationService.ensureFirebaseInitialized();
+  } catch (error, stack) {
+    await ErrorLogger.logError(
+      module: 'notification_service.background.initialize_firebase',
+      error: error,
+      stack: stack,
+    );
+    return;
+  }
   debugPrint(
     '[FCM][background] title=${message.notification?.title} '
     'body=${message.notification?.body} data=${message.data}',
@@ -31,7 +40,7 @@ class AppNotificationService {
 
   static final AppNotificationService instance = AppNotificationService._();
 
-  final FirebaseMessaging _messaging = FirebaseMessaging.instance;
+  FirebaseMessaging? _messaging;
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
 
@@ -43,6 +52,10 @@ class AppNotificationService {
   bool _initialized = false;
   bool _available = false;
   String? _lastKnownToken;
+
+  FirebaseMessaging get _messagingInstance {
+    return _messaging ??= FirebaseMessaging.instance;
+  }
 
   static Future<void> ensureFirebaseInitialized() async {
     if (Firebase.apps.isNotEmpty) {
@@ -71,15 +84,31 @@ class AppNotificationService {
       return;
     }
 
+    if (kIsWeb) {
+      try {
+        await ensureFirebaseInitialized();
+      } catch (error, stack) {
+        await ErrorLogger.logError(
+          module: 'notification_service.initialize.web',
+          error: error,
+          stack: stack,
+        );
+      }
+
+      debugPrint(
+        '[FCM] Web runtime detected. firebase_messaging listeners are skipped.',
+      );
+      _available = false;
+      return;
+    }
+
     try {
       await ensureFirebaseInitialized();
+      _messaging = FirebaseMessaging.instance;
       await _initializeLocalNotifications();
       await _requestNotificationPermissions();
 
-      if (!kIsWeb) {
-        FirebaseMessaging.onBackgroundMessage(
-            firebaseMessagingBackgroundHandler);
-      }
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
       _foregroundSubscription = FirebaseMessaging.onMessage.listen(
         (message) => unawaited(_handleForegroundMessage(message)),
@@ -87,7 +116,7 @@ class AppNotificationService {
       _openedAppSubscription = FirebaseMessaging.onMessageOpenedApp.listen(
         (message) => _logIncomingMessage(message, source: 'opened_app'),
       );
-      _tokenRefreshSubscription = _messaging.onTokenRefresh.listen(
+      _tokenRefreshSubscription = _messagingInstance.onTokenRefresh.listen(
         (token) {
           _lastKnownToken = token;
           debugPrint('[FCM] token refreshed: ${_maskToken(token)}');
@@ -112,14 +141,12 @@ class AppNotificationService {
         },
       );
 
-      final initialMessage = await _messaging.getInitialMessage();
+      final initialMessage = await _messagingInstance.getInitialMessage();
       if (initialMessage != null) {
         _logIncomingMessage(initialMessage, source: 'initial_message');
       }
 
-      final token = await _messaging.getToken(
-        vapidKey: kIsWeb ? AppFirebaseOptions.webPushVapidKey : null,
-      );
+      final token = await _messagingInstance.getToken();
       _lastKnownToken = token;
       debugPrint('[FCM] startup token: ${_maskToken(token)}');
       await _syncTokenToSupabase(token);
@@ -136,6 +163,10 @@ class AppNotificationService {
   }
 
   Future<void> syncTokenIfPossible() async {
+    if (kIsWeb) {
+      return;
+    }
+
     if (!_initialized) {
       await initialize();
     }
@@ -144,9 +175,7 @@ class AppNotificationService {
     }
 
     try {
-      final token = await _messaging.getToken(
-        vapidKey: kIsWeb ? AppFirebaseOptions.webPushVapidKey : null,
-      );
+      final token = await _messagingInstance.getToken();
       _lastKnownToken = token;
       await _syncTokenToSupabase(token);
     } catch (error, stack) {
@@ -188,7 +217,7 @@ class AppNotificationService {
   }
 
   Future<void> _requestNotificationPermissions() async {
-    final settings = await _messaging.requestPermission(
+    final settings = await _messagingInstance.requestPermission(
       alert: true,
       badge: true,
       sound: true,

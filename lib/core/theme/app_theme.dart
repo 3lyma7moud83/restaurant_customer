@@ -15,10 +15,9 @@ class AppTheme {
   static const Color textMuted = Color(0xFF707070);
   static const Color success = Color(0xFF1F8A5B);
   static const List<String> fallbackFonts = <String>[
+    'Noto Sans',
     'Noto Sans Arabic',
-    'Noto Naskh Arabic',
-    'Arial',
-    'sans-serif',
+    'Noto Color Emoji',
   ];
 
   static const Duration microInteractionDuration = Duration(milliseconds: 140);

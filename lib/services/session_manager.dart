@@ -39,6 +39,10 @@ class SessionManager {
     _hadAuthenticatedSession = _client.auth.currentSession != null;
 
     _authSubscription = _client.auth.onAuthStateChange.listen((data) {
+      if (data.event == AuthChangeEvent.signedOut) {
+        _hadAuthenticatedSession = false;
+        return;
+      }
       final session = data.session;
       if (session != null) {
         _hadAuthenticatedSession = true;
@@ -230,6 +234,9 @@ class SessionManager {
   bool _isSessionExpiredMessage(String message) {
     final normalized = message.toLowerCase();
     return normalized.contains('jwt expired') ||
+        normalized.contains('token has expired') ||
+        normalized.contains('token expired') ||
+        normalized.contains('invalidjwttoken') ||
         normalized.contains('session expired') ||
         normalized.contains('refresh token') ||
         normalized.contains('invalid jwt');

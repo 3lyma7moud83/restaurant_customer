@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -58,6 +59,7 @@ class CreateOrderInput {
     required this.customerLng,
     required this.totalPrice,
     required this.deliveryCost,
+    this.paymentMethod,
     required this.items,
   });
 
@@ -70,6 +72,8 @@ class CreateOrderInput {
   final double customerLng;
   final double totalPrice;
   final double deliveryCost;
+  // Reserved for upcoming online payment integrations (e.g. Stripe).
+  final String? paymentMethod;
   final List<CreateOrderItemInput> items;
 }
 
@@ -345,19 +349,39 @@ class OrdersService {
   }
 
   static double? customerLatOf(Map<String, dynamic> order) {
-    return toDouble(order['customer_lat']) ?? toDouble(order['lat']);
+    return toDouble(order['customer_lat']) ??
+        toDouble(order['delivery_lat']) ??
+        toDouble(order['destination_lat']) ??
+        toDouble(order['lat']) ??
+        _coordinateFromDynamic(order['delivery_location'], isLatitude: true) ??
+        _coordinateFromDynamic(order['destination'], isLatitude: true) ??
+        _coordinateFromDynamic(order['customer_location'], isLatitude: true) ??
+        _coordinateFromDynamic(order['google_order'], isLatitude: true);
   }
 
   static double? customerLngOf(Map<String, dynamic> order) {
-    return toDouble(order['customer_lng']) ?? toDouble(order['lng']);
+    return toDouble(order['customer_lng']) ??
+        toDouble(order['delivery_lng']) ??
+        toDouble(order['destination_lng']) ??
+        toDouble(order['lng']) ??
+        _coordinateFromDynamic(order['delivery_location'], isLatitude: false) ??
+        _coordinateFromDynamic(order['destination'], isLatitude: false) ??
+        _coordinateFromDynamic(order['customer_location'], isLatitude: false) ??
+        _coordinateFromDynamic(order['google_order'], isLatitude: false);
   }
 
   static double? driverLatOf(Map<String, dynamic> order) {
-    return toDouble(order['driver_lat']);
+    return toDouble(order['driver_lat']) ??
+        toDouble(order['courier_lat']) ??
+        toDouble(order['rider_lat']) ??
+        _coordinateFromDynamic(order['driver_location'], isLatitude: true);
   }
 
   static double? driverLngOf(Map<String, dynamic> order) {
-    return toDouble(order['driver_lng']);
+    return toDouble(order['driver_lng']) ??
+        toDouble(order['courier_lng']) ??
+        toDouble(order['rider_lng']) ??
+        _coordinateFromDynamic(order['driver_location'], isLatitude: false);
   }
 
   static String restaurantNameOf(Map<String, dynamic> order) {
@@ -900,6 +924,101 @@ class OrdersService {
       return null;
     }
     return text;
+  }
+
+  static double? _coordinateFromDynamic(
+    dynamic source, {
+    required bool isLatitude,
+  }) {
+    if (source == null) {
+      return null;
+    }
+
+    if (source is Map) {
+      return _coordinateFromMap(
+        Map<String, dynamic>.from(source),
+        isLatitude: isLatitude,
+      );
+    }
+
+    if (source is String) {
+      final text = source.trim();
+      if (text.isEmpty) {
+        return null;
+      }
+
+      final direct = toDouble(text);
+      if (direct != null) {
+        return direct;
+      }
+
+      try {
+        final decoded = jsonDecode(text);
+        return _coordinateFromDynamic(decoded, isLatitude: isLatitude);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    return null;
+  }
+
+  static double? _coordinateFromMap(
+    Map<String, dynamic> source, {
+    required bool isLatitude,
+  }) {
+    final axisKeys = isLatitude
+        ? const [
+            'lat',
+            'latitude',
+            'customer_lat',
+            'delivery_lat',
+            'destination_lat',
+          ]
+        : const [
+            'lng',
+            'lon',
+            'longitude',
+            'customer_lng',
+            'delivery_lng',
+            'destination_lng',
+          ];
+
+    for (final key in axisKeys) {
+      final value = toDouble(source[key]);
+      if (value != null) {
+        return value;
+      }
+    }
+
+    final geoJson = source['geometry'];
+    if (geoJson is Map) {
+      final coords = geoJson['coordinates'];
+      if (coords is List && coords.length >= 2) {
+        final value = isLatitude ? toDouble(coords[1]) : toDouble(coords[0]);
+        if (value != null) {
+          return value;
+        }
+      }
+    }
+
+    for (final nestedKey in const [
+      'location',
+      'coordinates',
+      'destination',
+      'delivery_location',
+      'address',
+    ]) {
+      final nested = _coordinateFromDynamic(
+        source[nestedKey],
+        isLatitude: isLatitude,
+      );
+      if (nested != null) {
+        return nested;
+      }
+    }
+
+    return null;
   }
 
   static T? _readCache<T>(

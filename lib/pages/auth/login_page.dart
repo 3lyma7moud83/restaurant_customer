@@ -4,9 +4,11 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../core/localization/app_localizations.dart';
 import '../../core/services/error_logger.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/ui/app_components.dart';
+import '../../core/ui/responsive.dart';
 import '../../services/google_auth_service.dart';
 import '../../services/notifications/app_notification_service.dart';
 import '../../services/profile_service.dart';
@@ -76,11 +78,11 @@ class _LoginPageState extends State<LoginPage>
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
     if (!_isValidEmail(email)) {
-      _setFeedback(error: 'اكتب بريد إلكتروني صحيح.');
+      _setFeedback(error: context.tr('auth.invalid_email'));
       return;
     }
     if (password.isEmpty) {
-      _setFeedback(error: 'كلمة المرور مطلوبة.');
+      _setFeedback(error: context.tr('auth.password_required'));
       return;
     }
 
@@ -102,19 +104,19 @@ class _LoginPageState extends State<LoginPage>
     final password = _passwordController.text.trim();
 
     if (name.isEmpty) {
-      _setFeedback(error: 'اكتب الاسم أولاً.');
+      _setFeedback(error: context.tr('auth.name_required'));
       return;
     }
     if (phone.length < 8) {
-      _setFeedback(error: 'رقم الهاتف غير صحيح.');
+      _setFeedback(error: context.tr('auth.invalid_phone'));
       return;
     }
     if (!_isValidEmail(email)) {
-      _setFeedback(error: 'اكتب بريد إلكتروني صحيح.');
+      _setFeedback(error: context.tr('auth.invalid_email'));
       return;
     }
     if (password.isEmpty) {
-      _setFeedback(error: 'كلمة المرور مطلوبة.');
+      _setFeedback(error: context.tr('auth.password_required'));
       return;
     }
 
@@ -135,7 +137,7 @@ class _LoginPageState extends State<LoginPage>
         setState(() {
           _loading = false;
           _mode = _AuthMode.login;
-          _successText = 'تم إنشاء الحساب. راجع بريدك ثم سجّل الدخول.';
+          _successText = context.tr('auth.account_created_check_email');
           _errorText = null;
         });
         return;
@@ -152,20 +154,29 @@ class _LoginPageState extends State<LoginPage>
 
   Future<void> _loginWithGoogle() async {
     await _runAuthAction(_AuthAction.google, () async {
+      final cancelledMessage = context.tr('auth.google_cancelled');
+      final redirectingMessage = context.tr('auth.google_redirecting');
       final result = await _googleAuthService.signIn();
+      if (!mounted) {
+        return;
+      }
       switch (result.status) {
         case GoogleAuthStatus.cancelled:
-          _setFeedback(
-              error: result.message ?? 'تم إلغاء تسجيل الدخول عبر Google.');
+          _setFeedback(error: result.message ?? cancelledMessage);
           return;
         case GoogleAuthStatus.redirecting:
           _setFeedback(
-            success: 'جار تحويلك إلى Google لإكمال تسجيل الدخول...',
+            success: redirectingMessage,
           );
           return;
         case GoogleAuthStatus.success:
           await AppNotificationService.instance.syncTokenIfPossible();
           await _finishAuthSuccess();
+          return;
+        case GoogleAuthStatus.failed:
+          _setFeedback(
+            error: result.message ?? context.tr('auth.google_failed_generic'),
+          );
           return;
       }
     });
@@ -223,7 +234,7 @@ class _LoginPageState extends State<LoginPage>
         _loading = false;
         _activeAction = _AuthAction.none;
         _errorText = null;
-        _successText = 'تم تسجيل الدخول بنجاح.';
+        _successText = context.tr('auth.login_success');
       });
     }
 
@@ -256,6 +267,19 @@ class _LoginPageState extends State<LoginPage>
     return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email);
   }
 
+  void _handleBackNavigation() {
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      navigator.pop();
+      return;
+    }
+
+    navigator.pushAndRemoveUntil(
+      AppTheme.platformPageRoute(builder: (_) => const HomePage()),
+      (_) => false,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final animation = CurvedAnimation(
@@ -268,7 +292,7 @@ class _LoginPageState extends State<LoginPage>
       backgroundColor: AppTheme.background,
       body: Stack(
         children: [
-          const _LoginBackground(),
+          const IgnorePointer(child: _LoginBackground()),
           SafeArea(
             child: AnimatedPadding(
               duration: AppTheme.sectionTransitionDuration,
@@ -283,208 +307,270 @@ class _LoginPageState extends State<LoginPage>
                   ).animate(animation),
                   child: LayoutBuilder(
                     builder: (context, viewportConstraints) {
+                      final width = viewportConstraints.maxWidth;
+                      final padding = AppResponsive.pagePadding(width);
+                      final formMaxWidth = width >= 1024
+                          ? 560.0
+                          : width >= 700
+                              ? 540.0
+                              : double.infinity;
+
                       return SingleChildScrollView(
                         physics: AppTheme.bouncingScrollPhysics,
                         keyboardDismissBehavior:
                             ScrollViewKeyboardDismissBehavior.onDrag,
-                        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                        padding: EdgeInsets.fromLTRB(
+                          padding.left,
+                          16,
+                          padding.right,
+                          24,
+                        ),
                         child: ConstrainedBox(
                           constraints: BoxConstraints(
                             minHeight: viewportConstraints.maxHeight,
                           ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Column(
+                          child: Align(
+                            alignment: Alignment.topCenter,
+                            child: ConstrainedBox(
+                              constraints:
+                                  BoxConstraints(maxWidth: formMaxWidth),
+                              child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: IconButton(
-                                      onPressed: Navigator.of(context).canPop()
-                                          ? () => Navigator.of(context).pop()
-                                          : null,
-                                      icon: const Icon(CupertinoIcons.xmark),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  const _LoginHero(),
-                                  const SizedBox(height: 28),
-                                  AppCard(
-                                    padding: const EdgeInsets.all(22),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        const AppText(
-                                          'الدخول إلى حسابك',
-                                          role: AppTextRole.title,
-                                          align: TextAlign.right,
+                                  Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: IconButton(
+                                          onPressed: _handleBackNavigation,
+                                          icon: const Icon(
+                                              Icons.arrow_back_rounded),
                                         ),
-                                        const SizedBox(height: 8),
-                                        AppText(
-                                          _mode == _AuthMode.login
-                                              ? 'سجّل دخولك بسرعة لمتابعة الطلبات واستقبال الإشعارات.'
-                                              : 'أنشئ حسابك بخطوات بسيطة ثم أكمل أول طلبك.',
-                                          role: AppTextRole.caption,
-                                          align: TextAlign.right,
-                                        ),
-                                        const SizedBox(height: 18),
-                                        Directionality(
-                                          textDirection: TextDirection.ltr,
-                                          child: CupertinoSlidingSegmentedControl<
-                                              _AuthMode>(
-                                            groupValue: _mode,
-                                            onValueChanged: (nextMode) {
-                                              if (_loading ||
-                                                  nextMode == null) {
-                                                return;
-                                              }
-                                              setState(() {
-                                                _mode = nextMode;
-                                                _errorText = null;
-                                                _successText = null;
-                                              });
-                                            },
-                                            children: const {
-                                              _AuthMode.login: Padding(
-                                                padding: EdgeInsets.symmetric(
-                                                  horizontal: 18,
-                                                  vertical: 8,
-                                                ),
-                                                child: Text('تسجيل دخول'),
-                                              ),
-                                              _AuthMode.register: Padding(
-                                                padding: EdgeInsets.symmetric(
-                                                  horizontal: 18,
-                                                  vertical: 8,
-                                                ),
-                                                child: Text('حساب جديد'),
-                                              ),
-                                            },
-                                          ),
-                                        ),
-                                        const SizedBox(height: 20),
-                                        if (_mode == _AuthMode.register) ...[
-                                          AppInput(
-                                            controller: _nameController,
-                                            focusNode: _nameFocusNode,
-                                            label: 'الاسم',
-                                            hint: 'اسمك الكامل',
-                                            prefixIcon: CupertinoIcons.person,
-                                            textInputAction:
-                                                TextInputAction.next,
-                                            onSubmitted: (_) =>
-                                                _phoneFocusNode.requestFocus(),
-                                          ),
-                                          const SizedBox(height: 14),
-                                          AppInput(
-                                            controller: _phoneController,
-                                            focusNode: _phoneFocusNode,
-                                            label: 'رقم الهاتف',
-                                            hint: 'مثال: 01000000000',
-                                            prefixIcon: CupertinoIcons.phone,
-                                            keyboardType: TextInputType.phone,
-                                            textInputAction:
-                                                TextInputAction.next,
-                                            onSubmitted: (_) =>
-                                                _emailFocusNode.requestFocus(),
-                                          ),
-                                          const SizedBox(height: 14),
-                                        ],
-                                        AppInput(
-                                          controller: _emailController,
-                                          focusNode: _emailFocusNode,
-                                          label: 'البريد الإلكتروني',
-                                          hint: 'name@example.com',
-                                          prefixIcon: CupertinoIcons.mail,
-                                          keyboardType:
-                                              TextInputType.emailAddress,
-                                          textInputAction: TextInputAction.next,
-                                          onSubmitted: (_) => _passwordFocusNode
-                                              .requestFocus(),
-                                        ),
-                                        const SizedBox(height: 14),
-                                        AppInput(
-                                          controller: _passwordController,
-                                          focusNode: _passwordFocusNode,
-                                          label: 'كلمة المرور',
-                                          hint: '••••••••',
-                                          prefixIcon: CupertinoIcons.lock,
-                                          obscureText: true,
-                                          textInputAction: TextInputAction.done,
-                                          onSubmitted: (_) =>
-                                              _mode == _AuthMode.login
-                                                  ? _loginWithEmail()
-                                                  : _registerWithEmail(),
-                                        ),
-                                        if (_errorText != null ||
-                                            _successText != null) ...[
-                                          const SizedBox(height: 16),
-                                          _FeedbackBanner(
-                                            message:
-                                                _errorText ?? _successText!,
-                                            isError: _errorText != null,
-                                          ),
-                                        ],
-                                        const SizedBox(height: 18),
-                                        AppButton(
-                                          label: _mode == _AuthMode.login
-                                              ? 'تسجيل الدخول'
-                                              : 'إنشاء الحساب',
-                                          loading: _loading &&
-                                              _activeAction ==
-                                                  _AuthAction.email,
-                                          onPressed: _mode == _AuthMode.login
-                                              ? _loginWithEmail
-                                              : _registerWithEmail,
-                                        ),
-                                        const SizedBox(height: 12),
-                                        Row(
+                                      ),
+                                      const SizedBox(height: 12),
+                                      const _LoginHero(),
+                                      const SizedBox(height: 24),
+                                      AppCard(
+                                        padding: const EdgeInsets.all(22),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.stretch,
                                           children: [
-                                            const Expanded(child: Divider()),
-                                            Padding(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                horizontal: 12,
-                                              ),
-                                              child: AppText(
-                                                'أو',
-                                                role: AppTextRole.caption,
-                                                color: AppTheme.textMuted,
+                                            AppText(
+                                              context.tr('auth.title'),
+                                              role: AppTextRole.title,
+                                              align: TextAlign.right,
+                                            ),
+                                            const SizedBox(height: 8),
+                                            AppText(
+                                              _mode == _AuthMode.login
+                                                  ? context.tr(
+                                                      'auth.subtitle_login',
+                                                    )
+                                                  : context.tr(
+                                                      'auth.subtitle_register',
+                                                    ),
+                                              role: AppTextRole.caption,
+                                              align: TextAlign.right,
+                                            ),
+                                            const SizedBox(height: 18),
+                                            Directionality(
+                                              textDirection: TextDirection.ltr,
+                                              child:
+                                                  CupertinoSlidingSegmentedControl<
+                                                      _AuthMode>(
+                                                groupValue: _mode,
+                                                onValueChanged: (nextMode) {
+                                                  if (_loading ||
+                                                      nextMode == null) {
+                                                    return;
+                                                  }
+                                                  setState(() {
+                                                    _mode = nextMode;
+                                                    _errorText = null;
+                                                    _successText = null;
+                                                  });
+                                                },
+                                                children: {
+                                                  _AuthMode.login: Padding(
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
+                                                      horizontal: 18,
+                                                      vertical: 8,
+                                                    ),
+                                                    child: Text(
+                                                      context
+                                                          .tr('auth.login_tab'),
+                                                    ),
+                                                  ),
+                                                  _AuthMode.register: Padding(
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
+                                                      horizontal: 18,
+                                                      vertical: 8,
+                                                    ),
+                                                    child: Text(
+                                                      context.tr(
+                                                        'auth.register_tab',
+                                                      ),
+                                                    ),
+                                                  ),
+                                                },
                                               ),
                                             ),
-                                            const Expanded(child: Divider()),
+                                            const SizedBox(height: 20),
+                                            if (_mode ==
+                                                _AuthMode.register) ...[
+                                              AppInput(
+                                                controller: _nameController,
+                                                focusNode: _nameFocusNode,
+                                                label: context.tr('auth.name'),
+                                                hint: context
+                                                    .tr('auth.name_hint'),
+                                                prefixIcon:
+                                                    CupertinoIcons.person,
+                                                textInputAction:
+                                                    TextInputAction.next,
+                                                onSubmitted: (_) =>
+                                                    _phoneFocusNode
+                                                        .requestFocus(),
+                                              ),
+                                              const SizedBox(height: 14),
+                                              AppInput(
+                                                controller: _phoneController,
+                                                focusNode: _phoneFocusNode,
+                                                label: context.tr('auth.phone'),
+                                                hint: context.tr(
+                                                  'auth.phone_hint',
+                                                ),
+                                                prefixIcon:
+                                                    CupertinoIcons.phone,
+                                                keyboardType:
+                                                    TextInputType.phone,
+                                                textInputAction:
+                                                    TextInputAction.next,
+                                                onSubmitted: (_) =>
+                                                    _emailFocusNode
+                                                        .requestFocus(),
+                                              ),
+                                              const SizedBox(height: 14),
+                                            ],
+                                            AppInput(
+                                              controller: _emailController,
+                                              focusNode: _emailFocusNode,
+                                              label: context.tr('auth.email'),
+                                              hint: 'name@example.com',
+                                              prefixIcon: CupertinoIcons.mail,
+                                              keyboardType:
+                                                  TextInputType.emailAddress,
+                                              textInputAction:
+                                                  TextInputAction.next,
+                                              onSubmitted: (_) =>
+                                                  _passwordFocusNode
+                                                      .requestFocus(),
+                                            ),
+                                            const SizedBox(height: 14),
+                                            AppInput(
+                                              controller: _passwordController,
+                                              focusNode: _passwordFocusNode,
+                                              label:
+                                                  context.tr('auth.password'),
+                                              hint: '••••••••',
+                                              prefixIcon: CupertinoIcons.lock,
+                                              obscureText: true,
+                                              textInputAction:
+                                                  TextInputAction.done,
+                                              onSubmitted: (_) =>
+                                                  _mode == _AuthMode.login
+                                                      ? _loginWithEmail()
+                                                      : _registerWithEmail(),
+                                            ),
+                                            if (_errorText != null ||
+                                                _successText != null) ...[
+                                              const SizedBox(height: 16),
+                                              _FeedbackBanner(
+                                                message:
+                                                    _errorText ?? _successText!,
+                                                isError: _errorText != null,
+                                              ),
+                                            ],
+                                            const SizedBox(height: 18),
+                                            AppButton(
+                                              label: _mode == _AuthMode.login
+                                                  ? context.tr(
+                                                      'auth.login_button',
+                                                    )
+                                                  : context.tr(
+                                                      'auth.create_account_button',
+                                                    ),
+                                              loading: _loading &&
+                                                  _activeAction ==
+                                                      _AuthAction.email,
+                                              onPressed:
+                                                  _mode == _AuthMode.login
+                                                      ? _loginWithEmail
+                                                      : _registerWithEmail,
+                                            ),
+                                            const SizedBox(height: 12),
+                                            Row(
+                                              children: [
+                                                const Expanded(
+                                                  child: Divider(),
+                                                ),
+                                                Padding(
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                    horizontal: 12,
+                                                  ),
+                                                  child: AppText(
+                                                    context.tr('common.or'),
+                                                    role: AppTextRole.caption,
+                                                    color: AppTheme.textMuted,
+                                                  ),
+                                                ),
+                                                const Expanded(
+                                                  child: Divider(),
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 12),
+                                            AppButton(
+                                              label: context.tr(
+                                                'auth.continue_google',
+                                              ),
+                                              variant:
+                                                  AppButtonVariant.secondary,
+                                              icon: const Icon(
+                                                CupertinoIcons.globe,
+                                              ),
+                                              loading: _loading &&
+                                                  _activeAction ==
+                                                      _AuthAction.google,
+                                              onPressed: _loading
+                                                  ? null
+                                                  : _loginWithGoogle,
+                                            ),
                                           ],
                                         ),
-                                        const SizedBox(height: 12),
-                                        AppButton(
-                                          label: 'المتابعة عبر Google',
-                                          variant: AppButtonVariant.secondary,
-                                          icon:
-                                              const Icon(CupertinoIcons.globe),
-                                          loading: _loading &&
-                                              _activeAction ==
-                                                  _AuthAction.google,
-                                          onPressed:
-                                              _loading ? null : _loginWithGoogle,
-                                        ),
-                                      ],
+                                      ),
+                                    ],
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 18),
+                                    child: AppText(
+                                      context.tr('auth.terms'),
+                                      role: AppTextRole.caption,
+                                      align: TextAlign.center,
+                                      color: AppTheme.textMuted,
                                     ),
                                   ),
                                 ],
                               ),
-                              const Padding(
-                                padding: EdgeInsets.only(top: 18),
-                                child: AppText(
-                                  'بالمتابعة أنت توافق على استخدام حسابك لحفظ الطلبات والإشعارات.',
-                                  role: AppTextRole.caption,
-                                  align: TextAlign.center,
-                                  color: AppTheme.textMuted,
-                                ),
-                              ),
-                            ],
+                            ),
                           ),
                         ),
                       );
@@ -568,14 +654,14 @@ class _LoginHero extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 18),
-        const AppText(
-          'تجربة دخول أسرع\nوأهدأ',
+        AppText(
+          context.tr('auth.hero_title'),
           role: AppTextRole.hero,
           align: TextAlign.right,
         ),
         const SizedBox(height: 10),
         AppText(
-          'واجهة نظيفة، دخول آمن، وتحديثات طلباتك تصل فوراً بمجرد تفعيل الإشعارات.',
+          context.tr('auth.hero_subtitle'),
           role: AppTextRole.body,
           align: TextAlign.right,
           color: AppTheme.textMuted,

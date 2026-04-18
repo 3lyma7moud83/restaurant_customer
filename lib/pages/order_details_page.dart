@@ -520,24 +520,21 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
                           totalPrice: OrdersService.totalPriceOf(order),
                           deliveryCost: OrdersService.deliveryCostOf(order),
                         ),
-                        if (resolveOrderStatus(order['status']?.toString())
-                            .canTrack) ...[
-                          const SizedBox(height: 16),
-                          ElevatedButton.icon(
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                AppTheme.platformPageRoute(
-                                  builder: (_) => OrderTrackingPage(
-                                    orderId: widget.orderId,
-                                  ),
+                        const SizedBox(height: 16),
+                        ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              AppTheme.platformPageRoute(
+                                builder: (_) => OrderTrackingPage(
+                                  orderId: widget.orderId,
                                 ),
-                              );
-                            },
-                            icon: const Icon(Icons.map_outlined),
-                            label: const Text('فتح التتبع'),
-                          ),
-                        ],
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.map_outlined),
+                          label: const Text('فتح التتبع'),
+                        ),
                       ],
                     ),
                   ),

@@ -8,6 +8,25 @@ import '../core/orders/order_status_utils.dart';
 import '../core/services/error_logger.dart';
 import '../services/orders_service.dart';
 
+enum CartPaymentMethod {
+  cash('cash'),
+  visa('visa');
+
+  const CartPaymentMethod(this.value);
+
+  final String value;
+
+  static CartPaymentMethod? fromValue(String? raw) {
+    final normalized = raw?.trim().toLowerCase();
+    for (final method in CartPaymentMethod.values) {
+      if (method.value == normalized) {
+        return method;
+      }
+    }
+    return null;
+  }
+}
+
 class CartItem {
   CartItem({
     required this.id,
@@ -122,6 +141,7 @@ class CartController extends ChangeNotifier {
   String _houseNumber = '';
   double _deliveryCost = 0;
   String? _activeOrderId;
+  CartPaymentMethod? _selectedPaymentMethod;
   bool _restored = false;
 
   Timer? _persistDebounce;
@@ -140,6 +160,7 @@ class CartController extends ChangeNotifier {
   String get houseNumber => _houseNumber;
   double get deliveryCost => _deliveryCost;
   String? get activeOrderId => _activeOrderId;
+  CartPaymentMethod? get selectedPaymentMethod => _selectedPaymentMethod;
   bool get hasLocation =>
       _deliveryAddress != null && _deliveryLat != null && _deliveryLng != null;
   bool get isLocked => _activeOrderId != null && _activeOrderId!.isNotEmpty;
@@ -229,6 +250,7 @@ class CartController extends ChangeNotifier {
     _houseNumber = '';
     _deliveryCost = 0;
     _activeOrderId = null;
+    _selectedPaymentMethod = null;
     _notify();
     _schedulePersist();
   }
@@ -279,6 +301,15 @@ class CartController extends ChangeNotifier {
     }
 
     _deliveryCost = nextValue;
+    _notify();
+    _schedulePersist();
+  }
+
+  void setPaymentMethod(CartPaymentMethod? method) {
+    if (_selectedPaymentMethod == method) {
+      return;
+    }
+    _selectedPaymentMethod = method;
     _notify();
     _schedulePersist();
   }
@@ -381,6 +412,9 @@ class CartController extends ChangeNotifier {
           _deliveryLng = _toNullableDouble(decoded['delivery_lng']);
           _houseNumber = (decoded['house_number'] ?? '').toString().trim();
           _deliveryCost = _toNullableDouble(decoded['delivery_cost']) ?? 0;
+          _selectedPaymentMethod = CartPaymentMethod.fromValue(
+            decoded['payment_method']?.toString(),
+          );
 
           final orderId = (decoded['active_order_id'] ?? '').toString().trim();
           _activeOrderId = orderId.isEmpty ? null : orderId;
@@ -417,7 +451,8 @@ class CartController extends ChangeNotifier {
           _deliveryAddress != null ||
           _houseNumber.isNotEmpty ||
           _deliveryCost > 0 ||
-          _activeOrderId != null;
+          _activeOrderId != null ||
+          _selectedPaymentMethod != null;
 
       if (!hasState) {
         await prefs.remove(_storageKey);
@@ -435,6 +470,7 @@ class CartController extends ChangeNotifier {
           'house_number': _houseNumber,
           'delivery_cost': _deliveryCost,
           'active_order_id': _activeOrderId,
+          'payment_method': _selectedPaymentMethod?.value,
         }),
       );
     } catch (error, stack) {

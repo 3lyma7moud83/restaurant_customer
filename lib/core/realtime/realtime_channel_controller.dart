@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/error_logger.dart';
+import '../../services/session_manager.dart';
 
 typedef RealtimeChannelBuilder = RealtimeChannel Function(
   SupabaseClient client,
@@ -30,6 +31,7 @@ class RealtimeChannelController {
   Timer? _restartTimer;
   bool _disposed = false;
   bool _hasSubscribedOnce = false;
+  bool _jwtRefreshInFlight = false;
 
   void subscribe(
     RealtimeChannelBuilder builder, {
@@ -85,6 +87,13 @@ class RealtimeChannelController {
         return;
       }
 
+      await SessionManager.instance.ensureValidSession(
+        requireSession: false,
+      );
+      if (_disposed) {
+        return;
+      }
+
       final channelName =
           '$_topicPrefix-${DateTime.now().microsecondsSinceEpoch}';
       final channel = builder(_client, channelName);
@@ -106,12 +115,17 @@ class RealtimeChannelController {
             break;
           case RealtimeSubscribeStatus.channelError:
           case RealtimeSubscribeStatus.timedOut:
+            final jwtExpired = _isJwtExpiredSignal(error);
             unawaited(
               ErrorLogger.logError(
                 module: 'realtime_channel_controller.subscribe.$_topicPrefix',
                 error: error ?? Exception('Realtime status: $status'),
               ),
             );
+            if (jwtExpired) {
+              unawaited(_refreshSessionAndResubscribe());
+              return;
+            }
             _scheduleRestart();
             break;
           case RealtimeSubscribeStatus.closed:
@@ -153,5 +167,49 @@ class RealtimeChannelController {
       }
       subscribe(_builder!);
     });
+  }
+
+  Future<void> _refreshSessionAndResubscribe() async {
+    if (_disposed || _builder == null || _jwtRefreshInFlight) {
+      return;
+    }
+
+    _jwtRefreshInFlight = true;
+    try {
+      await SessionManager.instance.ensureValidSession(
+        requireSession: false,
+      );
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'realtime_channel_controller.refresh_session.$_topicPrefix',
+        error: error,
+        stack: stack,
+      );
+      _scheduleRestart();
+      return;
+    } finally {
+      _jwtRefreshInFlight = false;
+    }
+
+    if (_disposed || _builder == null) {
+      return;
+    }
+
+    _restartTimer?.cancel();
+    subscribe(_builder!);
+  }
+
+  bool _isJwtExpiredSignal(Object? error) {
+    final message = error?.toString().toLowerCase() ?? '';
+    if (message.isEmpty) {
+      return false;
+    }
+
+    return message.contains('invalidjwttoken') ||
+        message.contains('invalid jwt') ||
+        message.contains('jwt expired') ||
+        message.contains('token has expired') ||
+        message.contains('session expired') ||
+        message.contains('refresh token');
   }
 }

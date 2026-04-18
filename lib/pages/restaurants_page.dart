@@ -4,10 +4,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../core/localization/app_localizations.dart';
 import '../core/location/location_helper.dart';
 import '../core/realtime/realtime_channel_controller.dart';
 import '../core/services/error_logger.dart';
 import '../core/theme/app_theme.dart';
+import '../core/ui/responsive.dart';
 import '../services/restaurant_feed_utils.dart';
 import '../services/restaurants_service.dart';
 import '../widgets/restaurant_info_sheet.dart';
@@ -336,7 +338,7 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
 
     if (managerId.isEmpty || restaurantId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('بيانات المطعم غير مكتملة حالياً.')),
+        SnackBar(content: Text(context.tr('home.restaurant_data_incomplete'))),
       );
       return;
     }
@@ -372,21 +374,20 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
+        child: AppConstrainedContent(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'كل المطاعم',
-                style: TextStyle(
-                  fontSize: 20,
+              Text(
+                context.tr('restaurants.all'),
+                style: const TextStyle(
+                  fontSize: 24,
                   fontWeight: FontWeight.w800,
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
               _RestaurantsSearchField(controller: _searchController),
-              const SizedBox(height: 16),
+              const SizedBox(height: 18),
               Expanded(
                 child: ValueListenableBuilder<_RestaurantsUiState>(
                   valueListenable: _uiState,
@@ -464,20 +465,29 @@ class _RestaurantsSearchField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
-      controller: controller,
-      decoration: InputDecoration(
-        hintText: 'ابحث عن مطعم...',
-        prefixIcon: const Icon(Icons.search),
-        filled: true,
-        fillColor: Colors.white,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(24),
-          borderSide: BorderSide.none,
-        ),
-        hintStyle: const TextStyle(
-          color: Color(0xFF98A2B3),
-          fontWeight: FontWeight.w600,
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x14000000),
+            blurRadius: 18,
+            offset: Offset(0, 10),
+          ),
+        ],
+      ),
+      child: TextField(
+        controller: controller,
+        decoration: InputDecoration(
+          hintText: context.tr('common.search_restaurant_hint'),
+          prefixIcon: const Icon(
+            Icons.search_rounded,
+            color: AppTheme.primaryDeep,
+          ),
+          border: InputBorder.none,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         ),
       ),
     );
@@ -503,15 +513,15 @@ class _RestaurantsEmptyState extends StatelessWidget {
             color: Color(0xFF98A2B3),
           ),
           const SizedBox(height: 12),
-          const Text(
-            'لا توجد مطاعم حالياً',
+          Text(
+            context.tr('restaurants.empty_title'),
             style: TextStyle(
               fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(height: 6),
-          const Text(
-            'جرّب تغيير البحث أو إعادة المحاولة لاحقاً.',
+          Text(
+            context.tr('restaurants.empty_subtitle'),
             style: TextStyle(color: Color(0xFF667085)),
             textAlign: TextAlign.center,
           ),
@@ -519,7 +529,7 @@ class _RestaurantsEmptyState extends StatelessWidget {
             const SizedBox(height: 12),
             TextButton(
               onPressed: () => unawaited(onRetry!()),
-              child: const Text('تحديث'),
+              child: Text(context.tr('restaurants.refresh')),
             ),
           ],
         ],
@@ -547,22 +557,22 @@ class _RestaurantsErrorState extends StatelessWidget {
             color: Color(0xFF98A2B3),
           ),
           const SizedBox(height: 12),
-          const Text(
-            'تعذر تحميل المطاعم',
+          Text(
+            context.tr('restaurants.error_title'),
             style: TextStyle(
               fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(height: 6),
-          const Text(
-            'تحقق من الاتصال ثم أعد المحاولة.',
+          Text(
+            context.tr('restaurants.error_subtitle'),
             style: TextStyle(color: Color(0xFF667085)),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 12),
           ElevatedButton(
             onPressed: () => unawaited(onRetry()),
-            child: const Text('إعادة المحاولة'),
+            child: Text(context.tr('common.retry')),
           ),
         ],
       ),

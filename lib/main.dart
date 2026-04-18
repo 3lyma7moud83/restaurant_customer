@@ -2,9 +2,12 @@ import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'core/config/mapbox_setup.dart';
+import 'core/localization/app_localizations.dart';
+import 'core/localization/locale_controller.dart';
 import 'core/config/env.dart';
 import 'core/services/error_logger.dart';
 import 'core/theme/app_theme.dart';
@@ -15,13 +18,20 @@ import 'services/session_manager.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  _bootstrapLog('Widgets binding initialized.');
   _configureGlobalErrorHandling();
+  _bootstrapLog('Global error handling configured.');
 
   final bootstrapResult = await _bootstrap();
+  _bootstrapLog(
+    'Bootstrap completed. ok=${bootstrapResult.ok}, '
+    'message=${bootstrapResult.message ?? 'none'}.',
+  );
   runApp(CustomerApp(bootstrapResult: bootstrapResult));
+  _bootstrapLog('runApp executed.');
 }
 
-class CustomerApp extends StatelessWidget {
+class CustomerApp extends StatefulWidget {
   const CustomerApp({
     super.key,
     required this.bootstrapResult,
@@ -30,20 +40,56 @@ class CustomerApp extends StatelessWidget {
   final BootstrapResult bootstrapResult;
 
   @override
+  State<CustomerApp> createState() => _CustomerAppState();
+}
+
+class _CustomerAppState extends State<CustomerApp> {
+  late final LocaleController _localeController = LocaleController();
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_localeController.initialize());
+  }
+
+  @override
+  void dispose() {
+    _localeController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return CartProviderWrapper(
-      child: MaterialApp(
-        navigatorKey: SessionManager.navigatorKey,
-        scaffoldMessengerKey: ErrorLogger.scaffoldMessengerKey,
-        debugShowCheckedModeBanner: false,
-        title: 'Delivery',
-        theme: AppTheme.light(),
-        scrollBehavior: const _AppScrollBehavior(),
-        home: bootstrapResult.ok
-            ? const _SessionGate()
-            : _BootstrapErrorScreen(
-                message: bootstrapResult.message ?? ErrorLogger.userMessage,
-              ),
+      child: AppLocaleScope(
+        controller: _localeController,
+        child: AnimatedBuilder(
+          animation: _localeController,
+          builder: (context, _) {
+            return MaterialApp(
+              navigatorKey: SessionManager.navigatorKey,
+              scaffoldMessengerKey: ErrorLogger.scaffoldMessengerKey,
+              debugShowCheckedModeBanner: false,
+              title: 'delivery-mat3mk',
+              theme: AppTheme.light(),
+              scrollBehavior: const _AppScrollBehavior(),
+              locale: _localeController.locale,
+              supportedLocales: AppLocalizations.supportedLocales,
+              localizationsDelegates: const [
+                AppLocalizations.delegate,
+                GlobalMaterialLocalizations.delegate,
+                GlobalWidgetsLocalizations.delegate,
+                GlobalCupertinoLocalizations.delegate,
+              ],
+              home: widget.bootstrapResult.ok
+                  ? const _SessionGate()
+                  : _BootstrapErrorScreen(
+                      messageKey: widget.bootstrapResult.message ??
+                          ErrorLogger.userMessage,
+                    ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -90,23 +136,33 @@ void _configureGlobalErrorHandling() {
 }
 
 Future<BootstrapResult> _bootstrap() async {
+  _bootstrapLog('Loading environment assets...');
   try {
     await AppEnv.load();
+    _bootstrapLog(
+      'Environment loaded from ${AppEnv.loadedFile} '
+      '(APP_ENV=${AppEnv.environment}).',
+    );
   } catch (error, stack) {
+    _bootstrapLog('Environment load failed: $error');
     await ErrorLogger.logError(
       module: 'bootstrap.app_env.load',
       error: error,
       stack: stack,
     );
-    return const BootstrapResult.fail(
-      'فشل تحميل إعدادات البيئة. تأكد من APP_ENV وملفات .env المطلوبة.',
-    );
+    return const BootstrapResult.fail('app.bootstrap_env_error');
   }
 
+  _bootstrapLog('Configuring map provider...');
   try {
-    // Must run before any map objects are created.
-    MapboxOptions.setAccessToken(AppEnv.mapboxToken);
+    final configured = await configureMapboxAccessToken(AppEnv.mapboxToken);
+    if (configured) {
+      _bootstrapLog('Mapbox native token configured.');
+    } else {
+      _bootstrapLog('Mapbox native SDK skipped on this platform.');
+    }
   } catch (error, stack) {
+    _bootstrapLog('Mapbox token setup failed: $error');
     await ErrorLogger.logError(
       module: 'bootstrap.mapbox.setAccessToken',
       error: error,
@@ -114,6 +170,7 @@ Future<BootstrapResult> _bootstrap() async {
     );
   }
 
+  _bootstrapLog('Initializing Supabase...');
   try {
     if (!_isSupabaseInitialized()) {
       await Supabase.initialize(
@@ -124,34 +181,40 @@ Future<BootstrapResult> _bootstrap() async {
           detectSessionInUri: true,
         ),
       );
+      _bootstrapLog('Supabase initialized.');
+    } else {
+      _bootstrapLog('Supabase already initialized.');
     }
   } catch (error, stack) {
+    _bootstrapLog('Supabase initialization failed: $error');
     await ErrorLogger.logError(
       module: 'bootstrap.supabase.initialize',
       error: error,
       stack: stack,
     );
-    return const BootstrapResult.fail(
-      'فشل تهيئة Supabase. تأكد من مفاتيح البيئة واتصال الإنترنت.',
-    );
+    return const BootstrapResult.fail('app.bootstrap_supabase_error');
   }
 
+  _bootstrapLog('Initializing session manager...');
   try {
     await SessionManager.instance.initialize();
+    _bootstrapLog('Session manager initialized.');
   } catch (error, stack) {
+    _bootstrapLog('Session manager initialization failed: $error');
     await ErrorLogger.logError(
       module: 'bootstrap.session_manager.initialize',
       error: error,
       stack: stack,
     );
-    return const BootstrapResult.fail(
-      'فشل تهيئة الجلسة. حاول تشغيل التطبيق مرة أخرى.',
-    );
+    return const BootstrapResult.fail('app.bootstrap_session_error');
   }
 
+  _bootstrapLog('Initializing notifications...');
   try {
     await AppNotificationService.instance.initialize();
+    _bootstrapLog('Notification service initialized.');
   } catch (error, stack) {
+    _bootstrapLog('Notification service initialization failed: $error');
     await ErrorLogger.logError(
       module: 'bootstrap.notification_service.initialize',
       error: error,
@@ -171,21 +234,27 @@ bool _isSupabaseInitialized() {
   }
 }
 
+void _bootstrapLog(String message) {
+  debugPrint('[bootstrap] $message');
+}
+
 class _BootstrapErrorScreen extends StatelessWidget {
   const _BootstrapErrorScreen({
-    required this.message,
+    required this.messageKey,
   });
 
-  final String message;
+  final String messageKey;
 
   @override
   Widget build(BuildContext context) {
+    final resolvedMessage =
+        messageKey.startsWith('app.') ? context.tr(messageKey) : messageKey;
     return Scaffold(
-      appBar: AppBar(title: const Text('تعذر تشغيل التطبيق')),
+      appBar: AppBar(title: Text(context.tr('app.bootstrap_failed_title'))),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Text(
-          message,
+          resolvedMessage,
           style: const TextStyle(fontSize: 15),
         ),
       ),

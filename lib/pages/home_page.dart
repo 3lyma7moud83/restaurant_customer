@@ -4,16 +4,22 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../cart/cart_page.dart';
+import '../cart/cart_provider.dart';
+import '../core/localization/app_localizations.dart';
+import '../core/localization/locale_controller.dart';
 import '../core/location/location_helper.dart';
 import '../core/realtime/realtime_channel_controller.dart';
 import '../core/services/error_logger.dart';
 import '../core/theme/app_theme.dart';
+import '../core/ui/responsive.dart';
 import '../pages/auth/widgets/profile_page.dart';
 import '../services/profile_service.dart';
 import '../services/restaurant_feed_utils.dart';
 import '../services/restaurants_service.dart';
 import '../services/session_manager.dart';
 import '../widgets/restaurant_info_sheet.dart';
+import '../widgets/restaurant_card_components.dart';
 import '../widgets/restaurants_grid_section.dart';
 import 'auth/login_page.dart';
 import 'orders_page.dart';
@@ -400,6 +406,44 @@ class _HomePageState extends State<HomePage> {
     return _loadRestaurants(forceRefresh: true);
   }
 
+  Future<void> _openCart() async {
+    final cart = CartProvider.read(context);
+    final user = _client.auth.currentUser;
+
+    if (user == null) {
+      await Navigator.push(
+        context,
+        AppTheme.platformPageRoute(builder: (_) => const LoginPage()),
+      );
+
+      if (!mounted || _client.auth.currentUser == null) {
+        return;
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    try {
+      await Navigator.push(
+        context,
+        AppTheme.platformPageRoute(
+          builder: (_) => CartPage(
+            restaurantId: cart.restaurantId ?? '',
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.tr('home.cart_open_failed'))),
+      );
+    }
+  }
+
   void _openRestaurantMenu(
     BuildContext context,
     Map<String, dynamic> restaurant,
@@ -410,7 +454,7 @@ class _HomePageState extends State<HomePage> {
 
     if (managerId.isEmpty || restaurantId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('بيانات المطعم غير مكتملة حالياً.')),
+        SnackBar(content: Text(context.tr('home.restaurant_data_incomplete'))),
       );
       return;
     }
@@ -443,13 +487,13 @@ class _HomePageState extends State<HomePage> {
             children: [
               const Icon(Icons.location_on, size: 44),
               const SizedBox(height: 12),
-              const Text(
-                'نحتاج موقعك',
+              Text(
+                context.tr('home.location_needed_title'),
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-              const Text(
-                'علشان نعرض المطاعم القريبة منك',
+              Text(
+                context.tr('home.location_needed_subtitle'),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 20),
@@ -461,7 +505,7 @@ class _HomePageState extends State<HomePage> {
                     Navigator.pop(context);
                     unawaited(_retryLocation());
                   },
-                  child: const Text('تفعيل الموقع'),
+                  child: Text(context.tr('common.enable_location')),
                 ),
               ),
             ],
@@ -491,25 +535,36 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
+        toolbarHeight: _HomeHeaderMetrics.toolbarHeightFor(
+          MediaQuery.sizeOf(context).width,
+        ),
+        titleSpacing: 0,
+        leadingWidth: _HomeHeaderMetrics.sideWidthFor(
+          MediaQuery.sizeOf(context).width,
+        ),
+        leading: const _HomeDrawerAction(),
         title: const _HomeAppBarTitle(),
+        actions: [_HomeHeaderActions(onOpenCart: _openCart)],
       ),
       drawer: _MainDrawer(client: _client),
       body: ValueListenableBuilder<_HomeUiState>(
         valueListenable: _uiState,
         builder: (context, state, _) {
           final locationDenied = state.locationDenied;
-          return Padding(
-            padding: const EdgeInsets.all(16),
+          return AppConstrainedContent(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'مطاعم قريبة منك',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                Text(
+                  context.tr('home.nearby_restaurants'),
+                  style: const TextStyle(
+                    fontSize: 27,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 _SearchBar(controller: _searchController),
-                const SizedBox(height: 24),
+                const SizedBox(height: 20),
                 Expanded(
                   child: RestaurantsGridSection(
                     loading: state.loading,
@@ -587,19 +642,267 @@ class _HomeAppBarTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
+    final width = MediaQuery.sizeOf(context).width;
+    final iconSize = width >= 900 ? 24.0 : 21.0;
+    final fontSize = width >= 900 ? 19.0 : 17.0;
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(Icons.delivery_dining_rounded, color: AppTheme.primary),
-        SizedBox(width: 6),
-        Text(
-          'Delivery',
-          style: TextStyle(
-            color: AppTheme.text,
-            fontWeight: FontWeight.w800,
+        Icon(
+          Icons.delivery_dining_rounded,
+          color: AppTheme.primary,
+          size: iconSize,
+        ),
+        const SizedBox(width: 7),
+        Flexible(
+          child: Text(
+            context.tr('app.name'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: AppTheme.text,
+              fontWeight: FontWeight.w900,
+              fontSize: fontSize,
+            ),
           ),
         ),
       ],
+    );
+  }
+}
+
+class _HomeHeaderMetrics {
+  const _HomeHeaderMetrics._();
+
+  static double sideWidthFor(double width) {
+    if (width >= 1200) {
+      return 180;
+    }
+    if (width >= 900) {
+      return 164;
+    }
+    return 146;
+  }
+
+  static double toolbarHeightFor(double width) {
+    if (width >= 900) {
+      return 72;
+    }
+    return 64;
+  }
+}
+
+class _HomeDrawerAction extends StatelessWidget {
+  const _HomeDrawerAction();
+
+  @override
+  Widget build(BuildContext context) {
+    return Builder(
+      builder: (context) {
+        return Tooltip(
+          message: MaterialLocalizations.of(context).openAppDrawerTooltip,
+          child: Padding(
+            padding: const EdgeInsetsDirectional.only(start: 12),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Material(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => Scaffold.of(context).openDrawer(),
+                  child: const SizedBox(
+                    width: 38,
+                    height: 38,
+                    child: Icon(
+                      Icons.menu_rounded,
+                      size: 21,
+                      color: AppTheme.text,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _HomeHeaderActions extends StatelessWidget {
+  const _HomeHeaderActions({
+    required this.onOpenCart,
+  });
+
+  final Future<void> Function() onOpenCart;
+
+  @override
+  Widget build(BuildContext context) {
+    final width =
+        _HomeHeaderMetrics.sideWidthFor(MediaQuery.sizeOf(context).width);
+    return SizedBox(
+      width: width,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          const _HomeLanguageToggleButton(),
+          const SizedBox(width: 4),
+          _HomeCartAction(onTap: onOpenCart),
+          const SizedBox(width: 8),
+        ],
+      ),
+    );
+  }
+}
+
+class _HomeCartAction extends StatelessWidget {
+  const _HomeCartAction({
+    required this.onTap,
+  });
+
+  final Future<void> Function() onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final cart = CartProvider.of(context);
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Tooltip(
+          message: context.tr('cart.title'),
+          child: Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => unawaited(onTap()),
+              child: SizedBox(
+                width: 38,
+                height: 38,
+                child: Icon(
+                  Icons.shopping_cart_outlined,
+                  size: 19,
+                  color: AppTheme.text,
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (cart.totalCount > 0)
+          PositionedDirectional(
+            top: -2,
+            end: -2,
+            child: Container(
+              height: 17,
+              constraints: const BoxConstraints(minWidth: 17),
+              padding: const EdgeInsets.symmetric(horizontal: 4.5),
+              decoration: BoxDecoration(
+                color: AppTheme.primary,
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: Colors.white,
+                  width: 1.1,
+                ),
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                cart.totalCount.toString(),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _HomeLanguageToggleButton extends StatelessWidget {
+  const _HomeLanguageToggleButton();
+
+  @override
+  Widget build(BuildContext context) {
+    final localeController = AppLocaleScope.of(context);
+    final isArabic = localeController.isArabic;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _LanguageSegment(
+              label: context.tr('lang.current_ar'),
+              selected: isArabic,
+              onTap: () => unawaited(
+                AppLocaleScope.read(context).setLocale(const Locale('ar')),
+              ),
+            ),
+            _LanguageSegment(
+              label: context.tr('lang.current_en'),
+              selected: !isArabic,
+              onTap: () => unawaited(
+                AppLocaleScope.read(context).setLocale(const Locale('en')),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LanguageSegment extends StatelessWidget {
+  const _LanguageSegment({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? AppTheme.primary : Colors.transparent;
+    final textColor = selected ? Colors.white : AppTheme.textMuted;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: AppTheme.microInteractionDuration,
+          curve: AppTheme.emphasizedCurve,
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: textColor,
+              fontWeight: FontWeight.w800,
+              fontSize: 11,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -618,8 +921,8 @@ class _EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final subtitle = locationDenied
-        ? 'الموقع غير مفعل حالياً. فعّل الموقع لعرض نتائج أدق.'
-        : 'جرّب تغير المكان أو ترجع بعدين';
+        ? context.tr('home.empty_location_disabled_subtitle')
+        : context.tr('home.empty_general_subtitle');
 
     return Center(
       child: Padding(
@@ -633,8 +936,8 @@ class _EmptyState extends StatelessWidget {
               color: Colors.orange,
             ),
             const SizedBox(height: 12),
-            const Text(
-              'مفيش مطاعم قريبة دلوقتي',
+            Text(
+              context.tr('home.empty_nearby_title'),
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               textAlign: TextAlign.center,
             ),
@@ -648,14 +951,14 @@ class _EmptyState extends StatelessWidget {
             if (locationDenied && onRetryLocation != null) ...[
               OutlinedButton(
                 onPressed: () => unawaited(onRetryLocation!()),
-                child: const Text('إعادة تفعيل الموقع'),
+                child: Text(context.tr('home.enable_location_again')),
               ),
               const SizedBox(height: 8),
             ],
             if (onRetry != null)
               TextButton(
                 onPressed: () => unawaited(onRetry!()),
-                child: const Text('إعادة المحاولة'),
+                child: Text(context.tr('common.retry')),
               ),
           ],
         ),
@@ -687,29 +990,29 @@ class _HomeErrorState extends StatelessWidget {
               color: Color(0xFF98A2B3),
             ),
             const SizedBox(height: 12),
-            const Text(
-              'تعذر تحميل المطاعم',
+            Text(
+              context.tr('home.error_title'),
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w800,
               ),
             ),
             const SizedBox(height: 6),
-            const Text(
-              'تحقق من الاتصال ثم أعد المحاولة.',
+            Text(
+              context.tr('home.error_subtitle'),
               textAlign: TextAlign.center,
               style: TextStyle(color: Color(0xFF667085)),
             ),
             const SizedBox(height: 16),
             ElevatedButton(
               onPressed: () => unawaited(onRetry()),
-              child: const Text('إعادة المحاولة'),
+              child: Text(context.tr('common.retry')),
             ),
             if (onRetryLocation != null) ...[
               const SizedBox(height: 8),
               OutlinedButton(
                 onPressed: () => unawaited(onRetryLocation!()),
-                child: const Text('تفعيل الموقع'),
+                child: Text(context.tr('common.enable_location')),
               ),
             ],
           ],
@@ -850,10 +1153,12 @@ class _MainDrawerState extends State<_MainDrawer> {
     final userEmail = user?.email?.trim();
 
     final displayName = isGuest
-        ? 'أهلاً بيك'
+        ? context.tr('home.guest_welcome')
         : customerName.isNotEmpty
             ? customerName
-            : (_profileLoading ? 'جار تحميل الحساب...' : 'حساب العميل');
+            : (_profileLoading
+                ? context.tr('home.loading_account')
+                : context.tr('home.customer_account'));
     const avatarSize = 56.0;
 
     final drawerContent = RepaintBoundary(
@@ -876,27 +1181,15 @@ class _MainDrawerState extends State<_MainDrawer> {
                   backgroundColor: Colors.white,
                   child: !isGuest && hasProfileImage
                       ? ClipOval(
-                          child: Image.network(
-                            profileImage,
+                          child: AppCachedImage(
+                            imageUrl: profileImage,
                             width: avatarSize,
                             height: avatarSize,
                             fit: BoxFit.cover,
-                            filterQuality: FilterQuality.medium,
-                            loadingBuilder: (context, child, progress) {
-                              if (progress == null) {
-                                return child;
-                              }
-                              return const Icon(
-                                Icons.person,
-                                color: AppTheme.primary,
-                              );
-                            },
-                            errorBuilder: (_, __, ___) {
-                              return const Icon(
-                                Icons.person,
-                                color: AppTheme.primary,
-                              );
-                            },
+                            errorWidget: const Icon(
+                              Icons.person,
+                              color: AppTheme.primary,
+                            ),
                           ),
                         )
                       : !isGuest
@@ -953,7 +1246,7 @@ class _MainDrawerState extends State<_MainDrawer> {
                     Icons.login,
                     color: Color(0xffFF5722),
                   ),
-                  title: const Text('سجل الدخول لطلب اوردر'),
+                  title: Text(context.tr('home.login_to_order')),
                   trailing: const Icon(
                     Icons.arrow_forward_ios_rounded,
                     size: 18,
@@ -965,7 +1258,7 @@ class _MainDrawerState extends State<_MainDrawer> {
           else ...[
             ListTile(
               leading: const Icon(Icons.person_outline),
-              title: const Text('الملف الشخصي'),
+              title: Text(context.tr('home.profile')),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
@@ -978,7 +1271,7 @@ class _MainDrawerState extends State<_MainDrawer> {
             ),
             ListTile(
               leading: const Icon(Icons.receipt_long),
-              title: const Text('طلباتي'),
+              title: Text(context.tr('home.orders')),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
@@ -995,9 +1288,9 @@ class _MainDrawerState extends State<_MainDrawer> {
                 Icons.logout,
                 color: Colors.red,
               ),
-              title: const Text(
-                'تسجيل الخروج',
-                style: TextStyle(color: Colors.red),
+              title: Text(
+                context.tr('home.logout'),
+                style: const TextStyle(color: Colors.red),
               ),
               trailing: _signingOut
                   ? const SizedBox(
@@ -1039,16 +1332,29 @@ class _SearchBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
-      controller: controller,
-      decoration: InputDecoration(
-        hintText: 'ابحث عن مطعم...',
-        filled: true,
-        fillColor: const Color(0xffFFF1E6),
-        prefixIcon: const Icon(Icons.search),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(30),
-          borderSide: BorderSide.none,
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x14000000),
+            blurRadius: 18,
+            offset: Offset(0, 10),
+          ),
+        ],
+      ),
+      child: TextField(
+        controller: controller,
+        decoration: InputDecoration(
+          hintText: context.tr('common.search_restaurant_hint'),
+          prefixIcon: const Icon(
+            Icons.search_rounded,
+            color: AppTheme.primaryDeep,
+          ),
+          border: InputBorder.none,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         ),
       ),
     );

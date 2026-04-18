@@ -163,9 +163,12 @@ class _RestaurantGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const mainAxisSpacing = 14.0;
-    const crossAxisSpacing = 14.0;
-    const childAspectRatio = 1.0;
+    final isCompactGrid = crossAxisCount <= 2;
+    final mainAxisSpacing = isCompactGrid ? 10.0 : 12.0;
+    final crossAxisSpacing = isCompactGrid ? 10.0 : 12.0;
+    final childAspectRatio = RestaurantFeedUtils.cardAspectRatioFor(
+      crossAxisCount,
+    );
 
     final needsScroll = RestaurantFeedUtils.gridNeedsScroll(
       maxWidth: constraints.maxWidth,
@@ -178,7 +181,7 @@ class _RestaurantGrid extends StatelessWidget {
     );
 
     final physics = AppTheme.conditionalScrollPhysics(canScroll: needsScroll);
-    final cacheExtent = constraints.maxHeight.clamp(420.0, 960.0).toDouble();
+    final cacheExtent = constraints.maxHeight.clamp(520.0, 1200.0).toDouble();
     final delegate = SliverGridDelegateWithFixedCrossAxisCount(
       crossAxisCount: crossAxisCount,
       mainAxisSpacing: mainAxisSpacing,
@@ -191,6 +194,8 @@ class _RestaurantGrid extends StatelessWidget {
       physics: physics,
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       cacheExtent: cacheExtent,
+      addAutomaticKeepAlives: false,
+      addRepaintBoundaries: false,
       itemCount: restaurants.length,
       gridDelegate: delegate,
       itemBuilder: (context, index) {

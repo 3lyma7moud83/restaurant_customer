@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -10,6 +11,7 @@ enum GoogleAuthStatus {
   success,
   cancelled,
   redirecting,
+  failed,
 }
 
 class GoogleAuthResult {
@@ -46,13 +48,25 @@ class GoogleAuthService {
         defaultTargetPlatform == TargetPlatform.android ||
             defaultTargetPlatform == TargetPlatform.iOS;
     if (!isSupportedPlatform) {
-      throw Exception('Google Sign-In غير مدعوم على هذا النظام.');
+      return const GoogleAuthResult(
+        status: GoogleAuthStatus.failed,
+        message: 'Google Sign-In غير مدعوم على هذا النظام.',
+      );
+    }
+
+    final serverClientId = AppEnv.googleServerClientId?.trim();
+    if (serverClientId == null || serverClientId.isEmpty) {
+      return const GoogleAuthResult(
+        status: GoogleAuthStatus.failed,
+        message:
+            'إعداد Google Sign-In غير مكتمل. أضف GOOGLE_SERVER_CLIENT_ID الصحيح.',
+      );
     }
 
     try {
       final googleSignIn = GoogleSignIn(
         scopes: const ['email', 'profile'],
-        serverClientId: AppEnv.googleServerClientId,
+        serverClientId: serverClientId,
         clientId: defaultTargetPlatform == TargetPlatform.iOS
             ? AppEnv.googleIosClientId
             : null,
@@ -70,8 +84,10 @@ class GoogleAuthService {
       final idToken = authentication.idToken;
       final accessToken = authentication.accessToken;
       if (idToken == null || accessToken == null) {
-        throw Exception(
-          'تعذر الحصول على بيانات التحقق من Google. تأكد من إعداد GOOGLE_SERVER_CLIENT_ID.',
+        return const GoogleAuthResult(
+          status: GoogleAuthStatus.failed,
+          message:
+              'تعذر الحصول على بيانات Google. تحقق من إعداد OAuth و GOOGLE_SERVER_CLIENT_ID.',
         );
       }
 
@@ -93,7 +109,36 @@ class GoogleAuthService {
         error: error,
         stack: stack,
       );
-      rethrow;
+      return GoogleAuthResult(
+        status: GoogleAuthStatus.failed,
+        message: _friendlyErrorMessage(error),
+      );
     }
+  }
+
+  String _friendlyErrorMessage(Object error) {
+    if (error is PlatformException) {
+      final combined = [
+        error.code,
+        error.message,
+        error.details?.toString(),
+      ].join(' ').toLowerCase();
+
+      if (combined.contains('apiexception: 10') ||
+          combined.contains('sign_in_failed') ||
+          combined.contains('developer_error')) {
+        return 'فشل تسجيل Google بسبب إعدادات Firebase/OAuth. '
+            'أضف SHA-1 وSHA-256 لشهادة Android داخل Firebase، '
+            'ثم أعد تنزيل google-services.json وتأكد من GOOGLE_SERVER_CLIENT_ID.';
+      }
+    }
+
+    final normalized = error.toString().toLowerCase();
+    if (normalized.contains('apiexception: 10')) {
+      return 'Google Sign-In غير مهيأ بشكل صحيح. '
+          'تحقق من SHA-1 وGoogle OAuth Client ID.';
+    }
+
+    return 'تعذر تسجيل الدخول عبر Google حالياً. حاول مرة أخرى.';
   }
 }

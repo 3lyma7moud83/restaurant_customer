@@ -529,6 +529,8 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
   @override
   Widget build(BuildContext context) {
     final order = _order;
+    final hasRouteMap =
+        order != null && _TrackingRouteSnapshot.fromOrder(order) != null;
     final switcherDuration =
         kIsWeb ? Duration.zero : const Duration(milliseconds: 220);
 
@@ -560,8 +562,12 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
                       cacheExtent: 540,
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                       children: [
-                        RepaintBoundary(child: _TrackingRouteMap(order: order)),
-                        const SizedBox(height: 16),
+                        if (hasRouteMap) ...[
+                          RepaintBoundary(
+                            child: _TrackingRouteMap(order: order),
+                          ),
+                          const SizedBox(height: 16),
+                        ],
                         _AnimatedTrackingSection(
                           delay: const Duration(milliseconds: 40),
                           child: _TrackingOrderInfoCard(
@@ -573,7 +579,7 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
                         _AnimatedTrackingSection(
                           delay: const Duration(milliseconds: 80),
                           child: _TrackingStatusCard(
-                            status: order['status']?.toString(),
+                            order: order,
                           ),
                         ),
                       ],
@@ -837,24 +843,22 @@ class _OrderItemRow extends StatelessWidget {
 
 class _TrackingStatusCard extends StatelessWidget {
   const _TrackingStatusCard({
-    required this.status,
+    required this.order,
   });
 
-  final String? status;
+  final Map<String, dynamic> order;
 
   @override
   Widget build(BuildContext context) {
     final animationDuration =
         kIsWeb ? Duration.zero : AppTheme.sectionTransitionDuration;
-    final statusInfo = resolveOrderStatus(status);
-    final normalized = normalizeOrderStatus(status);
-    final progress = _statusProgress(normalized);
-    final rawStatus = (status ?? '').trim();
+    final rawStatus = (order['status'] ?? '').toString().trim();
+    final progressState = _TrackingDeliveryProgress.fromOrder(order);
     const stages = [
-      ('تم التأكيد', 0.25),
-      ('في الطريق', 0.60),
-      ('تم التسليم', 0.85),
-      ('اكتمل', 1.0),
+      ('قيد التحضير', _TrackingDeliveryStage.preparing),
+      ('في الطريق', _TrackingDeliveryStage.onTheWay),
+      ('قريب من العميل', _TrackingDeliveryStage.nearCustomer),
+      ('تم التسليم', _TrackingDeliveryStage.delivered),
     ];
 
     return OrderSectionCard(
@@ -874,10 +878,10 @@ class _TrackingStatusCard extends StatelessWidget {
             switchInCurve: AppTheme.emphasizedCurve,
             switchOutCurve: Curves.easeInCubic,
             child: Text(
-              statusInfo.text,
-              key: ValueKey(statusInfo.text),
+              progressState.label,
+              key: ValueKey(progressState.label),
               style: TextStyle(
-                color: statusInfo.color,
+                color: progressState.color,
                 fontWeight: FontWeight.w800,
                 fontSize: 18,
               ),
@@ -900,10 +904,21 @@ class _TrackingStatusCard extends StatelessWidget {
                     ),
                   ),
           ),
+          if (progressState.distanceSummary != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              progressState.distanceSummary!,
+              style: const TextStyle(
+                color: Color(0xFF667085),
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
           _TrackingPipeProgress(
-            value: progress,
-            color: statusInfo.color,
+            value: progressState.progress,
+            color: progressState.color,
           ),
           const SizedBox(height: 10),
           Wrap(
@@ -913,7 +928,7 @@ class _TrackingStatusCard extends StatelessWidget {
                 .map(
                   (stage) => _ProgressHint(
                     text: stage.$1,
-                    active: progress >= stage.$2,
+                    active: progressState.isStageReached(stage.$2),
                   ),
                 )
                 .toList(growable: false),
@@ -921,26 +936,6 @@ class _TrackingStatusCard extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  static double _statusProgress(String normalized) {
-    switch (normalized) {
-      case 'accepted':
-      case 'confirmed':
-        return 0.25;
-      case 'on_way':
-      case 'on_the_way':
-      case 'on_theway':
-      case 'onway':
-      case 'arrived':
-        return 0.60;
-      case 'delivered':
-        return 0.85;
-      case 'completed':
-        return 1.0;
-      default:
-        return 0.08;
-    }
   }
 }
 
@@ -1052,6 +1047,204 @@ class _ProgressHint extends StatelessWidget {
   }
 }
 
+enum _TrackingDeliveryStage {
+  preparing,
+  onTheWay,
+  nearCustomer,
+  delivered,
+}
+
+class _TrackingDeliveryProgress {
+  const _TrackingDeliveryProgress({
+    required this.stage,
+    required this.progress,
+    required this.color,
+    required this.label,
+    this.distanceSummary,
+  });
+
+  final _TrackingDeliveryStage stage;
+  final double progress;
+  final Color color;
+  final String label;
+  final String? distanceSummary;
+
+  bool isStageReached(_TrackingDeliveryStage other) {
+    return _stageRank(stage) >= _stageRank(other);
+  }
+
+  static _TrackingDeliveryProgress fromOrder(Map<String, dynamic> order) {
+    final normalizedStatus = normalizeOrderStatus(order['status']?.toString());
+    final snapshot = _TrackingRouteSnapshot.fromOrder(order);
+    final isDelivered = _isDeliveredStatus(normalizedStatus);
+
+    final totalDistance = snapshot == null
+        ? null
+        : _distanceMeters(
+            snapshot.restaurantPoint,
+            snapshot.customerPoint,
+          );
+    final remainingDistance = snapshot == null
+        ? null
+        : snapshot.driverPoint == null
+            ? totalDistance
+            : _distanceMeters(
+                snapshot.driverPoint!,
+                snapshot.customerPoint,
+              );
+    final hasDriver = snapshot?.driverPoint != null;
+
+    var geometryProgress = 0.0;
+    if (totalDistance != null &&
+        totalDistance > 1 &&
+        remainingDistance != null) {
+      geometryProgress = ((totalDistance - remainingDistance) / totalDistance)
+          .clamp(0.0, 1.0)
+          .toDouble();
+    }
+
+    if (isDelivered) {
+      final summary = totalDistance == null
+          ? null
+          : 'اكتملت الرحلة (${_distanceLabel(totalDistance)})';
+      return const _TrackingDeliveryProgress(
+        stage: _TrackingDeliveryStage.delivered,
+        progress: 1,
+        color: Color(0xFF2E7D32),
+        label: 'تم التسليم',
+      ).copyWith(distanceSummary: summary);
+    }
+
+    final nearThreshold =
+        totalDistance == null ? 180.0 : math.max(130.0, totalDistance * 0.12);
+
+    final bool nearCustomer = hasDriver &&
+        remainingDistance != null &&
+        remainingDistance <= nearThreshold;
+
+    final _TrackingDeliveryStage stage;
+    if (nearCustomer) {
+      stage = _TrackingDeliveryStage.nearCustomer;
+    } else if (hasDriver || _isOnWayStatus(normalizedStatus)) {
+      stage = _TrackingDeliveryStage.onTheWay;
+    } else {
+      stage = _TrackingDeliveryStage.preparing;
+    }
+
+    var progress = geometryProgress;
+    switch (stage) {
+      case _TrackingDeliveryStage.preparing:
+        progress =
+            (progress > 0 ? progress : 0.08).clamp(0.08, 0.24).toDouble();
+        break;
+      case _TrackingDeliveryStage.onTheWay:
+        progress =
+            (progress > 0 ? progress : 0.38).clamp(0.35, 0.90).toDouble();
+        break;
+      case _TrackingDeliveryStage.nearCustomer:
+        progress = math.max(progress, 0.82).clamp(0.82, 0.98).toDouble();
+        break;
+      case _TrackingDeliveryStage.delivered:
+        progress = 1.0;
+        break;
+    }
+
+    final summary = totalDistance == null
+        ? null
+        : remainingDistance == null
+            ? 'المسافة الكلية ${_distanceLabel(totalDistance)}'
+            : 'المتبقي ${_distanceLabel(remainingDistance)} من ${_distanceLabel(totalDistance)}';
+
+    return _TrackingDeliveryProgress(
+      stage: stage,
+      progress: progress,
+      color: switch (stage) {
+        _TrackingDeliveryStage.preparing => const Color(0xFFF4B400),
+        _TrackingDeliveryStage.onTheWay => const Color(0xFFFB8C00),
+        _TrackingDeliveryStage.nearCustomer => const Color(0xFF1F8A5B),
+        _TrackingDeliveryStage.delivered => const Color(0xFF2E7D32),
+      },
+      label: switch (stage) {
+        _TrackingDeliveryStage.preparing => 'جارِ تجهيز الطلب',
+        _TrackingDeliveryStage.onTheWay => 'المندوب في الطريق',
+        _TrackingDeliveryStage.nearCustomer => 'المندوب قريب منك',
+        _TrackingDeliveryStage.delivered => 'تم التسليم',
+      },
+      distanceSummary: summary,
+    );
+  }
+
+  _TrackingDeliveryProgress copyWith({
+    _TrackingDeliveryStage? stage,
+    double? progress,
+    Color? color,
+    String? label,
+    String? distanceSummary,
+  }) {
+    return _TrackingDeliveryProgress(
+      stage: stage ?? this.stage,
+      progress: progress ?? this.progress,
+      color: color ?? this.color,
+      label: label ?? this.label,
+      distanceSummary: distanceSummary ?? this.distanceSummary,
+    );
+  }
+
+  static bool _isDeliveredStatus(String normalizedStatus) {
+    return normalizedStatus == 'delivered' || normalizedStatus == 'completed';
+  }
+
+  static bool _isOnWayStatus(String normalizedStatus) {
+    return normalizedStatus == 'on_way' ||
+        normalizedStatus == 'on_the_way' ||
+        normalizedStatus == 'on_theway' ||
+        normalizedStatus == 'onway' ||
+        normalizedStatus == 'arrived';
+  }
+
+  static int _stageRank(_TrackingDeliveryStage stage) {
+    switch (stage) {
+      case _TrackingDeliveryStage.preparing:
+        return 0;
+      case _TrackingDeliveryStage.onTheWay:
+        return 1;
+      case _TrackingDeliveryStage.nearCustomer:
+        return 2;
+      case _TrackingDeliveryStage.delivered:
+        return 3;
+    }
+  }
+
+  static String _distanceLabel(double meters) {
+    if (meters < 1000) {
+      return '${meters.round()} م';
+    }
+
+    final km = meters / 1000;
+    if (km >= 10) {
+      return '${km.toStringAsFixed(0)} كم';
+    }
+    return '${km.toStringAsFixed(1)} كم';
+  }
+
+  static double _distanceMeters(LatLng start, LatLng end) {
+    const earthRadius = 6371000.0;
+    final dLat = (end.latitude - start.latitude) * (math.pi / 180);
+    final dLng = (end.longitude - start.longitude) * (math.pi / 180);
+    final lat1 = start.latitude * (math.pi / 180);
+    final lat2 = end.latitude * (math.pi / 180);
+
+    final haversine = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(lat1) *
+            math.cos(lat2) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+    final centralAngle =
+        2 * math.atan2(math.sqrt(haversine), math.sqrt(1 - haversine));
+    return earthRadius * centralAngle;
+  }
+}
+
 class _TrackingRouteMap extends StatefulWidget {
   const _TrackingRouteMap({
     required this.order,
@@ -1108,23 +1301,19 @@ class _TrackingRouteMapState extends State<_TrackingRouteMap> {
     }
 
     _ensureMapShell(next);
-    final routeChanged = previous == null ||
+    final routeGeometryChanged = previous == null ||
         !_samePoint(previous.restaurantPoint, next.restaurantPoint) ||
         !_samePoint(previous.customerPoint, next.customerPoint);
+    final driverChanged = previous == null ||
+        !_sameOptionalPoint(previous.driverPoint, next.driverPoint);
 
-    if (routeChanged) {
-      _polylinesNotifier.value = [
-        Polyline(
-          points: [next.restaurantPoint, next.customerPoint],
-          strokeWidth: 5,
-          color: const Color(0xFF1565C0),
-        ),
-      ];
+    if (routeGeometryChanged || driverChanged) {
+      _polylinesNotifier.value = _buildRoutePolylines(next);
     }
 
     _markersNotifier.value = _buildMarkers(next);
 
-    if (routeChanged && moveMap) {
+    if (routeGeometryChanged && moveMap) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           _mapController.move(next.center, 13);
@@ -1181,11 +1370,37 @@ class _TrackingRouteMapState extends State<_TrackingRouteMap> {
     return markers;
   }
 
+  List<Polyline> _buildRoutePolylines(_TrackingRouteSnapshot snapshot) {
+    final driverPoint = snapshot.driverPoint;
+    if (driverPoint == null) {
+      return [
+        Polyline(
+          points: [snapshot.restaurantPoint, snapshot.customerPoint],
+          strokeWidth: 5.5,
+          color: const Color(0xFF1565C0),
+        ),
+      ];
+    }
+
+    return [
+      Polyline(
+        points: [snapshot.restaurantPoint, driverPoint],
+        strokeWidth: 5.5,
+        color: const Color(0xFF2E7D32),
+      ),
+      Polyline(
+        points: [driverPoint, snapshot.customerPoint],
+        strokeWidth: 5.5,
+        color: const Color(0xFF1565C0),
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final snapshot = _snapshot;
     if (snapshot == null) {
-      return const _TrackingMapUnavailable();
+      return const SizedBox.shrink();
     }
 
     _ensureMapShell(snapshot);
@@ -1195,6 +1410,13 @@ class _TrackingRouteMapState extends State<_TrackingRouteMap> {
   static bool _samePoint(LatLng first, LatLng second) {
     return first.latitude == second.latitude &&
         first.longitude == second.longitude;
+  }
+
+  static bool _sameOptionalPoint(LatLng? first, LatLng? second) {
+    if (first == null || second == null) {
+      return first == second;
+    }
+    return _samePoint(first, second);
   }
 
   static double _bearingRadians(LatLng from, LatLng to) {
@@ -1291,17 +1513,26 @@ class _TrackingRouteSnapshot {
     final customerPoint = LatLng(customerLat, customerLng);
     final driverLat = OrdersService.driverLatOf(order);
     final driverLng = OrdersService.driverLngOf(order);
+    final driverPoint = driverLat != null && driverLng != null
+        ? LatLng(driverLat, driverLng)
+        : null;
+    final routePoints = <LatLng>[
+      restaurantPoint,
+      customerPoint,
+      if (driverPoint != null) driverPoint,
+    ];
+    final averageLat =
+        routePoints.map((point) => point.latitude).reduce((a, b) => a + b) /
+            routePoints.length;
+    final averageLng =
+        routePoints.map((point) => point.longitude).reduce((a, b) => a + b) /
+            routePoints.length;
 
     return _TrackingRouteSnapshot(
       restaurantPoint: restaurantPoint,
       customerPoint: customerPoint,
-      center: LatLng(
-        (restaurantPoint.latitude + customerPoint.latitude) / 2,
-        (restaurantPoint.longitude + customerPoint.longitude) / 2,
-      ),
-      driverPoint: driverLat != null && driverLng != null
-          ? LatLng(driverLat, driverLng)
-          : null,
+      center: LatLng(averageLat, averageLng),
+      driverPoint: driverPoint,
     );
   }
 
@@ -1328,32 +1559,6 @@ class _TrackingRouteSnapshot {
         driverPoint?.latitude,
         driverPoint?.longitude,
       );
-}
-
-class _TrackingMapUnavailable extends StatelessWidget {
-  const _TrackingMapUnavailable();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 240,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFE4E7EC)),
-      ),
-      child: const Center(
-        child: Text(
-          'لا يمكن عرض مسار التوصيل حالياً.',
-          style: TextStyle(
-            color: Color(0xFF667085),
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _DriverMarker extends StatelessWidget {

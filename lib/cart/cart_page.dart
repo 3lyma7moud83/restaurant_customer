@@ -4,10 +4,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../core/localization/app_localizations.dart';
 import '../core/services/error_logger.dart';
 import '../core/orders/order_status_utils.dart';
 import '../core/orders/order_ui.dart';
 import '../core/theme/app_theme.dart';
+import '../core/ui/responsive.dart';
 import '../pages/order_details_page.dart';
 import '../pages/order_tracking_page.dart';
 import '../services/orders_service.dart';
@@ -15,6 +17,12 @@ import '../services/profile_service.dart';
 import '../services/session_manager.dart';
 import 'cart_provider.dart';
 import 'select_address_page.dart';
+
+String localizedCurrency(BuildContext context, double value) {
+  final normalized =
+      value % 1 == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(2);
+  return context.tr('common.currency', args: {'value': normalized});
+}
 
 class CartPage extends StatefulWidget {
   const CartPage({
@@ -96,7 +104,7 @@ class _CartPageState extends State<CartPage> {
       _setControllerValue(phoneCtrl, (profile['phone'] ?? '').toString());
     } catch (_) {
       if (mounted) {
-        _showSnack('تعذر تحميل بيانات العميل حالياً.');
+        _showSnack(context.tr('cart.profile_load_error'));
       }
     } finally {
       if (mounted) {
@@ -203,12 +211,12 @@ class _CartPageState extends State<CartPage> {
     final customerPhone = (result['customerPhone'] ?? '').toString().trim();
 
     if (lat == null || lng == null) {
-      _showSnack('تعذر تحديد الموقع، حاول مرة أخرى.');
+      _showSnack(context.tr('cart.location_pick_error'));
       return;
     }
 
     if (fullAddress.isEmpty) {
-      _showSnack('اكتب عنوان التوصيل قبل المتابعة.');
+      _showSnack(context.tr('cart.address_required'));
       return;
     }
 
@@ -277,14 +285,19 @@ class _CartPageState extends State<CartPage> {
     }
 
     if (cart.items.isEmpty) {
-      _showSnack('السلة فارغة.');
+      _showSnack(context.tr('cart.empty'));
       return;
     }
 
     if (!cart.hasLocation ||
         cart.deliveryAddress == null ||
         cart.deliveryAddress!.trim().isEmpty) {
-      _showSnack('حدد عنوان التوصيل من الخريطة أولاً.');
+      _showSnack(context.tr('cart.pick_location_first'));
+      return;
+    }
+
+    if (cart.selectedPaymentMethod == null) {
+      _showSnack(context.tr('cart.select_payment_first'));
       return;
     }
 
@@ -320,6 +333,7 @@ class _CartPageState extends State<CartPage> {
           customerLng: cart.deliveryLng!,
           totalPrice: cart.totalPrice + cart.deliveryCost,
           deliveryCost: cart.deliveryCost,
+          paymentMethod: cart.selectedPaymentMethod?.value,
           items: cart.items
               .map<CreateOrderItemInput>(
                 (item) => CreateOrderItemInput(
@@ -392,7 +406,7 @@ class _CartPageState extends State<CartPage> {
       return true;
     } catch (_) {
       if (mounted) {
-        _showSnack('تعذر حفظ بيانات العميل حالياً.');
+        _showSnack(context.tr('cart.profile_save_error'));
       }
       return false;
     }
@@ -443,13 +457,14 @@ class _CartPageState extends State<CartPage> {
     final cart = CartProvider.of(context);
     final subtotal = cart.totalPrice;
     final total = subtotal + cart.deliveryCost;
+    final hasPaymentMethod = cart.selectedPaymentMethod != null;
     final activeStatus = _activeOrder == null
         ? null
         : resolveOrderStatus(_activeOrder!['status']?.toString());
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      appBar: AppBar(title: const Text('السلة')),
+      appBar: AppBar(title: Text(context.tr('cart.title'))),
       body: loadingProfile
           ? const Center(child: CircularProgressIndicator())
           : AnimatedOpacity(
@@ -457,166 +472,231 @@ class _CartPageState extends State<CartPage> {
               duration:
                   kIsWeb ? Duration.zero : const Duration(milliseconds: 240),
               curve: Curves.easeOutCubic,
-              child: cart.items.isEmpty && !cart.isLocked
-                  ? const _CartEmptyState()
-                  : ListView(
-                      physics: AppTheme.bouncingScrollPhysics,
-                      keyboardDismissBehavior:
-                          ScrollViewKeyboardDismissBehavior.onDrag,
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                      children: [
-                        if (cart.isLocked) ...[
-                          _ActiveOrderCard(
-                            order: _activeOrder,
-                            onOpenOrder: _openCurrentOrder,
-                            fallbackOrderId: cart.activeOrderId,
-                          ),
-                          const SizedBox(height: 16),
-                        ],
-                        _SectionCard(
-                          title: 'الأصناف',
-                          child: Column(
-                            children: cart.items
-                                .map(
-                                  (item) => Padding(
-                                    padding: const EdgeInsets.only(bottom: 12),
-                                    child: _CartLineItem(item: item),
-                                  ),
-                                )
-                                .toList(growable: false),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        _SectionCard(
-                          title: 'بيانات العميل',
-                          child: Column(
-                            children: [
-                              _ReadOnlyField(
-                                label: 'الاسم',
-                                value: nameCtrl.text.trim().isEmpty
-                                    ? 'سيتم طلبه قبل تأكيد أول طلب'
-                                    : nameCtrl.text.trim(),
-                              ),
-                              const SizedBox(height: 12),
-                              _ReadOnlyField(
-                                label: 'رقم الهاتف',
-                                value: phoneCtrl.text.trim().isEmpty
-                                    ? 'سيتم طلبه قبل تأكيد أول طلب'
-                                    : phoneCtrl.text.trim(),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        _SectionCard(
-                          title: 'عنوان التوصيل',
-                          trailing: cart.isLocked
-                              ? null
-                              : TextButton.icon(
-                                  onPressed: () => _openLocationPicker(cart),
-                                  icon:
-                                      const Icon(Icons.map_outlined, size: 18),
-                                  label: const Text('تحديد الموقع'),
-                                ),
-                          child: Column(
-                            children: [
-                              TextField(
-                                controller: addressCtrl,
-                                enabled: !cart.isLocked,
-                                textAlign: TextAlign.right,
-                                minLines: 2,
-                                maxLines: 3,
-                                decoration: InputDecoration(
-                                  labelText: 'عنوان التوصيل',
-                                  hintText:
-                                      'حدد الموقع من الخريطة ثم عدّل العنوان إذا لزم',
-                                  prefixIcon:
-                                      const Icon(Icons.location_on_outlined),
-                                  suffixIcon: cart.isLocked
-                                      ? null
-                                      : IconButton(
-                                          onPressed: () =>
-                                              _openLocationPicker(cart),
-                                          icon: const Icon(Icons.map_outlined),
-                                        ),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              TextField(
-                                controller: houseNumberCtrl,
-                                enabled: !cart.isLocked,
-                                textAlign: TextAlign.right,
-                                decoration: const InputDecoration(
-                                  labelText: 'رقم البيت',
-                                  hintText: 'مثال: 12',
-                                  prefixIcon: Icon(Icons.home_outlined),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        _SectionCard(
-                          title: 'ملخص السعر',
-                          child: Column(
-                            children: [
-                              _PriceRow(
-                                label: 'سعر الطلب',
-                                value: formatPrice(subtotal),
-                              ),
-                              const SizedBox(height: 10),
-                              _PriceRow(
-                                label: 'التوصيل',
-                                value: formatPrice(cart.deliveryCost),
-                              ),
-                              const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 14),
-                                child: Divider(height: 1),
-                              ),
-                              _PriceRow(
-                                label: 'الإجمالي',
-                                value: formatPrice(total),
-                                emphasized: true,
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 18),
-                        if (!cart.hasLocation && !cart.isLocked)
-                          OutlinedButton.icon(
-                            onPressed: () => _openLocationPicker(cart),
-                            icon: const Icon(Icons.location_on_outlined),
-                            label: const Text('تحديد الموقع على الخريطة'),
-                          ),
-                        if (cart.hasLocation && !cart.isLocked)
-                          ElevatedButton(
-                            onPressed:
-                                creatingOrder ? null : () => _createOrder(cart),
-                            child: creatingOrder
-                                ? const SizedBox(
-                                    width: 22,
-                                    height: 22,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
+              child: AppConstrainedContent(
+                child: cart.items.isEmpty && !cart.isLocked
+                    ? const _CartEmptyState()
+                    : ListView(
+                        physics: AppTheme.bouncingScrollPhysics,
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
+                        padding: const EdgeInsets.fromLTRB(0, 0, 0, 24),
+                        children: [
+                          if (cart.isLocked) ...[
+                            _ActiveOrderCard(
+                              order: _activeOrder,
+                              onOpenOrder: _openCurrentOrder,
+                              fallbackOrderId: cart.activeOrderId,
+                            ),
+                            const SizedBox(height: 16),
+                          ],
+                          _SectionCard(
+                            title: context.tr('cart.items_section'),
+                            child: Column(
+                              children: cart.items
+                                  .map(
+                                    (item) => Padding(
+                                      padding:
+                                          const EdgeInsets.only(bottom: 12),
+                                      child: _CartLineItem(item: item),
                                     ),
                                   )
-                                : Text(
-                                    'تأكيد الطلب · ${formatPrice(total)}',
-                                  ),
-                          ),
-                        if (cart.isLocked)
-                          ElevatedButton.icon(
-                            onPressed: _openCurrentOrder,
-                            icon: Icon(
-                              activeStatus?.canTrack == true
-                                  ? Icons.navigation_outlined
-                                  : Icons.receipt_long_outlined,
+                                  .toList(growable: false),
                             ),
-                            label: const Text('متابعة الطلب الحالي'),
                           ),
-                      ],
-                    ),
+                          const SizedBox(height: 16),
+                          _SectionCard(
+                            title: context.tr('cart.customer_section'),
+                            child: Column(
+                              children: [
+                                _ReadOnlyField(
+                                  label: context.tr('cart.name'),
+                                  value: nameCtrl.text.trim().isEmpty
+                                      ? context
+                                          .tr('cart.ask_before_first_order')
+                                      : nameCtrl.text.trim(),
+                                ),
+                                const SizedBox(height: 12),
+                                _ReadOnlyField(
+                                  label: context.tr('cart.phone'),
+                                  value: phoneCtrl.text.trim().isEmpty
+                                      ? context
+                                          .tr('cart.ask_before_first_order')
+                                      : phoneCtrl.text.trim(),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          _SectionCard(
+                            title: context.tr('cart.address_section'),
+                            trailing: cart.isLocked
+                                ? null
+                                : TextButton.icon(
+                                    onPressed: () => _openLocationPicker(cart),
+                                    icon: const Icon(Icons.map_outlined,
+                                        size: 18),
+                                    label: Text(
+                                      context.tr('cart.select_location'),
+                                    ),
+                                  ),
+                            child: Column(
+                              children: [
+                                TextField(
+                                  controller: addressCtrl,
+                                  enabled: !cart.isLocked,
+                                  textAlign: TextAlign.right,
+                                  minLines: 2,
+                                  maxLines: 3,
+                                  decoration: InputDecoration(
+                                    labelText:
+                                        context.tr('cart.delivery_address'),
+                                    hintText: context
+                                        .tr('cart.delivery_address_hint'),
+                                    prefixIcon:
+                                        const Icon(Icons.location_on_outlined),
+                                    suffixIcon: cart.isLocked
+                                        ? null
+                                        : IconButton(
+                                            onPressed: () =>
+                                                _openLocationPicker(cart),
+                                            icon:
+                                                const Icon(Icons.map_outlined),
+                                          ),
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: houseNumberCtrl,
+                                  enabled: !cart.isLocked,
+                                  textAlign: TextAlign.right,
+                                  decoration: InputDecoration(
+                                    labelText: context.tr('cart.house_number'),
+                                    hintText:
+                                        context.tr('cart.house_number_hint'),
+                                    prefixIcon: const Icon(Icons.home_outlined),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          _SectionCard(
+                            title: context.tr('cart.payment_section'),
+                            child: Column(
+                              children: [
+                                _PaymentMethodTile(
+                                  title: context.tr('cart.payment_cash'),
+                                  subtitle:
+                                      context.tr('cart.payment_cash_subtitle'),
+                                  icon: Icons.payments_outlined,
+                                  selected: cart.selectedPaymentMethod ==
+                                      CartPaymentMethod.cash,
+                                  enabled: !cart.isLocked,
+                                  onTap: () => cart
+                                      .setPaymentMethod(CartPaymentMethod.cash),
+                                ),
+                                const SizedBox(height: 10),
+                                _PaymentMethodTile(
+                                  title: context.tr('cart.payment_visa'),
+                                  subtitle:
+                                      context.tr('cart.payment_visa_soon'),
+                                  icon: Icons.credit_card_rounded,
+                                  selected: false,
+                                  enabled: false,
+                                  tooltip: context.tr('cart.payment_visa_soon'),
+                                  onTap: () {},
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          _SectionCard(
+                            title: context.tr('cart.price_summary'),
+                            child: Column(
+                              children: [
+                                _PriceRow(
+                                  label: context.tr('cart.subtotal'),
+                                  value: localizedCurrency(context, subtotal),
+                                ),
+                                const SizedBox(height: 10),
+                                _PriceRow(
+                                  label: context.tr('cart.delivery'),
+                                  value: localizedCurrency(
+                                    context,
+                                    cart.deliveryCost,
+                                  ),
+                                ),
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 14),
+                                  child: Divider(height: 1),
+                                ),
+                                _PriceRow(
+                                  label: context.tr('cart.total'),
+                                  value: localizedCurrency(context, total),
+                                  emphasized: true,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          if (!cart.hasLocation && !cart.isLocked)
+                            OutlinedButton.icon(
+                              onPressed: () => _openLocationPicker(cart),
+                              icon: const Icon(Icons.location_on_outlined),
+                              label: Text(context.tr('cart.select_on_map')),
+                            ),
+                          if (cart.hasLocation && !cart.isLocked)
+                            ElevatedButton(
+                              onPressed: creatingOrder || !hasPaymentMethod
+                                  ? null
+                                  : () => _createOrder(cart),
+                              child: creatingOrder
+                                  ? const SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : Text(
+                                      context.tr(
+                                        'cart.confirm_order_total',
+                                        args: {
+                                          'total':
+                                              localizedCurrency(context, total),
+                                        },
+                                      ),
+                                    ),
+                            ),
+                          if (cart.hasLocation &&
+                              !cart.isLocked &&
+                              !hasPaymentMethod)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Text(
+                                context.tr('cart.select_payment_first'),
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Color(0xFFB42318),
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          if (cart.isLocked)
+                            ElevatedButton.icon(
+                              onPressed: _openCurrentOrder,
+                              icon: Icon(
+                                activeStatus?.canTrack == true
+                                    ? Icons.navigation_outlined
+                                    : Icons.receipt_long_outlined,
+                              ),
+                              label:
+                                  Text(context.tr('cart.track_current_order')),
+                            ),
+                        ],
+                      ),
+              ),
             ),
     );
   }
@@ -666,7 +746,7 @@ class _CartLineItem extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${item.qty} × ${formatPrice(item.price)}',
+                  '${item.qty} × ${localizedCurrency(context, item.price)}',
                   style: const TextStyle(
                     color: Color(0xFF667085),
                     fontWeight: FontWeight.w600,
@@ -677,7 +757,7 @@ class _CartLineItem extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           Text(
-            formatPrice(item.price * item.qty),
+            localizedCurrency(context, item.price * item.qty),
             style: const TextStyle(
               color: AppTheme.primary,
               fontWeight: FontWeight.w900,
@@ -789,6 +869,89 @@ class _ReadOnlyField extends StatelessWidget {
   }
 }
 
+class _PaymentMethodTile extends StatelessWidget {
+  const _PaymentMethodTile({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+    this.tooltip,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final tile = InkWell(
+      onTap: enabled ? onTap : null,
+      borderRadius: BorderRadius.circular(16),
+      child: Ink(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: selected
+              ? AppTheme.primary.withValues(alpha: 0.1)
+              : const Color(0xFFF9F6F2),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: selected ? AppTheme.primary : AppTheme.border,
+          ),
+        ),
+        child: Row(
+          children: [
+            Radio<bool>(
+              value: true,
+              groupValue: selected,
+              onChanged: enabled ? (_) => onTap() : null,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      color: enabled ? AppTheme.text : AppTheme.textMuted,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color: Color(0xFF667085),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Icon(
+              icon,
+              color: enabled ? AppTheme.primary : AppTheme.textMuted,
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (tooltip == null || tooltip!.isEmpty) {
+      return tile;
+    }
+
+    return Tooltip(message: tooltip!, child: tile);
+  }
+}
+
 class _PriceRow extends StatelessWidget {
   const _PriceRow({
     required this.label,
@@ -864,8 +1027,8 @@ class _ActiveOrderCard extends StatelessWidget {
             children: [
               if (statusInfo != null) OrderStatusBadge(info: statusInfo),
               const Spacer(),
-              const Text(
-                'طلب جاري',
+              Text(
+                context.tr('cart.active_order'),
                 style: TextStyle(
                   color: AppTheme.text,
                   fontSize: 17,
@@ -876,7 +1039,7 @@ class _ActiveOrderCard extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            'تم حفظ السلة حتى يكتمل هذا الطلب أو يتم رفضه.',
+            context.tr('cart.active_order_locked_message'),
             textAlign: TextAlign.right,
             style: const TextStyle(
               color: Color(0xFF475467),
@@ -886,7 +1049,7 @@ class _ActiveOrderCard extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            'رقم الطلب: $displayOrderId',
+            context.tr('cart.order_number', args: {'id': displayOrderId}),
             style: const TextStyle(
               color: AppTheme.text,
               fontWeight: FontWeight.w800,
@@ -896,7 +1059,7 @@ class _ActiveOrderCard extends StatelessWidget {
           ElevatedButton.icon(
             onPressed: onOpenOrder,
             icon: const Icon(Icons.open_in_new_rounded),
-            label: const Text('فتح الطلب'),
+            label: Text(context.tr('cart.open_order')),
           ),
         ],
       ),
@@ -929,16 +1092,16 @@ class _CartEmptyState extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 18),
-            const Text(
-              'السلة فارغة',
+            Text(
+              context.tr('cart.empty_title'),
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'أضف بعض الأصناف من قائمة المطعم ثم ارجع هنا لتأكيد الطلب.',
+            Text(
+              context.tr('cart.empty_subtitle'),
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Color(0xFF667085),
@@ -993,12 +1156,12 @@ class _CustomerInfoSheetState extends State<_CustomerInfoSheet> {
     final phone = _phoneCtrl.text.trim();
 
     if (name.isEmpty) {
-      _showSnack('اكتب الاسم.');
+      _showSnack(context.tr('cart.write_name'));
       return;
     }
 
     if (phone.length < 8) {
-      _showSnack('رقم الهاتف غير صحيح.');
+      _showSnack(context.tr('cart.invalid_phone'));
       return;
     }
 
@@ -1027,8 +1190,8 @@ class _CustomerInfoSheetState extends State<_CustomerInfoSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            const Text(
-              'أكمل بيانات الطلب',
+            Text(
+              context.tr('cart.complete_order_data'),
               style: TextStyle(
                 color: AppTheme.text,
                 fontSize: 18,
@@ -1036,8 +1199,8 @@ class _CustomerInfoSheetState extends State<_CustomerInfoSheet> {
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'سنحفظ الاسم ورقم الهاتف في حسابك لاستخدامهما تلقائياً في الطلبات القادمة.',
+            Text(
+              context.tr('cart.complete_order_data_subtitle'),
               textAlign: TextAlign.right,
               style: TextStyle(
                 color: Color(0xFF667085),
@@ -1049,8 +1212,8 @@ class _CustomerInfoSheetState extends State<_CustomerInfoSheet> {
             TextField(
               controller: _nameCtrl,
               textAlign: TextAlign.right,
-              decoration: const InputDecoration(
-                labelText: 'الاسم',
+              decoration: InputDecoration(
+                labelText: context.tr('cart.name'),
               ),
             ),
             const SizedBox(height: 12),
@@ -1058,8 +1221,8 @@ class _CustomerInfoSheetState extends State<_CustomerInfoSheet> {
               controller: _phoneCtrl,
               textAlign: TextAlign.right,
               keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: 'رقم الهاتف',
+              decoration: InputDecoration(
+                labelText: context.tr('cart.phone'),
               ),
             ),
             const SizedBox(height: 16),
@@ -1067,7 +1230,7 @@ class _CustomerInfoSheetState extends State<_CustomerInfoSheet> {
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: _submit,
-                child: const Text('حفظ ومتابعة الطلب'),
+                child: Text(context.tr('cart.save_and_continue')),
               ),
             ),
           ],
