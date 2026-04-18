@@ -48,22 +48,19 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
   }
 
   int _getCrossAxisCount(double width) {
-    if (width < 340) {
-      return 1;
-    }
-    if (width < 560) {
+    if (width < 330) {
       return 2;
     }
-    if (width < 820) {
+    if (width < 760) {
       return 3;
     }
-    if (width < 1080) {
+    if (width < 980) {
       return 4;
     }
-    if (width < 1360) {
+    if (width < 1240) {
       return 5;
     }
-    if (width < 1640) {
+    if (width < 1520) {
       return 6;
     }
     return 7;
@@ -71,12 +68,11 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
 
   double _itemAspectRatioFor(int crossAxisCount) {
     return switch (crossAxisCount) {
-      1 => 1.45,
-      2 => 1.14,
-      3 => 1.04,
-      4 => 1.0,
-      5 => 0.96,
-      _ => 0.94,
+      <= 2 => 0.98,
+      3 => 0.95,
+      4 => 0.93,
+      5 => 0.91,
+      _ => 0.89,
     };
   }
 
@@ -250,7 +246,7 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
                     ),
                   if (categories.isNotEmpty)
                     SizedBox(
-                      height: 46,
+                      height: 86,
                       child: ListView.builder(
                         physics: AppTheme.bouncingScrollPhysics,
                         scrollDirection: Axis.horizontal,
@@ -265,46 +261,26 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
                           return Padding(
                             padding: EdgeInsetsDirectional.only(
                               start: index == 0 ? 0 : 8,
-                              end: index == categories.length - 1 ? 0 : 2,
+                              end: index == categories.length - 1 ? 0 : 4,
                             ),
-                            child: FilterChip(
-                              selected: selected,
-                              showCheckmark: false,
-                              materialTapTargetSize:
-                                  MaterialTapTargetSize.shrinkWrap,
-                              visualDensity: const VisualDensity(
-                                vertical: -2,
-                                horizontal: -2,
-                              ),
-                              selectedColor: AppTheme.primary,
-                              backgroundColor: const Color(0xFFF5ECE3),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              labelPadding: const EdgeInsets.symmetric(
-                                horizontal: 7,
-                                vertical: 0,
-                              ),
-                              label: Text(
-                                categoryName,
-                                style: TextStyle(
-                                  color:
-                                      selected ? Colors.white : AppTheme.text,
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 12.5,
-                                ),
-                              ),
-                              onSelected: (_) async {
-                                if (categoryId == null ||
-                                    categoryId == selectedCategoryId) {
-                                  return;
-                                }
+                            child: SizedBox(
+                              width: 78,
+                              child: _MenuCategoryCard(
+                                label:
+                                    categoryName.isEmpty ? '...' : categoryName,
+                                selected: selected,
+                                onTap: () {
+                                  if (categoryId == null ||
+                                      categoryId == selectedCategoryId) {
+                                    return;
+                                  }
 
-                                setState(() {
-                                  selectedCategoryId = categoryId;
-                                });
-                                await _loadItems();
-                              },
+                                  setState(() {
+                                    selectedCategoryId = categoryId;
+                                  });
+                                  unawaited(_loadItems());
+                                },
+                              ),
                             ),
                           );
                         },
@@ -396,6 +372,81 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
                   ),
                 ],
               ),
+      ),
+    );
+  }
+}
+
+class _MenuCategoryCard extends StatelessWidget {
+  const _MenuCategoryCard({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final backgroundColor = selected ? AppTheme.primary : Colors.white;
+    final borderColor = selected
+        ? AppTheme.primary.withValues(alpha: 0.88)
+        : const Color(0xFFE8E3DC);
+    final textColor = selected ? Colors.white : AppTheme.text;
+
+    return AspectRatio(
+      aspectRatio: 1,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: borderColor),
+          boxShadow: [
+            BoxShadow(
+              color: selected
+                  ? AppTheme.primary.withValues(alpha: 0.24)
+                  : const Color(0x10000000),
+              blurRadius: selected ? 14 : 10,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(16),
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(16),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.category_rounded,
+                    size: 17,
+                    color: selected ? Colors.white : AppTheme.primaryDeep,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    label,
+                    maxLines: 2,
+                    textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 10.5,
+                      height: 1.2,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -514,142 +565,185 @@ class _ItemCardState extends State<ItemCard> {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedScale(
-      scale: _pressed && !kIsWeb ? 0.97 : 1,
-      duration: kIsWeb ? Duration.zero : const Duration(milliseconds: 170),
-      curve: Curves.easeOutCubic,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          color: Colors.white,
-          boxShadow: const [
-            BoxShadow(
-              blurRadius: 10,
-              color: Color(0x12000000),
-              offset: Offset(0, 5),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact =
+            constraints.maxWidth < 136 || constraints.maxHeight < 170;
+        final ultraCompact =
+            constraints.maxWidth < 118 || constraints.maxHeight < 150;
+        final radius = compact ? 12.0 : 14.0;
+        final badgeHeight = compact ? 19.0 : 21.0;
+        final badgeFontSize = compact ? 9.5 : 10.5;
+        final addSize = ultraCompact
+            ? 28.0
+            : compact
+                ? 30.0
+                : 34.0;
+        final addIconSize = ultraCompact
+            ? 17.0
+            : compact
+                ? 18.0
+                : 21.0;
+        final contentPadding = EdgeInsets.fromLTRB(
+          compact ? 8 : 10,
+          compact ? 6 : 7,
+          compact ? 8 : 10,
+          compact ? 7 : 9,
+        );
+        final itemNameFont = compact ? 11.0 : 12.5;
+        final itemPriceFont = compact ? 10.0 : 11.5;
+        final rowSpacing = compact ? 4.0 : 6.0;
+        final imageFlex = compact ? 6 : 7;
+        final detailsFlex = compact ? 5 : 4;
+
+        return AnimatedScale(
+          scale: _pressed && !kIsWeb ? 0.97 : 1,
+          duration: kIsWeb ? Duration.zero : const Duration(milliseconds: 170),
+          curve: Curves.easeOutCubic,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(radius),
+              color: Colors.white,
+              boxShadow: const [
+                BoxShadow(
+                  blurRadius: 10,
+                  color: Color(0x12000000),
+                  offset: Offset(0, 5),
+                ),
+              ],
             ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: ClipRRect(
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(14),
-                      ),
-                      child: widget.imageUrl.isEmpty
-                          ? const ImageFallback(
-                              icon: Icons.fastfood_rounded,
-                              iconSize: 34,
-                            )
-                          : AppCachedImage(
-                              imageUrl: widget.imageUrl,
-                              placeholder: const _MenuItemImagePlaceholder(),
-                              errorWidget: const ImageFallback(
-                                icon: Icons.fastfood_rounded,
-                                iconSize: 34,
-                              ),
-                            ),
-                    ),
-                  ),
-                  if (widget.quantity > 0)
-                    PositionedDirectional(
-                      top: 7,
-                      start: 7,
-                      child: Container(
-                        height: 21,
-                        padding: const EdgeInsets.symmetric(horizontal: 6.5),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.78),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          widget.quantity.toString(),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10.5,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 7, 10, 9),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12.5,
-                      height: 1.25,
-                      fontWeight: FontWeight.w700,
-                      color: AppTheme.text,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  flex: imageFlex,
+                  child: Stack(
                     children: [
-                      Expanded(
-                        child: Text(
-                          widget.priceText,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: AppTheme.primaryDeep,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 11.5,
+                      Positioned.fill(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.vertical(
+                            top: Radius.circular(radius),
                           ),
+                          child: widget.imageUrl.isEmpty
+                              ? const ImageFallback(
+                                  icon: Icons.fastfood_rounded,
+                                  iconSize: 34,
+                                )
+                              : AppCachedImage(
+                                  imageUrl: widget.imageUrl,
+                                  placeholder:
+                                      const _MenuItemImagePlaceholder(),
+                                  errorWidget: const ImageFallback(
+                                    icon: Icons.fastfood_rounded,
+                                    iconSize: 34,
+                                  ),
+                                ),
                         ),
                       ),
-                      DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: AppTheme.primary,
-                          borderRadius: BorderRadius.circular(999),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppTheme.primary.withValues(alpha: 0.28),
-                              blurRadius: 10,
-                              offset: const Offset(0, 5),
+                      if (widget.quantity > 0)
+                        PositionedDirectional(
+                          top: compact ? 5 : 7,
+                          start: compact ? 5 : 7,
+                          child: Container(
+                            height: badgeHeight,
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 6.0),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.78),
+                              borderRadius: BorderRadius.circular(999),
                             ),
-                          ],
-                        ),
-                        child: Material(
-                          color: Colors.transparent,
-                          borderRadius: BorderRadius.circular(999),
-                          child: InkWell(
-                            onTap: _animateAdd,
-                            borderRadius: BorderRadius.circular(999),
-                            child: const SizedBox(
-                              width: 34,
-                              height: 34,
-                              child: Icon(
-                                Icons.add_rounded,
+                            alignment: Alignment.center,
+                            child: Text(
+                              widget.quantity.toString(),
+                              style: TextStyle(
                                 color: Colors.white,
-                                size: 21,
+                                fontSize: badgeFontSize,
+                                fontWeight: FontWeight.w700,
                               ),
                             ),
                           ),
                         ),
-                      ),
                     ],
                   ),
-                ],
-              ),
+                ),
+                Expanded(
+                  flex: detailsFlex,
+                  child: Padding(
+                    padding: contentPadding,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.name,
+                          maxLines: compact ? 1 : 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: itemNameFont,
+                            height: 1.22,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.text,
+                          ),
+                        ),
+                        SizedBox(height: rowSpacing),
+                        Expanded(
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  widget.priceText,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: AppTheme.primaryDeep,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: itemPriceFont,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: AppTheme.primary,
+                                  borderRadius: BorderRadius.circular(999),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: AppTheme.primary
+                                          .withValues(alpha: 0.28),
+                                      blurRadius: compact ? 8 : 10,
+                                      offset: const Offset(0, 5),
+                                    ),
+                                  ],
+                                ),
+                                child: Material(
+                                  color: Colors.transparent,
+                                  borderRadius: BorderRadius.circular(999),
+                                  child: InkWell(
+                                    onTap: _animateAdd,
+                                    borderRadius: BorderRadius.circular(999),
+                                    child: SizedBox(
+                                      width: addSize,
+                                      height: addSize,
+                                      child: Icon(
+                                        Icons.add_rounded,
+                                        color: Colors.white,
+                                        size: addIconSize,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }

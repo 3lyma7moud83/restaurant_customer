@@ -355,6 +355,9 @@ class _AppInputState extends State<AppInput> {
     final focused = _focusNode.hasFocus;
     final showLines = widget.obscureText ? 1 : widget.maxLines;
     final showMinLines = widget.obscureText ? 1 : widget.minLines;
+    final mobileWebInputFix = kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.iOS ||
+            defaultTargetPlatform == TargetPlatform.android);
 
     Widget? trailing = widget.suffixIcon;
     if (widget.obscureText && widget.showVisibilityToggle) {
@@ -419,6 +422,10 @@ class _AppInputState extends State<AppInput> {
                   enabled: widget.enabled,
                   readOnly: widget.readOnly,
                   obscureText: _obscured,
+                  scrollPadding: EdgeInsets.only(
+                    top: 20,
+                    bottom: mobileWebInputFix ? 140 : 90,
+                  ),
                   keyboardType: widget.keyboardType,
                   textInputAction: widget.textInputAction,
                   onSubmitted: widget.onSubmitted,
@@ -426,10 +433,13 @@ class _AppInputState extends State<AppInput> {
                   minLines: showMinLines,
                   maxLines: showLines,
                   textAlign: widget.textAlign,
+                  textAlignVertical: TextAlignVertical.center,
                   autofillHints: widget.autofillHints,
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                         color: AppTheme.text,
                         fontWeight: FontWeight.w700,
+                        fontSize: mobileWebInputFix ? 16 : null,
+                        height: 1.25,
                       ),
                   decoration: InputDecoration.collapsed(
                     hintText: widget.hint,

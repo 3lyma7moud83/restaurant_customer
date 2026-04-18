@@ -169,80 +169,84 @@ class RestaurantListCard extends StatelessWidget {
       onTap: onTap,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final compactLayout =
-              constraints.maxWidth < 164 || constraints.maxHeight < 212;
-          final imageAspectRatio = compactLayout ? 1.56 : 1.4;
-          final sectionSpacing = compactLayout ? 7.0 : 9.0;
-          final titleMaxLines = compactLayout ? 1 : 2;
-          final actionHeight = compactLayout ? 33.0 : 35.0;
-          final contentPadding = compactLayout ? 8.0 : 9.0;
+          final metrics = _RestaurantCardMetrics.fromConstraints(constraints);
 
           return Stack(
             children: [
               Padding(
-                padding: EdgeInsets.all(contentPadding),
+                padding: EdgeInsets.all(metrics.contentPadding),
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    AspectRatio(
-                      aspectRatio: imageAspectRatio,
+                    SizedBox(
+                      height: metrics.imageHeight,
                       child: RestaurantCardImage(
                         imageUrl: imageUrl,
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius:
+                            BorderRadius.circular(metrics.imageRadius),
                       ),
                     ),
-                    SizedBox(height: sectionSpacing),
-                    Text(
-                      displayName,
-                      maxLines: titleMaxLines,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.start,
-                      style: TextStyle(
-                        fontSize: compactLayout ? 12.5 : 13.5,
-                        height: 1.25,
-                        fontWeight: FontWeight.w800,
-                        color: AppTheme.text,
+                    SizedBox(height: metrics.sectionSpacing),
+                    Expanded(
+                      child: Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: Text(
+                          displayName,
+                          maxLines: metrics.titleMaxLines,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.start,
+                          style: TextStyle(
+                            fontSize: metrics.titleFontSize,
+                            height: 1.2,
+                            fontWeight: FontWeight.w800,
+                            color: AppTheme.text,
+                          ),
+                        ),
                       ),
                     ),
-                    SizedBox(height: compactLayout ? 7 : 8),
+                    SizedBox(height: metrics.actionSpacing),
                     SizedBox(
                       width: double.infinity,
-                      height: actionHeight,
+                      height: metrics.actionHeight,
                       child: DecoratedBox(
                         decoration: BoxDecoration(
                           color: AppTheme.primary,
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius:
+                              BorderRadius.circular(metrics.actionRadius),
                           boxShadow: [
                             BoxShadow(
-                              color: AppTheme.primary.withValues(alpha: 0.18),
-                              blurRadius: 12,
-                              offset: const Offset(0, 6),
+                              color: AppTheme.primary.withValues(
+                                alpha: metrics.compact ? 0.12 : 0.18,
+                              ),
+                              blurRadius: metrics.compact ? 8 : 12,
+                              offset: Offset(0, metrics.compact ? 4 : 6),
                             ),
                           ],
                         ),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Icon(
+                            Icon(
                               Icons.menu_book_rounded,
-                              size: 15,
+                              size: metrics.actionIconSize,
                               color: Colors.white,
                             ),
-                            const SizedBox(width: 5),
-                            Flexible(
-                              child: Text(
-                                context.tr('common.view_menu'),
-                                textAlign: TextAlign.center,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w800,
+                            if (metrics.showActionLabel) ...[
+                              const SizedBox(width: 4),
+                              Flexible(
+                                child: Text(
+                                  context.tr('common.view_menu'),
+                                  textAlign: TextAlign.center,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: metrics.actionFontSize,
+                                    fontWeight: FontWeight.w800,
+                                  ),
                                 ),
                               ),
-                            ),
+                            ],
                           ],
                         ),
                       ),
@@ -252,19 +256,19 @@ class RestaurantListCard extends StatelessWidget {
               ),
               if (onInfoTap != null)
                 PositionedDirectional(
-                  top: 6,
-                  end: 6,
+                  top: metrics.infoInset,
+                  end: metrics.infoInset,
                   child: Material(
                     color: const Color(0xFFF8F9FB),
                     borderRadius: BorderRadius.circular(999),
                     child: InkWell(
                       onTap: onInfoTap,
                       borderRadius: BorderRadius.circular(999),
-                      child: const Padding(
-                        padding: EdgeInsets.all(5.5),
+                      child: Padding(
+                        padding: EdgeInsets.all(metrics.infoPadding),
                         child: Icon(
                           Icons.info_outline_rounded,
-                          size: 15,
+                          size: metrics.infoIconSize,
                           color: AppTheme.textMuted,
                         ),
                       ),
@@ -295,9 +299,9 @@ class RestaurantGridSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final compactGrid = crossAxisCount <= 2;
-    final mainAxisSpacing = compactGrid ? 10.0 : 12.0;
-    final crossAxisSpacing = compactGrid ? 10.0 : 12.0;
+    final compactGrid = crossAxisCount <= 3;
+    final mainAxisSpacing = compactGrid ? 8.0 : 10.0;
+    final crossAxisSpacing = compactGrid ? 8.0 : 10.0;
     final childAspectRatio = RestaurantFeedUtils.cardAspectRatioFor(
       crossAxisCount,
     );
@@ -337,23 +341,32 @@ class _RestaurantSkeletonCard extends StatelessWidget {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final compactLayout =
-              constraints.maxWidth < 164 || constraints.maxHeight < 212;
-          final imageAspectRatio = compactLayout ? 1.56 : 1.4;
-          final contentPadding = compactLayout ? 8.0 : 9.0;
+          final metrics = _RestaurantCardMetrics.fromConstraints(constraints);
+          final lineWidth = (constraints.maxWidth *
+                  (metrics.ultraCompact
+                      ? 0.54
+                      : metrics.compact
+                          ? 0.62
+                          : 0.68))
+              .clamp(46.0, 120.0)
+              .toDouble();
 
           return Padding(
-            padding: EdgeInsets.all(contentPadding),
+            padding: EdgeInsets.all(metrics.contentPadding),
             child: Column(
-              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _ImageSkeleton(aspectRatio: imageAspectRatio),
-                SizedBox(height: compactLayout ? 7 : 9),
-                const _SkeletonLine(width: 112, height: 11),
-                SizedBox(height: compactLayout ? 7 : 8),
+                _ImageSkeleton(
+                  height: metrics.imageHeight,
+                  borderRadius: metrics.imageRadius,
+                ),
+                SizedBox(height: metrics.sectionSpacing),
+                _SkeletonLine(
+                    width: lineWidth, height: metrics.titleLineHeight),
+                const Spacer(),
+                SizedBox(height: metrics.actionSpacing),
                 SizedBox(
-                  height: compactLayout ? 33 : 35,
+                  height: metrics.actionHeight,
                   child: const _SkeletonButton(),
                 ),
               ],
@@ -367,17 +380,19 @@ class _RestaurantSkeletonCard extends StatelessWidget {
 
 class _ImageSkeleton extends StatelessWidget {
   const _ImageSkeleton({
-    required this.aspectRatio,
+    required this.height,
+    required this.borderRadius,
   });
 
-  final double aspectRatio;
+  final double height;
+  final double borderRadius;
 
   @override
   Widget build(BuildContext context) {
-    return AspectRatio(
-      aspectRatio: aspectRatio,
+    return SizedBox(
+      height: height,
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(borderRadius),
         child: const _ShimmerPlaceholder(),
       ),
     );
@@ -419,6 +434,126 @@ class _SkeletonLine extends StatelessWidget {
       ),
     );
   }
+}
+
+class _RestaurantCardMetrics {
+  const _RestaurantCardMetrics({
+    required this.ultraCompact,
+    required this.compact,
+    required this.contentPadding,
+    required this.imageHeight,
+    required this.imageRadius,
+    required this.sectionSpacing,
+    required this.titleMaxLines,
+    required this.titleFontSize,
+    required this.titleLineHeight,
+    required this.actionSpacing,
+    required this.actionHeight,
+    required this.actionRadius,
+    required this.actionIconSize,
+    required this.actionFontSize,
+    required this.showActionLabel,
+    required this.infoPadding,
+    required this.infoIconSize,
+    required this.infoInset,
+  });
+
+  factory _RestaurantCardMetrics.fromConstraints(BoxConstraints constraints) {
+    final shortestSide =
+        constraints.biggest.shortestSide.clamp(86.0, 260.0).toDouble();
+    final ultraCompact = shortestSide < 116;
+    final compact = shortestSide < 148;
+
+    final contentPadding = ultraCompact
+        ? 5.0
+        : compact
+            ? 6.5
+            : 9.0;
+    final imageHeight = (shortestSide *
+            (ultraCompact
+                ? 0.42
+                : compact
+                    ? 0.46
+                    : 0.52))
+        .clamp(40.0, 116.0)
+        .toDouble();
+
+    return _RestaurantCardMetrics(
+      ultraCompact: ultraCompact,
+      compact: compact,
+      contentPadding: contentPadding,
+      imageHeight: imageHeight,
+      imageRadius: ultraCompact
+          ? 9.0
+          : compact
+              ? 11.0
+              : 13.0,
+      sectionSpacing: ultraCompact
+          ? 4.0
+          : compact
+              ? 5.0
+              : 7.0,
+      titleMaxLines: compact ? 1 : 2,
+      titleFontSize: ultraCompact
+          ? 10.5
+          : compact
+              ? 11.5
+              : 13.0,
+      titleLineHeight: ultraCompact
+          ? 9.0
+          : compact
+              ? 10.0
+              : 11.0,
+      actionSpacing: ultraCompact ? 3.0 : 5.0,
+      actionHeight: ultraCompact
+          ? 20.0
+          : compact
+              ? 23.0
+              : 27.0,
+      actionRadius: ultraCompact
+          ? 9.0
+          : compact
+              ? 11.0
+              : 13.0,
+      actionIconSize: ultraCompact
+          ? 12.5
+          : compact
+              ? 13.5
+              : 15.0,
+      actionFontSize: compact ? 9.5 : 11.0,
+      showActionLabel: shortestSide >= 134,
+      infoPadding: ultraCompact ? 3.5 : 4.5,
+      infoIconSize: ultraCompact
+          ? 12.0
+          : compact
+              ? 13.0
+              : 14.0,
+      infoInset: ultraCompact
+          ? 4.0
+          : compact
+              ? 5.0
+              : 6.0,
+    );
+  }
+
+  final bool ultraCompact;
+  final bool compact;
+  final double contentPadding;
+  final double imageHeight;
+  final double imageRadius;
+  final double sectionSpacing;
+  final int titleMaxLines;
+  final double titleFontSize;
+  final double titleLineHeight;
+  final double actionSpacing;
+  final double actionHeight;
+  final double actionRadius;
+  final double actionIconSize;
+  final double actionFontSize;
+  final bool showActionLabel;
+  final double infoPadding;
+  final double infoIconSize;
+  final double infoInset;
 }
 
 class _InteractiveRestaurantCard extends StatefulWidget {

@@ -532,19 +532,21 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final sideWidth = _HomeHeaderMetrics.sideWidthFor(width);
+
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        toolbarHeight: _HomeHeaderMetrics.toolbarHeightFor(
-          MediaQuery.sizeOf(context).width,
-        ),
+        toolbarHeight: _HomeHeaderMetrics.toolbarHeightFor(width),
+        centerTitle: true,
         titleSpacing: 0,
-        leadingWidth: _HomeHeaderMetrics.sideWidthFor(
-          MediaQuery.sizeOf(context).width,
-        ),
-        leading: const _HomeDrawerAction(),
+        leadingWidth: sideWidth,
+        leading: _HomeLeadingActions(onOpenCart: _openCart),
         title: const _HomeAppBarTitle(),
-        actions: [_HomeHeaderActions(onOpenCart: _openCart)],
+        actions: [
+          _HomeMenuAction(width: sideWidth),
+        ],
       ),
       drawer: _MainDrawer(client: _client),
       body: ValueListenableBuilder<_HomeUiState>(
@@ -678,12 +680,12 @@ class _HomeHeaderMetrics {
 
   static double sideWidthFor(double width) {
     if (width >= 1200) {
-      return 180;
+      return 198;
     }
     if (width >= 900) {
-      return 164;
+      return 178;
     }
-    return 146;
+    return 160;
   }
 
   static double toolbarHeightFor(double width) {
@@ -694,19 +696,53 @@ class _HomeHeaderMetrics {
   }
 }
 
-class _HomeDrawerAction extends StatelessWidget {
-  const _HomeDrawerAction();
+class _HomeLeadingActions extends StatelessWidget {
+  const _HomeLeadingActions({
+    required this.onOpenCart,
+  });
+
+  final Future<void> Function() onOpenCart;
 
   @override
   Widget build(BuildContext context) {
-    return Builder(
-      builder: (context) {
-        return Tooltip(
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsetsDirectional.only(start: 8),
+        child: Directionality(
+          textDirection: TextDirection.ltr,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _HomeCartAction(onTap: onOpenCart),
+              const SizedBox(width: 6),
+              const _HomeLanguageToggleButton(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeMenuAction extends StatelessWidget {
+  const _HomeMenuAction({
+    required this.width,
+  });
+
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: width,
+      child: Builder(
+        builder: (context) => Tooltip(
           message: MaterialLocalizations.of(context).openAppDrawerTooltip,
-          child: Padding(
-            padding: const EdgeInsetsDirectional.only(start: 12),
-            child: Align(
-              alignment: Alignment.centerLeft,
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: Padding(
+              padding: const EdgeInsetsDirectional.only(end: 10),
               child: Material(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(12),
@@ -726,33 +762,7 @@ class _HomeDrawerAction extends StatelessWidget {
               ),
             ),
           ),
-        );
-      },
-    );
-  }
-}
-
-class _HomeHeaderActions extends StatelessWidget {
-  const _HomeHeaderActions({
-    required this.onOpenCart,
-  });
-
-  final Future<void> Function() onOpenCart;
-
-  @override
-  Widget build(BuildContext context) {
-    final width =
-        _HomeHeaderMetrics.sideWidthFor(MediaQuery.sizeOf(context).width);
-    return SizedBox(
-      width: width,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          const _HomeLanguageToggleButton(),
-          const SizedBox(width: 4),
-          _HomeCartAction(onTap: onOpenCart),
-          const SizedBox(width: 8),
-        ],
+        ),
       ),
     );
   }

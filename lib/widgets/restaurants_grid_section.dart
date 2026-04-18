@@ -163,9 +163,9 @@ class _RestaurantGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isCompactGrid = crossAxisCount <= 2;
-    final mainAxisSpacing = isCompactGrid ? 10.0 : 12.0;
-    final crossAxisSpacing = isCompactGrid ? 10.0 : 12.0;
+    final isCompactGrid = crossAxisCount <= 3;
+    final mainAxisSpacing = isCompactGrid ? 8.0 : 10.0;
+    final crossAxisSpacing = isCompactGrid ? 8.0 : 10.0;
     final childAspectRatio = RestaurantFeedUtils.cardAspectRatioFor(
       crossAxisCount,
     );

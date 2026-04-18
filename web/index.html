@@ -8,7 +8,7 @@
   <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
   <meta
     name="viewport"
-    content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
+    content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
   />
   <meta name="description" content="Restaurant Customer Web App" />
 
@@ -31,7 +31,20 @@
       height: 100%;
       width: 100%;
       overflow: hidden;
+      overscroll-behavior: none;
+      -webkit-text-size-adjust: 100%;
       background: #ffffff;
+    }
+
+    body {
+      position: fixed;
+      inset: 0;
+    }
+
+    @supports (height: 100dvh) {
+      html, body {
+        height: 100dvh;
+      }
     }
   </style>
 </head>
