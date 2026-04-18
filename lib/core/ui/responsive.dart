@@ -33,15 +33,10 @@ class AppResponsive {
   }
 
   static EdgeInsets pagePadding(double width) {
-    final breakpoint = breakpointOf(width);
-    switch (breakpoint) {
-      case AppBreakpoint.desktop:
-        return const EdgeInsets.fromLTRB(24, 20, 24, 20);
-      case AppBreakpoint.tablet:
-        return const EdgeInsets.fromLTRB(20, 18, 20, 18);
-      case AppBreakpoint.mobile:
-        return const EdgeInsets.fromLTRB(16, 16, 16, 16);
-    }
+    final horizontal = (width * 0.042).clamp(12.0, 28.0).toDouble();
+    final top = (width * 0.026).clamp(14.0, 22.0).toDouble();
+    final bottom = (width * 0.034).clamp(14.0, 24.0).toDouble();
+    return EdgeInsets.fromLTRB(horizontal, top, horizontal, bottom);
   }
 }
 

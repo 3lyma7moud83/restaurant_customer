@@ -371,55 +371,72 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final viewportWidth = MediaQuery.sizeOf(context).width;
+    final titleFontSize = viewportWidth < 360
+        ? 22.0
+        : viewportWidth < 900
+            ? 26.0
+            : 28.0;
+    final searchGap = viewportWidth < 360 ? 14.0 : 16.0;
+    final listGap = viewportWidth < 360 ? 16.0 : 18.0;
+
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
-        child: AppConstrainedContent(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                context.tr('restaurants.all'),
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: () => FocusScope.of(context).unfocus(),
+          child: AppConstrainedContent(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  context.tr('restaurants.all'),
+                  style: TextStyle(
+                    fontSize: titleFontSize,
+                    fontWeight: FontWeight.w900,
+                    height: 1.12,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 14),
-              _RestaurantsSearchField(controller: _searchController),
-              const SizedBox(height: 18),
-              Expanded(
-                child: ValueListenableBuilder<_RestaurantsUiState>(
-                  valueListenable: _uiState,
-                  builder: (context, state, _) {
-                    return RestaurantsGridSection(
-                      loading: state.loading,
-                      hasError: state.hasError,
-                      restaurants: state.restaurants,
-                      searchQueryListenable: _searchQuery,
-                      onRefresh: _refreshRestaurants,
-                      loadingSkeletonKey: 'restaurants-loading',
-                      errorKey: 'restaurants-error',
-                      emptyKey: 'restaurants-empty',
-                      gridKey: 'restaurants-grid',
-                      emptyStateBuilder: (_) => _RestaurantsEmptyState(
-                        onRetry: _refreshRestaurants,
-                      ),
-                      errorStateBuilder: (_) => _RestaurantsErrorState(
-                        onRetry: _refreshRestaurants,
-                      ),
-                      onRestaurantInfoTap: (context, restaurant) {
-                        showRestaurantInfoSheet(
-                          context,
-                          restaurant: restaurant,
-                        );
-                      },
-                      onRestaurantTap: _openRestaurantMenu,
-                    );
-                  },
+                SizedBox(height: searchGap),
+                _RestaurantsSearchField(controller: _searchController),
+                SizedBox(height: listGap),
+                Expanded(
+                  child: ValueListenableBuilder<_RestaurantsUiState>(
+                    valueListenable: _uiState,
+                    builder: (context, state, _) {
+                      return RestaurantsGridSection(
+                        loading: state.loading,
+                        hasError: state.hasError,
+                        restaurants: state.restaurants,
+                        searchQueryListenable: _searchQuery,
+                        onRefresh: _refreshRestaurants,
+                        customerLat: _userLat,
+                        customerLng: _userLng,
+                        loadingSkeletonKey: 'restaurants-loading',
+                        errorKey: 'restaurants-error',
+                        emptyKey: 'restaurants-empty',
+                        gridKey: 'restaurants-grid',
+                        emptyStateBuilder: (_) => _RestaurantsEmptyState(
+                          onRetry: _refreshRestaurants,
+                        ),
+                        errorStateBuilder: (_) => _RestaurantsErrorState(
+                          onRetry: _refreshRestaurants,
+                        ),
+                        onRestaurantInfoTap: (context, restaurant) {
+                          showRestaurantInfoSheet(
+                            context,
+                            restaurant: restaurant,
+                          );
+                        },
+                        onRestaurantTap: _openRestaurantMenu,
+                      );
+                    },
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -465,32 +482,67 @@ class _RestaurantsSearchField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x14000000),
-            blurRadius: 18,
-            offset: Offset(0, 10),
-          ),
-        ],
-      ),
-      child: TextField(
-        controller: controller,
-        decoration: InputDecoration(
-          hintText: context.tr('common.search_restaurant_hint'),
-          prefixIcon: const Icon(
-            Icons.search_rounded,
-            color: AppTheme.primaryDeep,
-          ),
-          border: InputBorder.none,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+    return LayoutBuilder(builder: (context, constraints) {
+      final width = constraints.maxWidth;
+      final compact = width < 360;
+      final borderRadius = compact ? 18.0 : 22.0;
+      final horizontalPadding = compact ? 14.0 : 18.0;
+      final verticalPadding = compact ? 14.0 : 16.0;
+      final iconSize = compact ? 22.0 : 24.0;
+      final mobileWebInputFix = kIsWeb &&
+          (defaultTargetPlatform == TargetPlatform.iOS ||
+              defaultTargetPlatform == TargetPlatform.android);
+
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(borderRadius),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0x14000000),
+              blurRadius: compact ? 14 : 20,
+              offset: Offset(0, compact ? 8 : 12),
+            ),
+          ],
         ),
-      ),
-    );
+        child: TextField(
+          controller: controller,
+          textInputAction: TextInputAction.search,
+          onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+          scrollPadding: EdgeInsets.only(
+            top: 20,
+            bottom: mobileWebInputFix ? 132 : 92,
+          ),
+          style: TextStyle(
+            color: AppTheme.text,
+            fontWeight: FontWeight.w700,
+            fontSize: compact ? 14.5 : 15.5,
+          ),
+          decoration: InputDecoration(
+            hintText: context.tr('common.search_restaurant_hint'),
+            hintStyle: TextStyle(
+              color: AppTheme.textMuted,
+              fontWeight: FontWeight.w600,
+              fontSize: compact ? 14.0 : 15.0,
+            ),
+            prefixIcon: Icon(
+              Icons.search_rounded,
+              color: AppTheme.primaryDeep,
+              size: iconSize,
+            ),
+            prefixIconConstraints: BoxConstraints(
+              minWidth: compact ? 44 : 50,
+              minHeight: compact ? 44 : 50,
+            ),
+            border: InputBorder.none,
+            contentPadding: EdgeInsets.symmetric(
+              horizontal: horizontalPadding,
+              vertical: verticalPadding,
+            ),
+          ),
+        ),
+      );
+    });
   }
 }
 

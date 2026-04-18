@@ -28,12 +28,12 @@
     html, body {
       margin: 0;
       padding: 0;
-      height: 100%;
+      height: var(--app-height, 100%);
       width: 100%;
       overflow: hidden;
       overscroll-behavior: none;
       -webkit-text-size-adjust: 100%;
-      background: #ffffff;
+      background: #f7f5f1;
     }
 
     body {
@@ -43,13 +43,32 @@
 
     @supports (height: 100dvh) {
       html, body {
-        height: 100dvh;
+        height: min(100dvh, var(--app-height, 100dvh));
       }
     }
   </style>
 </head>
 
 <body>
+  <script>
+    (function () {
+      function applyAppHeight() {
+        var viewport = window.visualViewport;
+        var height = viewport ? viewport.height : window.innerHeight;
+        document.documentElement.style.setProperty('--app-height', height + 'px');
+      }
+
+      applyAppHeight();
+      window.addEventListener('resize', applyAppHeight);
+      window.addEventListener('orientationchange', applyAppHeight);
+
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', applyAppHeight);
+        window.visualViewport.addEventListener('scroll', applyAppHeight);
+      }
+    })();
+  </script>
+
   <!-- ===================== -->
   <!-- Flutter bootstrap -->
   <!-- ===================== -->

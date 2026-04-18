@@ -534,14 +534,23 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     final sideWidth = _HomeHeaderMetrics.sideWidthFor(width);
+    final titleSpacing = _HomeHeaderMetrics.titleSpacingFor(width);
+    final headingFontSize = width < 360
+        ? 24.0
+        : width < 900
+            ? 28.0
+            : 30.0;
+    final searchGap = width < 360 ? 13.0 : 15.0;
+    final listGap = width < 360 ? 16.0 : 20.0;
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         automaticallyImplyLeading: false,
         toolbarHeight: _HomeHeaderMetrics.toolbarHeightFor(width),
         centerTitle: true,
-        titleSpacing: 0,
+        titleSpacing: titleSpacing,
         leadingWidth: sideWidth,
         leading: _HomeLeadingActions(
           onOpenCart: _openCart,
@@ -562,50 +571,57 @@ class _HomePageState extends State<HomePage> {
         valueListenable: _uiState,
         builder: (context, state, _) {
           final locationDenied = state.locationDenied;
-          return AppConstrainedContent(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  context.tr('home.nearby_restaurants'),
-                  style: const TextStyle(
-                    fontSize: 27,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                _SearchBar(controller: _searchController),
-                const SizedBox(height: 20),
-                Expanded(
-                  child: RestaurantsGridSection(
-                    loading: state.loading,
-                    hasError: state.hasError,
-                    restaurants: state.shops,
-                    searchQueryListenable: _searchQuery,
-                    onRefresh: _refreshRestaurants,
-                    loadingSkeletonKey: 'home-loading',
-                    errorKey: 'home-error',
-                    emptyKey: 'home-empty',
-                    gridKey: 'home-grid',
-                    emptyStateBuilder: (_) => _EmptyState(
-                      locationDenied: locationDenied,
-                      onRetry: _refreshRestaurants,
-                      onRetryLocation: locationDenied ? _retryLocation : null,
+          return GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () => FocusScope.of(context).unfocus(),
+            child: AppConstrainedContent(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    context.tr('home.nearby_restaurants'),
+                    style: TextStyle(
+                      fontSize: headingFontSize,
+                      fontWeight: FontWeight.w900,
+                      height: 1.12,
                     ),
-                    errorStateBuilder: (_) => _HomeErrorState(
-                      onRetry: _refreshRestaurants,
-                      onRetryLocation: locationDenied ? _retryLocation : null,
-                    ),
-                    onRestaurantInfoTap: (context, restaurant) {
-                      showRestaurantInfoSheet(
-                        context,
-                        restaurant: restaurant,
-                      );
-                    },
-                    onRestaurantTap: _openRestaurantMenu,
                   ),
-                ),
-              ],
+                  SizedBox(height: searchGap),
+                  _SearchBar(controller: _searchController),
+                  SizedBox(height: listGap),
+                  Expanded(
+                    child: RestaurantsGridSection(
+                      loading: state.loading,
+                      hasError: state.hasError,
+                      restaurants: state.shops,
+                      searchQueryListenable: _searchQuery,
+                      onRefresh: _refreshRestaurants,
+                      customerLat: userLat,
+                      customerLng: userLng,
+                      loadingSkeletonKey: 'home-loading',
+                      errorKey: 'home-error',
+                      emptyKey: 'home-empty',
+                      gridKey: 'home-grid',
+                      emptyStateBuilder: (_) => _EmptyState(
+                        locationDenied: locationDenied,
+                        onRetry: _refreshRestaurants,
+                        onRetryLocation: locationDenied ? _retryLocation : null,
+                      ),
+                      errorStateBuilder: (_) => _HomeErrorState(
+                        onRetry: _refreshRestaurants,
+                        onRetryLocation: locationDenied ? _retryLocation : null,
+                      ),
+                      onRestaurantInfoTap: (context, restaurant) {
+                        showRestaurantInfoSheet(
+                          context,
+                          restaurant: restaurant,
+                        );
+                      },
+                      onRestaurantTap: _openRestaurantMenu,
+                    ),
+                  ),
+                ],
+              ),
             ),
           );
         },
@@ -661,37 +677,42 @@ class _HomeAppBarTitle extends StatelessWidget {
     final iconSize = width >= 900
         ? 24.0
         : compact
-            ? 19.0
-            : 21.0;
+            ? 18.5
+            : 20.8;
     final fontSize = width >= 900
         ? 19.0
         : compact
-            ? 15.5
-            : 17.0;
+            ? 15.2
+            : 16.8;
 
-    return FittedBox(
-      fit: BoxFit.scaleDown,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.delivery_dining_rounded,
-            color: AppTheme.primary,
-            size: iconSize,
-          ),
-          SizedBox(width: compact ? 5 : 7),
-          Text(
-            context.tr('app.name'),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: AppTheme.text,
-              fontWeight: FontWeight.w900,
-              fontSize: fontSize,
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: _HomeHeaderMetrics.titleHorizontalInsetFor(width),
+      ),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.delivery_dining_rounded,
+              color: AppTheme.primary,
+              size: iconSize,
             ),
-          ),
-        ],
+            SizedBox(width: compact ? 5 : 7),
+            Text(
+              context.tr('app.name'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: AppTheme.text,
+                fontWeight: FontWeight.w900,
+                fontSize: fontSize,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -701,22 +722,7 @@ class _HomeHeaderMetrics {
   const _HomeHeaderMetrics._();
 
   static double sideWidthFor(double width) {
-    if (width >= 1200) {
-      return 198;
-    }
-    if (width >= 900) {
-      return 178;
-    }
-    if (width >= 700) {
-      return 160;
-    }
-    if (width >= 520) {
-      return 136;
-    }
-    if (width >= 390) {
-      return 128;
-    }
-    return 120;
+    return (width * 0.33).clamp(108.0, 214.0).toDouble();
   }
 
   static double toolbarHeightFor(double width) {
@@ -727,23 +733,45 @@ class _HomeHeaderMetrics {
       return 70;
     }
     if (width >= 520) {
-      return 64;
+      return 66;
+    }
+    if (width >= 390) {
+      return 62;
     }
     return 60;
   }
 
   static double actionExtentFor(double width) {
+    if (width >= 1200) {
+      return 42;
+    }
     if (width >= 900) {
       return 40;
     }
-    if (width >= 390) {
-      return 37;
+    if (width >= 520) {
+      return 38;
     }
-    return 35;
+    if (width >= 390) {
+      return 36;
+    }
+    return 34;
   }
 
   static double sideInsetFor(double width) {
+    if (width >= 900) {
+      return 14;
+    }
     if (width >= 520) {
+      return 11;
+    }
+    if (width >= 390) {
+      return 9;
+    }
+    return 7;
+  }
+
+  static double leadingGapFor(double width) {
+    if (width >= 900) {
       return 10;
     }
     if (width >= 390) {
@@ -752,36 +780,70 @@ class _HomeHeaderMetrics {
     return 6;
   }
 
-  static double leadingGapFor(double width) {
-    return width < 390 ? 5 : 6;
-  }
-
   static double languageHorizontalPaddingFor(double width) {
     if (width >= 900) {
-      return 11;
+      return 11.5;
+    }
+    if (width >= 520) {
+      return 9.8;
     }
     if (width >= 390) {
-      return 9.5;
+      return 8.8;
     }
-    return 8.5;
+    if (width >= 360) {
+      return 7.8;
+    }
+    return 7.0;
   }
 
   static double languageVerticalPaddingFor(double width) {
-    return width < 390 ? 5.0 : 6.0;
+    if (width >= 900) {
+      return 5.8;
+    }
+    if (width >= 390) {
+      return 5.2;
+    }
+    return 4.4;
   }
 
   static double languageFontSizeFor(double width) {
     if (width >= 900) {
       return 11;
     }
-    if (width >= 390) {
-      return 10.5;
+    if (width >= 520) {
+      return 10.6;
     }
-    return 10;
+    if (width >= 390) {
+      return 10.0;
+    }
+    if (width >= 360) {
+      return 9.6;
+    }
+    return 9.2;
+  }
+
+  static double titleSpacingFor(double width) {
+    if (width >= 900) {
+      return 8;
+    }
+    if (width >= 520) {
+      return 6;
+    }
+    return 4;
+  }
+
+  static double titleHorizontalInsetFor(double width) {
+    if (width >= 900) {
+      return 10;
+    }
+    if (width >= 520) {
+      return 6;
+    }
+    return 2;
   }
 
   static bool compactTitleFor(double width) {
-    return width < 420;
+    return width < 430;
   }
 }
 
@@ -859,19 +921,22 @@ class _HomeMenuAction extends StatelessWidget {
             alignment: Alignment.centerRight,
             child: Padding(
               padding: EdgeInsetsDirectional.only(end: sideInset),
-              child: Material(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(buttonRadius),
-                child: InkWell(
+              child: _TopBarActionShell(
+                radius: buttonRadius,
+                child: Material(
+                  color: Colors.transparent,
                   borderRadius: BorderRadius.circular(buttonRadius),
-                  onTap: () => Scaffold.of(context).openDrawer(),
-                  child: SizedBox(
-                    width: buttonExtent,
-                    height: buttonExtent,
-                    child: Icon(
-                      Icons.menu_rounded,
-                      size: buttonExtent * 0.56,
-                      color: AppTheme.text,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(buttonRadius),
+                    onTap: () => Scaffold.of(context).openDrawer(),
+                    child: SizedBox(
+                      width: buttonExtent,
+                      height: buttonExtent,
+                      child: Icon(
+                        Icons.menu_rounded,
+                        size: buttonExtent * 0.56,
+                        color: AppTheme.text,
+                      ),
                     ),
                   ),
                 ),
@@ -880,6 +945,35 @@ class _HomeMenuAction extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _TopBarActionShell extends StatelessWidget {
+  const _TopBarActionShell({
+    required this.child,
+    required this.radius,
+  });
+
+  final Widget child;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(radius),
+        border: Border.all(color: AppTheme.border.withValues(alpha: 0.92)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x12000000),
+            blurRadius: 12,
+            offset: Offset(0, 7),
+          ),
+        ],
+      ),
+      child: child,
     );
   }
 }
@@ -905,19 +999,22 @@ class _HomeCartAction extends StatelessWidget {
       children: [
         Tooltip(
           message: context.tr('cart.title'),
-          child: Material(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(buttonRadius),
-            child: InkWell(
+          child: _TopBarActionShell(
+            radius: buttonRadius,
+            child: Material(
+              color: Colors.transparent,
               borderRadius: BorderRadius.circular(buttonRadius),
-              onTap: () => unawaited(onTap()),
-              child: SizedBox(
-                width: buttonExtent,
-                height: buttonExtent,
-                child: Icon(
-                  Icons.shopping_cart_outlined,
-                  size: buttonExtent * 0.51,
-                  color: AppTheme.text,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(buttonRadius),
+                onTap: () => unawaited(onTap()),
+                child: SizedBox(
+                  width: buttonExtent,
+                  height: buttonExtent,
+                  child: Icon(
+                    Icons.shopping_cart_outlined,
+                    size: buttonExtent * 0.51,
+                    color: AppTheme.text,
+                  ),
                 ),
               ),
             ),
@@ -970,12 +1067,20 @@ class _HomeLanguageToggleButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final localeController = AppLocaleScope.of(context);
     final isArabic = localeController.isArabic;
+    final borderRadius = BorderRadius.circular(999);
 
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: AppTheme.border),
+        borderRadius: borderRadius,
+        border: Border.all(color: AppTheme.border.withValues(alpha: 0.94)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x12000000),
+            blurRadius: 12,
+            offset: Offset(0, 7),
+          ),
+        ],
       ),
       child: Padding(
         padding: const EdgeInsets.all(2),
@@ -1486,31 +1591,68 @@ class _SearchBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x14000000),
-            blurRadius: 18,
-            offset: Offset(0, 10),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final compact = width < 360;
+        final borderRadius = compact ? 18.0 : 22.0;
+        final horizontalPadding = compact ? 14.0 : 18.0;
+        final verticalPadding = compact ? 14.0 : 16.0;
+        final iconSize = compact ? 22.0 : 24.0;
+        final mobileWebInputFix = kIsWeb &&
+            (defaultTargetPlatform == TargetPlatform.iOS ||
+                defaultTargetPlatform == TargetPlatform.android);
+
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(borderRadius),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0x14000000),
+                blurRadius: compact ? 14 : 20,
+                offset: Offset(0, compact ? 8 : 12),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: TextField(
-        controller: controller,
-        decoration: InputDecoration(
-          hintText: context.tr('common.search_restaurant_hint'),
-          prefixIcon: const Icon(
-            Icons.search_rounded,
-            color: AppTheme.primaryDeep,
+          child: TextField(
+            controller: controller,
+            textInputAction: TextInputAction.search,
+            onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+            scrollPadding: EdgeInsets.only(
+              top: 20,
+              bottom: mobileWebInputFix ? 132 : 92,
+            ),
+            style: TextStyle(
+              color: AppTheme.text,
+              fontWeight: FontWeight.w700,
+              fontSize: compact ? 14.5 : 15.5,
+            ),
+            decoration: InputDecoration(
+              hintText: context.tr('common.search_restaurant_hint'),
+              hintStyle: TextStyle(
+                color: AppTheme.textMuted,
+                fontWeight: FontWeight.w600,
+                fontSize: compact ? 14.0 : 15.0,
+              ),
+              prefixIcon: Icon(
+                Icons.search_rounded,
+                color: AppTheme.primaryDeep,
+                size: iconSize,
+              ),
+              prefixIconConstraints: BoxConstraints(
+                minWidth: compact ? 44 : 50,
+                minHeight: compact ? 44 : 50,
+              ),
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: horizontalPadding,
+                vertical: verticalPadding,
+              ),
+            ),
           ),
-          border: InputBorder.none,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-        ),
-      ),
+        );
+      },
     );
   }
 }
