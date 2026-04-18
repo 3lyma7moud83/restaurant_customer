@@ -538,14 +538,23 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
+        automaticallyImplyLeading: false,
         toolbarHeight: _HomeHeaderMetrics.toolbarHeightFor(width),
         centerTitle: true,
         titleSpacing: 0,
         leadingWidth: sideWidth,
-        leading: _HomeLeadingActions(onOpenCart: _openCart),
-        title: const _HomeAppBarTitle(),
+        leading: _HomeLeadingActions(
+          onOpenCart: _openCart,
+          viewportWidth: width,
+        ),
+        title: _HomeAppBarTitle(
+          compact: _HomeHeaderMetrics.compactTitleFor(width),
+        ),
         actions: [
-          _HomeMenuAction(width: sideWidth),
+          _HomeMenuAction(
+            width: sideWidth,
+            viewportWidth: width,
+          ),
         ],
       ),
       drawer: _MainDrawer(client: _client),
@@ -640,26 +649,39 @@ class _HomeUiState {
 }
 
 class _HomeAppBarTitle extends StatelessWidget {
-  const _HomeAppBarTitle();
+  const _HomeAppBarTitle({
+    this.compact = false,
+  });
+
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
-    final iconSize = width >= 900 ? 24.0 : 21.0;
-    final fontSize = width >= 900 ? 19.0 : 17.0;
+    final iconSize = width >= 900
+        ? 24.0
+        : compact
+            ? 19.0
+            : 21.0;
+    final fontSize = width >= 900
+        ? 19.0
+        : compact
+            ? 15.5
+            : 17.0;
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(
-          Icons.delivery_dining_rounded,
-          color: AppTheme.primary,
-          size: iconSize,
-        ),
-        const SizedBox(width: 7),
-        Flexible(
-          child: Text(
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.delivery_dining_rounded,
+            color: AppTheme.primary,
+            size: iconSize,
+          ),
+          SizedBox(width: compact ? 5 : 7),
+          Text(
             context.tr('app.name'),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -669,8 +691,8 @@ class _HomeAppBarTitle extends StatelessWidget {
               fontSize: fontSize,
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -685,38 +707,126 @@ class _HomeHeaderMetrics {
     if (width >= 900) {
       return 178;
     }
-    return 160;
+    if (width >= 700) {
+      return 160;
+    }
+    if (width >= 520) {
+      return 136;
+    }
+    if (width >= 390) {
+      return 128;
+    }
+    return 120;
   }
 
   static double toolbarHeightFor(double width) {
-    if (width >= 900) {
+    if (width >= 1200) {
       return 72;
     }
-    return 64;
+    if (width >= 900) {
+      return 70;
+    }
+    if (width >= 520) {
+      return 64;
+    }
+    return 60;
+  }
+
+  static double actionExtentFor(double width) {
+    if (width >= 900) {
+      return 40;
+    }
+    if (width >= 390) {
+      return 37;
+    }
+    return 35;
+  }
+
+  static double sideInsetFor(double width) {
+    if (width >= 520) {
+      return 10;
+    }
+    if (width >= 390) {
+      return 8;
+    }
+    return 6;
+  }
+
+  static double leadingGapFor(double width) {
+    return width < 390 ? 5 : 6;
+  }
+
+  static double languageHorizontalPaddingFor(double width) {
+    if (width >= 900) {
+      return 11;
+    }
+    if (width >= 390) {
+      return 9.5;
+    }
+    return 8.5;
+  }
+
+  static double languageVerticalPaddingFor(double width) {
+    return width < 390 ? 5.0 : 6.0;
+  }
+
+  static double languageFontSizeFor(double width) {
+    if (width >= 900) {
+      return 11;
+    }
+    if (width >= 390) {
+      return 10.5;
+    }
+    return 10;
+  }
+
+  static bool compactTitleFor(double width) {
+    return width < 420;
   }
 }
 
 class _HomeLeadingActions extends StatelessWidget {
   const _HomeLeadingActions({
     required this.onOpenCart,
+    required this.viewportWidth,
   });
 
   final Future<void> Function() onOpenCart;
+  final double viewportWidth;
 
   @override
   Widget build(BuildContext context) {
+    final buttonExtent = _HomeHeaderMetrics.actionExtentFor(viewportWidth);
+    final sideInset = _HomeHeaderMetrics.sideInsetFor(viewportWidth);
+    final itemGap = _HomeHeaderMetrics.leadingGapFor(viewportWidth);
+
     return Align(
       alignment: Alignment.centerLeft,
       child: Padding(
-        padding: const EdgeInsetsDirectional.only(start: 8),
+        padding: EdgeInsetsDirectional.only(start: sideInset),
         child: Directionality(
           textDirection: TextDirection.ltr,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _HomeCartAction(onTap: onOpenCart),
-              const SizedBox(width: 6),
-              const _HomeLanguageToggleButton(),
+              _HomeCartAction(
+                onTap: onOpenCart,
+                buttonExtent: buttonExtent,
+              ),
+              SizedBox(width: itemGap),
+              _HomeLanguageToggleButton(
+                segmentHorizontalPadding:
+                    _HomeHeaderMetrics.languageHorizontalPaddingFor(
+                  viewportWidth,
+                ),
+                segmentVerticalPadding:
+                    _HomeHeaderMetrics.languageVerticalPaddingFor(
+                  viewportWidth,
+                ),
+                segmentFontSize: _HomeHeaderMetrics.languageFontSizeFor(
+                  viewportWidth,
+                ),
+              ),
             ],
           ),
         ),
@@ -728,12 +838,18 @@ class _HomeLeadingActions extends StatelessWidget {
 class _HomeMenuAction extends StatelessWidget {
   const _HomeMenuAction({
     required this.width,
+    required this.viewportWidth,
   });
 
   final double width;
+  final double viewportWidth;
 
   @override
   Widget build(BuildContext context) {
+    final buttonExtent = _HomeHeaderMetrics.actionExtentFor(viewportWidth);
+    final sideInset = _HomeHeaderMetrics.sideInsetFor(viewportWidth);
+    final buttonRadius = buttonExtent <= 35 ? 10.0 : 12.0;
+
     return SizedBox(
       width: width,
       child: Builder(
@@ -742,19 +858,19 @@ class _HomeMenuAction extends StatelessWidget {
           child: Align(
             alignment: Alignment.centerRight,
             child: Padding(
-              padding: const EdgeInsetsDirectional.only(end: 10),
+              padding: EdgeInsetsDirectional.only(end: sideInset),
               child: Material(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(buttonRadius),
                 child: InkWell(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(buttonRadius),
                   onTap: () => Scaffold.of(context).openDrawer(),
-                  child: const SizedBox(
-                    width: 38,
-                    height: 38,
+                  child: SizedBox(
+                    width: buttonExtent,
+                    height: buttonExtent,
                     child: Icon(
                       Icons.menu_rounded,
-                      size: 21,
+                      size: buttonExtent * 0.56,
                       color: AppTheme.text,
                     ),
                   ),
@@ -771,13 +887,18 @@ class _HomeMenuAction extends StatelessWidget {
 class _HomeCartAction extends StatelessWidget {
   const _HomeCartAction({
     required this.onTap,
+    required this.buttonExtent,
   });
 
   final Future<void> Function() onTap;
+  final double buttonExtent;
 
   @override
   Widget build(BuildContext context) {
     final cart = CartProvider.of(context);
+    final buttonRadius = buttonExtent <= 35 ? 10.0 : 12.0;
+    final badgeHeight = buttonExtent <= 35 ? 16.0 : 17.0;
+    final badgeFontSize = buttonExtent <= 35 ? 9.0 : 9.5;
 
     return Stack(
       clipBehavior: Clip.none,
@@ -786,16 +907,16 @@ class _HomeCartAction extends StatelessWidget {
           message: context.tr('cart.title'),
           child: Material(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(buttonRadius),
             child: InkWell(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(buttonRadius),
               onTap: () => unawaited(onTap()),
               child: SizedBox(
-                width: 38,
-                height: 38,
+                width: buttonExtent,
+                height: buttonExtent,
                 child: Icon(
                   Icons.shopping_cart_outlined,
-                  size: 19,
+                  size: buttonExtent * 0.51,
                   color: AppTheme.text,
                 ),
               ),
@@ -807,9 +928,9 @@ class _HomeCartAction extends StatelessWidget {
             top: -2,
             end: -2,
             child: Container(
-              height: 17,
-              constraints: const BoxConstraints(minWidth: 17),
-              padding: const EdgeInsets.symmetric(horizontal: 4.5),
+              height: badgeHeight,
+              constraints: BoxConstraints(minWidth: badgeHeight),
+              padding: const EdgeInsets.symmetric(horizontal: 4),
               decoration: BoxDecoration(
                 color: AppTheme.primary,
                 borderRadius: BorderRadius.circular(999),
@@ -821,9 +942,9 @@ class _HomeCartAction extends StatelessWidget {
               alignment: Alignment.center,
               child: Text(
                 cart.totalCount.toString(),
-                style: const TextStyle(
+                style: TextStyle(
                   color: Colors.white,
-                  fontSize: 9.5,
+                  fontSize: badgeFontSize,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -835,7 +956,15 @@ class _HomeCartAction extends StatelessWidget {
 }
 
 class _HomeLanguageToggleButton extends StatelessWidget {
-  const _HomeLanguageToggleButton();
+  const _HomeLanguageToggleButton({
+    required this.segmentHorizontalPadding,
+    required this.segmentVerticalPadding,
+    required this.segmentFontSize,
+  });
+
+  final double segmentHorizontalPadding;
+  final double segmentVerticalPadding;
+  final double segmentFontSize;
 
   @override
   Widget build(BuildContext context) {
@@ -854,15 +983,21 @@ class _HomeLanguageToggleButton extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             _LanguageSegment(
-              label: context.tr('lang.current_ar'),
+              label: 'AR',
               selected: isArabic,
+              horizontalPadding: segmentHorizontalPadding,
+              verticalPadding: segmentVerticalPadding,
+              fontSize: segmentFontSize,
               onTap: () => unawaited(
                 AppLocaleScope.read(context).setLocale(const Locale('ar')),
               ),
             ),
             _LanguageSegment(
-              label: context.tr('lang.current_en'),
+              label: 'EN',
               selected: !isArabic,
+              horizontalPadding: segmentHorizontalPadding,
+              verticalPadding: segmentVerticalPadding,
+              fontSize: segmentFontSize,
               onTap: () => unawaited(
                 AppLocaleScope.read(context).setLocale(const Locale('en')),
               ),
@@ -878,11 +1013,17 @@ class _LanguageSegment extends StatelessWidget {
   const _LanguageSegment({
     required this.label,
     required this.selected,
+    required this.horizontalPadding,
+    required this.verticalPadding,
+    required this.fontSize,
     required this.onTap,
   });
 
   final String label;
   final bool selected;
+  final double horizontalPadding;
+  final double verticalPadding;
+  final double fontSize;
   final VoidCallback onTap;
 
   @override
@@ -898,7 +1039,10 @@ class _LanguageSegment extends StatelessWidget {
         child: AnimatedContainer(
           duration: AppTheme.microInteractionDuration,
           curve: AppTheme.emphasizedCurve,
-          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+          padding: EdgeInsets.symmetric(
+            horizontal: horizontalPadding,
+            vertical: verticalPadding,
+          ),
           decoration: BoxDecoration(
             color: color,
             borderRadius: BorderRadius.circular(999),
@@ -908,7 +1052,7 @@ class _LanguageSegment extends StatelessWidget {
             style: TextStyle(
               color: textColor,
               fontWeight: FontWeight.w800,
-              fontSize: 11,
+              fontSize: fontSize,
             ),
           ),
         ),

@@ -74,11 +74,25 @@ class RestaurantFeedUtils {
   }
 
   static int calcGridCount(double width) {
-    if (width >= 1500) return 7;
-    if (width >= 1260) return 6;
-    if (width >= 1040) return 5;
-    if (width >= 820) return 4;
-    return 3;
+    if (width >= 1500) {
+      return 7;
+    }
+    if (width >= 1260) {
+      return 6;
+    }
+    if (width >= 1040) {
+      return 5;
+    }
+    if (width >= 820) {
+      return 4;
+    }
+
+    // Keep mobile cards comfortably sized: 2 columns on most phones,
+    // 3 only when there is enough room for non-collapsed squares.
+    const minTileWidth = 152.0;
+    const spacing = 10.0;
+    final count = ((width + spacing) / (minTileWidth + spacing)).floor();
+    return count.clamp(2, 3);
   }
 
   static double cardAspectRatioFor(int crossAxisCount) {

@@ -189,7 +189,7 @@ class RestaurantListCard extends StatelessWidget {
                     SizedBox(height: metrics.sectionSpacing),
                     Expanded(
                       child: Align(
-                        alignment: AlignmentDirectional.centerStart,
+                        alignment: AlignmentDirectional.topStart,
                         child: Text(
                           displayName,
                           maxLines: metrics.titleMaxLines,
@@ -299,9 +299,18 @@ class RestaurantGridSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final compactGrid = crossAxisCount <= 3;
-    final mainAxisSpacing = compactGrid ? 8.0 : 10.0;
-    final crossAxisSpacing = compactGrid ? 8.0 : 10.0;
+    final isMobileGrid = crossAxisCount <= 3;
+    final isTwoColumnGrid = crossAxisCount == 2;
+    final mainAxisSpacing = isTwoColumnGrid
+        ? 12.0
+        : isMobileGrid
+            ? 10.0
+            : 12.0;
+    final crossAxisSpacing = isTwoColumnGrid
+        ? 12.0
+        : isMobileGrid
+            ? 10.0
+            : 12.0;
     final childAspectRatio = RestaurantFeedUtils.cardAspectRatioFor(
       crossAxisCount,
     );
@@ -460,22 +469,22 @@ class _RestaurantCardMetrics {
 
   factory _RestaurantCardMetrics.fromConstraints(BoxConstraints constraints) {
     final shortestSide =
-        constraints.biggest.shortestSide.clamp(86.0, 260.0).toDouble();
-    final ultraCompact = shortestSide < 116;
-    final compact = shortestSide < 148;
+        constraints.biggest.shortestSide.clamp(92.0, 280.0).toDouble();
+    final ultraCompact = shortestSide < 124;
+    final compact = shortestSide < 164;
 
     final contentPadding = ultraCompact
-        ? 5.0
+        ? 6.0
         : compact
-            ? 6.5
-            : 9.0;
+            ? 8.0
+            : 10.0;
     final imageHeight = (shortestSide *
             (ultraCompact
-                ? 0.42
+                ? 0.44
                 : compact
-                    ? 0.46
-                    : 0.52))
-        .clamp(40.0, 116.0)
+                    ? 0.5
+                    : 0.54))
+        .clamp(48.0, 132.0)
         .toDouble();
 
     return _RestaurantCardMetrics(
@@ -484,55 +493,55 @@ class _RestaurantCardMetrics {
       contentPadding: contentPadding,
       imageHeight: imageHeight,
       imageRadius: ultraCompact
-          ? 9.0
+          ? 10.0
           : compact
-              ? 11.0
-              : 13.0,
+              ? 12.0
+              : 14.0,
       sectionSpacing: ultraCompact
-          ? 4.0
+          ? 5.0
           : compact
-              ? 5.0
-              : 7.0,
-      titleMaxLines: compact ? 1 : 2,
+              ? 6.0
+              : 8.0,
+      titleMaxLines: ultraCompact ? 1 : 2,
       titleFontSize: ultraCompact
-          ? 10.5
+          ? 11.5
           : compact
-              ? 11.5
-              : 13.0,
+              ? 12.5
+              : 14.0,
       titleLineHeight: ultraCompact
-          ? 9.0
-          : compact
-              ? 10.0
-              : 11.0,
-      actionSpacing: ultraCompact ? 3.0 : 5.0,
-      actionHeight: ultraCompact
-          ? 20.0
-          : compact
-              ? 23.0
-              : 27.0,
-      actionRadius: ultraCompact
-          ? 9.0
+          ? 10.0
           : compact
               ? 11.0
-              : 13.0,
+              : 12.0,
+      actionSpacing: ultraCompact ? 4.0 : 6.0,
+      actionHeight: ultraCompact
+          ? 24.0
+          : compact
+              ? 28.0
+              : 31.0,
+      actionRadius: ultraCompact
+          ? 10.0
+          : compact
+              ? 12.0
+              : 14.0,
       actionIconSize: ultraCompact
+          ? 13.0
+          : compact
+              ? 14.5
+              : 16.0,
+      actionFontSize: compact ? 10.0 : 11.5,
+      showActionLabel: shortestSide >= 144,
+      infoPadding: ultraCompact ? 4.0 : 5.0,
+      infoIconSize: ultraCompact
           ? 12.5
           : compact
-              ? 13.5
+              ? 14.0
               : 15.0,
-      actionFontSize: compact ? 9.5 : 11.0,
-      showActionLabel: shortestSide >= 134,
-      infoPadding: ultraCompact ? 3.5 : 4.5,
-      infoIconSize: ultraCompact
-          ? 12.0
-          : compact
-              ? 13.0
-              : 14.0,
       infoInset: ultraCompact
           ? 4.0
           : compact
-              ? 5.0
-              : 6.0,
+              ? 6.0
+              : 7.0,
     );
   }
 
