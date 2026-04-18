@@ -17,7 +17,6 @@ class AppTheme {
   static const List<String> fallbackFonts = <String>[
     'Noto Sans',
     'Noto Sans Arabic',
-    'Noto Color Emoji',
   ];
 
   static const Duration microInteractionDuration = Duration(milliseconds: 140);

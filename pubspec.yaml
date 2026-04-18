@@ -38,8 +38,7 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/env/app.env
-    - assets/fonts/
+    - assets/env/
 
   fonts:
     - family: Cairo
@@ -53,8 +52,4 @@ flutter:
     - family: "Noto Sans Arabic"
       fonts:
         - asset: assets/fonts/NotoSansArabic-Regular.ttf
-          weight: 400
-    - family: "Noto Color Emoji"
-      fonts:
-        - asset: assets/fonts/NotoColorEmoji-Regular.ttf
           weight: 400
