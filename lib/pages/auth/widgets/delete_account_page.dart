@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/services/error_logger.dart';
+import '../../../core/ui/app_snackbar.dart';
+import '../../../services/notifications/app_notification_service.dart';
 import '../../../services/session_manager.dart';
 
 class DeleteAccountPage extends StatelessWidget {
@@ -27,6 +29,9 @@ class DeleteAccountPage extends StatelessWidget {
         return;
       }
 
+      await AppNotificationService.instance.deactivateCurrentTokenBeforeSignOut(
+        reason: 'account_deleted',
+      );
       await supabase.auth.signOut();
     } catch (error, stack) {
       await ErrorLogger.logError(
@@ -35,8 +40,9 @@ class DeleteAccountPage extends StatelessWidget {
         stack: stack,
       );
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text(ErrorLogger.userMessage)),
+      AppSnackBar.show(
+        context,
+        message: ErrorLogger.userMessage,
       );
       return;
     }

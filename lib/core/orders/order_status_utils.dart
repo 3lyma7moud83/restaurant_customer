@@ -76,9 +76,9 @@ OrderStatusInfo resolveOrderStatus(String? rawStatus) {
     case 'confirmed':
       return const OrderStatusInfo(
         stage: OrderStatusStage.accepted,
-        text: 'تم قبول الطلب',
+        text: 'قيد التحضير',
         color: Color(0xFF1E88E5),
-        icon: Icons.check_circle_rounded,
+        icon: Icons.restaurant_rounded,
         rawValue: 'accepted',
       );
     case 'on_the_way':
@@ -86,6 +86,7 @@ OrderStatusInfo resolveOrderStatus(String? rawStatus) {
     case 'onway':
     case 'on_way':
     case 'arrived':
+    case 'delivered':
       return const OrderStatusInfo(
         stage: OrderStatusStage.onTheWay,
         text: 'في الطريق',
@@ -94,10 +95,14 @@ OrderStatusInfo resolveOrderStatus(String? rawStatus) {
         rawValue: 'on_the_way',
       );
     case 'completed':
-    case 'delivered':
+    case 'done':
+    case 'delivered_final':
+    case 'delivered_confirmed':
+    case 'delivery_confirmed':
+    case 'received':
       return const OrderStatusInfo(
         stage: OrderStatusStage.completed,
-        text: 'مكتمل',
+        text: 'تم التسليم',
         color: Color(0xFF2E7D32),
         icon: Icons.task_alt_rounded,
         rawValue: 'completed',

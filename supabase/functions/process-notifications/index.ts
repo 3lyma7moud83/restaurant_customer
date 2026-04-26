@@ -23,11 +23,9 @@ interface NotificationRow {
 interface PushTokenRow {
   id: string;
   user_id: string;
-  token: string;
+  fcm_token: string;
   platform: string;
-  device_label: string | null;
   is_active: boolean;
-  last_error: string | null;
 }
 
 interface DeliveryLogInsert {
@@ -63,48 +61,67 @@ interface FcmClient {
   send(
     notification: NotificationRow,
     token: PushTokenRow,
-  ): Promise<{ requestPayload: Record<string, unknown>; result: FcmSendResult }>;
+  ): Promise<
+    { requestPayload: Record<string, unknown>; result: FcmSendResult }
+  >;
 }
 
 const maxRetries = 3;
 const queueBatchSize = 50;
 
 Deno.serve(async (request) => {
-  if (request.method !== "GET" && request.method !== "POST") {
+  try {
+    if (request.method !== "GET" && request.method !== "POST") {
+      return jsonResponse(
+        { error: "Method not allowed. Use GET or POST." },
+        405,
+      );
+    }
+
+    const supabaseUrl = mustGetEnv("SUPABASE_URL");
+    const serviceRoleKey = mustGetEnv("SUPABASE_SERVICE_ROLE_KEY");
+
+    const supabase = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
+    let simulationMode: SimulationMode | undefined;
+    if (request.method === "POST") {
+      const body = await safeJson(request) as ProcessRequestBody;
+      simulationMode = body?.simulate?.mode;
+    }
+
+    const fcmClient = simulationMode
+      ? new SimulationFcmClient(simulationMode)
+      : new GoogleFcmClient();
+
+    const processor = new NotificationProcessor(supabase, fcmClient);
+    const summary = await processor.processAllPendingNotifications();
+
     return jsonResponse(
-      { error: "Method not allowed. Use GET or POST." },
-      405,
+      {
+        ok: true,
+        simulationMode: simulationMode ?? null,
+        summary,
+      },
+      200,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(
+      JSON.stringify({
+        type: "process_notifications_unhandled_error",
+        error: message,
+      }),
+    );
+    return jsonResponse(
+      {
+        ok: false,
+        error: message,
+      },
+      500,
     );
   }
-
-  const supabaseUrl = mustGetEnv("SUPABASE_URL");
-  const serviceRoleKey = mustGetEnv("SUPABASE_SERVICE_ROLE_KEY");
-
-  const supabase = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-
-  let simulationMode: SimulationMode | undefined;
-  if (request.method === "POST") {
-    const body = await safeJson(request);
-    simulationMode = body?.simulate?.mode;
-  }
-
-  const fcmClient = simulationMode
-    ? new SimulationFcmClient(simulationMode)
-    : new GoogleFcmClient();
-
-  const processor = new NotificationProcessor(supabase, fcmClient);
-  const summary = await processor.processAllPendingNotifications();
-
-  return jsonResponse(
-    {
-      ok: true,
-      simulationMode: simulationMode ?? null,
-      summary,
-    },
-    200,
-  );
 });
 
 class NotificationProcessor {
@@ -166,7 +183,9 @@ class NotificationProcessor {
       .limit(queueBatchSize);
 
     if (error) {
-      throw new Error(`Failed to fetch pending notifications: ${error.message}`);
+      throw new Error(
+        `Failed to fetch pending notifications: ${error.message}`,
+      );
     }
 
     return (data ?? []) as NotificationRow[];
@@ -174,7 +193,9 @@ class NotificationProcessor {
 
   private async processNotification(
     initialNotification: NotificationRow,
-  ): Promise<{ status: NotificationStatus; exhausted: boolean; deliveryLogs: number }> {
+  ): Promise<
+    { status: NotificationStatus; exhausted: boolean; deliveryLogs: number }
+  > {
     let current = initialNotification;
     let deliveryLogs = 0;
 
@@ -203,42 +224,70 @@ class NotificationProcessor {
       let lastErrorMessage: string | null = null;
 
       for (const token of tokens) {
-        const { requestPayload, result } = await this.fcmClient.send(
-          current,
-          token,
-        );
+        try {
+          const { requestPayload, result } = await this.fcmClient.send(
+            current,
+            token,
+          );
 
-        await this.insertDeliveryLog({
-          notification_id: current.id,
-          token_id: token.id,
-          request_payload: requestPayload,
-          response_payload: result.responseBody,
-          error_message: result.errorMessage ?? null,
-        });
-        deliveryLogs += 1;
-
-        console.log(
-          JSON.stringify({
-            type: "notification_delivery_attempt",
+          await this.insertDeliveryLog({
             notification_id: current.id,
             token_id: token.id,
-            token_suffix: token.token.slice(-8),
             request_payload: requestPayload,
             response_payload: result.responseBody,
             error_message: result.errorMessage ?? null,
-          }),
-        );
+          });
+          deliveryLogs += 1;
 
-        if (result.ok) {
-          anySuccess = true;
-          continue;
-        }
+          console.log(
+            JSON.stringify({
+              type: "notification_delivery_attempt",
+              notification_id: current.id,
+              token_id: token.id,
+              token_suffix: token.fcm_token.slice(-8),
+              request_payload: requestPayload,
+              response_payload: result.responseBody,
+              error_message: result.errorMessage ?? null,
+            }),
+          );
 
-        lastErrorMessage = result.errorMessage ?? "Unknown FCM error.";
-        if (result.invalidToken) {
-          invalidTokenCount += 1;
-          await this.deactivateToken(token.id, lastErrorMessage);
-        } else {
+          if (result.ok) {
+            anySuccess = true;
+            continue;
+          }
+
+          lastErrorMessage = result.errorMessage ?? "Unknown FCM error.";
+          if (result.invalidToken) {
+            invalidTokenCount += 1;
+            await this.deactivateToken(token.id, lastErrorMessage);
+          } else {
+            sawRetryableFailure = true;
+          }
+        } catch (error) {
+          const errorMessage = error instanceof Error
+            ? error.message
+            : String(error);
+          const requestPayload = buildFcmRequest(current, token.fcm_token);
+
+          await this.insertDeliveryLog({
+            notification_id: current.id,
+            token_id: token.id,
+            request_payload: requestPayload,
+            response_payload: null,
+            error_message: errorMessage,
+          });
+          deliveryLogs += 1;
+
+          console.error(
+            JSON.stringify({
+              type: "notification_delivery_exception",
+              notification_id: current.id,
+              token_id: token.id,
+              token_suffix: token.fcm_token.slice(-8),
+              error: errorMessage,
+            }),
+          );
+          lastErrorMessage = errorMessage;
           sawRetryableFailure = true;
         }
       }
@@ -290,8 +339,10 @@ class NotificationProcessor {
 
   private async fetchActiveTokens(userId: string): Promise<PushTokenRow[]> {
     const { data, error } = await this.supabase
-      .from("user_push_tokens")
-      .select("id, user_id, token, platform, device_label, is_active, last_error")
+      .from("notification_tokens")
+      .select(
+        "id, user_id, fcm_token, platform, is_active",
+      )
       .eq("user_id", userId)
       .eq("is_active", true)
       .order("updated_at", { ascending: false });
@@ -355,7 +406,9 @@ class NotificationProcessor {
       .eq("id", notification.id);
 
     if (error) {
-      throw new Error(`Failed to mark notification as failed: ${error.message}`);
+      throw new Error(
+        `Failed to mark notification as failed: ${error.message}`,
+      );
     }
   }
 
@@ -364,7 +417,7 @@ class NotificationProcessor {
     errorMessage: string,
   ): Promise<void> {
     const { error } = await this.supabase
-      .from("user_push_tokens")
+      .from("notification_tokens")
       .update({
         is_active: false,
         last_error: errorMessage,
@@ -391,11 +444,13 @@ class GoogleFcmClient implements FcmClient {
   async send(
     notification: NotificationRow,
     token: PushTokenRow,
-  ): Promise<{ requestPayload: Record<string, unknown>; result: FcmSendResult }> {
+  ): Promise<
+    { requestPayload: Record<string, unknown>; result: FcmSendResult }
+  > {
     const projectId = mustGetEnv("FIREBASE_PROJECT_ID");
     const accessToken = await this.getAccessToken();
 
-    const requestPayload = buildFcmRequest(notification, token.token);
+    const requestPayload = buildFcmRequest(notification, token.fcm_token);
     const response = await fetch(
       `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`,
       {
@@ -472,11 +527,14 @@ class GoogleFcmClient implements FcmClient {
       : 3600;
 
     if (!accessToken) {
-      throw new Error("Google OAuth token response did not contain access_token.");
+      throw new Error(
+        "Google OAuth token response did not contain access_token.",
+      );
     }
 
     this.accessToken = accessToken;
-    this.accessTokenExpiresAt = Date.now() + Math.max(expiresIn - 60, 60) * 1000;
+    this.accessTokenExpiresAt = Date.now() +
+      Math.max(expiresIn - 60, 60) * 1000;
     return accessToken;
   }
 }
@@ -489,12 +547,14 @@ class SimulationFcmClient implements FcmClient {
   async send(
     notification: NotificationRow,
     token: PushTokenRow,
-  ): Promise<{ requestPayload: Record<string, unknown>; result: FcmSendResult }> {
+  ): Promise<
+    { requestPayload: Record<string, unknown>; result: FcmSendResult }
+  > {
     const key = `${notification.id}:${token.id}`;
     const nextAttempt = (this.attempts.get(key) ?? 0) + 1;
     this.attempts.set(key, nextAttempt);
 
-    const requestPayload = buildFcmRequest(notification, token.token);
+    const requestPayload = buildFcmRequest(notification, token.fcm_token);
 
     if (this.mode === "success") {
       return {
@@ -557,6 +617,21 @@ function buildFcmRequest(
   notification: NotificationRow,
   token: string,
 ): Record<string, unknown> {
+  const link = resolveNotificationLink(notification.payload);
+  const dataPayload = normalizeDataPayload(notification.payload);
+  if (!dataPayload.click_action) {
+    dataPayload.click_action = link;
+  }
+  if (!dataPayload.notification_id) {
+    dataPayload.notification_id = notification.id;
+  }
+  if (!dataPayload.title) {
+    dataPayload.title = notification.title;
+  }
+  if (!dataPayload.body) {
+    dataPayload.body = notification.body;
+  }
+
   return {
     message: {
       token,
@@ -564,9 +639,17 @@ function buildFcmRequest(
         title: notification.title,
         body: notification.body,
       },
-      data: normalizeDataPayload(notification.payload),
+      data: dataPayload,
       android: {
         priority: "high",
+        notification: {
+          title: notification.title,
+          body: notification.body,
+          channel_id: "orders-high-priority",
+          sound: "default",
+          tag: notification.id,
+          click_action: "FLUTTER_NOTIFICATION_CLICK",
+        },
       },
       apns: {
         headers: {
@@ -576,6 +659,24 @@ function buildFcmRequest(
           aps: {
             sound: "default",
           },
+        },
+      },
+      webpush: {
+        headers: {
+          Urgency: "high",
+          TTL: "2419200",
+        },
+        notification: {
+          title: notification.title,
+          body: notification.body,
+          icon: "/icons/Icon-192.png",
+          badge: "/icons/Icon-192.png",
+          requireInteraction: true,
+          tag: notification.id,
+          data: dataPayload,
+        },
+        fcm_options: {
+          link,
         },
       },
     },
@@ -597,7 +698,61 @@ function normalizeDataPayload(
   );
 }
 
-function looksLikeInvalidTokenError(responseBody: Record<string, unknown>): boolean {
+function resolveNotificationLink(
+  payload: Record<string, unknown> | null,
+): string {
+  if (!payload) {
+    return "/";
+  }
+
+  const candidates = [
+    payload.click_action,
+    payload.link,
+    payload.url,
+    payload.path,
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeNotificationLinkCandidate(candidate);
+    if (normalized != null) {
+      return normalized;
+    }
+  }
+
+  const screen = typeof payload.screen === "string"
+    ? payload.screen.trim().toLowerCase()
+    : "";
+  if (screen.length > 0) {
+    return `/?screen=${encodeURIComponent(screen)}`;
+  }
+
+  return "/";
+}
+
+function normalizeNotificationLinkCandidate(candidate: unknown): string | null {
+  if (typeof candidate !== "string") {
+    return null;
+  }
+
+  const normalized = candidate.trim();
+  if (normalized.length === 0) {
+    return null;
+  }
+  if (normalized.toUpperCase() === "FLUTTER_NOTIFICATION_CLICK") {
+    return null;
+  }
+  if (
+    normalized.startsWith("http://") || normalized.startsWith("https://") ||
+    normalized.startsWith("/") || normalized.startsWith("?")
+  ) {
+    return normalized;
+  }
+
+  return `/${normalized}`;
+}
+
+function looksLikeInvalidTokenError(
+  responseBody: Record<string, unknown>,
+): boolean {
   const error = isObject(responseBody.error) ? responseBody.error : null;
   if (!error) {
     return false;
@@ -619,7 +774,9 @@ function looksLikeInvalidTokenError(responseBody: Record<string, unknown>): bool
     if (!isObject(detail)) {
       return false;
     }
-    const errorCode = typeof detail.errorCode === "string" ? detail.errorCode : "";
+    const errorCode = typeof detail.errorCode === "string"
+      ? detail.errorCode
+      : "";
     return [
       "UNREGISTERED",
       "INVALID_ARGUMENT",
@@ -646,19 +803,93 @@ function extractFcmErrorMessage(
 }
 
 function parseServiceAccount(): { client_email: string; private_key: string } {
-  const raw = mustGetEnv("FIREBASE_SERVICE_ACCOUNT_JSON");
-  const parsed = JSON.parse(raw);
+  const raw = getServiceAccountRawValue();
+  const parsed = parseServiceAccountJson(raw);
+  const privateKey = parsed.private_key.replace(/\\n/g, "\n").trim();
 
   if (
     typeof parsed.client_email !== "string" ||
-    typeof parsed.private_key !== "string"
+    !parsed.client_email.trim() ||
+    typeof parsed.private_key !== "string" ||
+    !privateKey
   ) {
     throw new Error(
       "FIREBASE_SERVICE_ACCOUNT_JSON must contain client_email and private_key.",
     );
   }
 
-  return parsed;
+  if (privateKey.includes("....")) {
+    throw new Error(
+      "Firebase service account private_key appears redacted. Replace with the full key.",
+    );
+  }
+
+  return {
+    client_email: parsed.client_email.trim(),
+    private_key: privateKey,
+  };
+}
+
+function getServiceAccountRawValue(): string {
+  const directJson = Deno.env.get("FIREBASE_SERVICE_ACCOUNT_JSON")?.trim();
+  if (directJson) {
+    return directJson;
+  }
+
+  const fallback = Deno.env.get("FCM_SERVICE_ACCOUNT")?.trim();
+  if (fallback) {
+    return fallback;
+  }
+
+  throw new Error(
+    "Missing required environment variable FIREBASE_SERVICE_ACCOUNT_JSON.",
+  );
+}
+
+function parseServiceAccountJson(raw: string): Record<string, string> {
+  try {
+    return JSON.parse(raw) as Record<string, string>;
+  } catch (_) {
+    const decoded = tryDecodeBase64(raw);
+    if (!decoded) {
+      throw new Error(
+        "FIREBASE_SERVICE_ACCOUNT_JSON is neither valid JSON nor base64-encoded JSON.",
+      );
+    }
+
+    try {
+      return JSON.parse(decoded) as Record<string, string>;
+    } catch (_) {
+      throw new Error(
+        "Decoded FIREBASE_SERVICE_ACCOUNT_JSON value is not valid JSON.",
+      );
+    }
+  }
+}
+
+function tryDecodeBase64(value: string): string | null {
+  try {
+    return new TextDecoder().decode(base64ToBytes(value));
+  } catch (_) {
+    return null;
+  }
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/").replace(
+    /\s+/g,
+    "",
+  );
+  const padded = normalized.padEnd(
+    normalized.length + ((4 - (normalized.length % 4)) % 4),
+    "=",
+  );
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }
 
 async function createSignedJwt(args: {
@@ -725,7 +956,10 @@ function base64UrlEncode(bytes: Uint8Array): string {
     binary += String.fromCharCode(byte);
   }
 
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(
+    /=+$/g,
+    "",
+  );
 }
 
 function mustGetEnv(name: string): string {

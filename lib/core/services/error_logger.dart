@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../ui/input_focus_guard.dart';
 
 class ErrorLogger {
   ErrorLogger._();
@@ -50,9 +53,23 @@ class ErrorLogger {
     }
 
     _lastMessageAt = now;
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+
+    void showNow() {
+      InputFocusGuard.dismiss();
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(message)));
+    }
+
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    final canShowNow = phase == SchedulerPhase.idle ||
+        phase == SchedulerPhase.postFrameCallbacks;
+    if (canShowNow) {
+      showNow();
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => showNow());
   }
 
   static SupabaseClient? get _client {

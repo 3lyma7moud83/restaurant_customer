@@ -10,6 +10,8 @@ import '../core/orders/order_status_utils.dart';
 import '../core/orders/order_ui.dart';
 import '../core/realtime/realtime_channel_controller.dart';
 import '../core/theme/app_theme.dart';
+import '../core/ui/app_snackbar.dart';
+import '../core/ui/input_focus_guard.dart';
 import '../services/orders_service.dart';
 import '../services/session_manager.dart';
 import 'order_details_page.dart';
@@ -334,7 +336,7 @@ class _OrdersPageState extends State<OrdersPage> {
     return true;
   }
 
-  void _openOrder(Map<String, dynamic> order) {
+  Future<void> _openOrder(Map<String, dynamic> order) async {
     final orderId = OrdersService.idOf(order);
     if (orderId.isEmpty) {
       _showSnack('تعذر فتح الطلب حالياً.');
@@ -349,6 +351,10 @@ class _OrdersPageState extends State<OrdersPage> {
           : OrderDetailsPage(orderId: orderId),
     );
 
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!mounted) {
+      return;
+    }
     Navigator.push(context, route);
   }
 
@@ -356,8 +362,15 @@ class _OrdersPageState extends State<OrdersPage> {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    AppSnackBar.show(context, message: message);
+  }
+
+  Future<void> _closeOrdersPage() async {
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!mounted) {
+      return;
+    }
+    await Navigator.maybePop(context);
   }
 
   @override
@@ -385,7 +398,7 @@ class _OrdersPageState extends State<OrdersPage> {
                       )
                     : _OrdersEmptyState(
                         key: const ValueKey('empty'),
-                        onOrderNow: () => Navigator.maybePop(context),
+                        onOrderNow: () => unawaited(_closeOrdersPage()),
                       )
                 : RefreshIndicator(
                     key: const ValueKey('list'),
@@ -422,7 +435,7 @@ class _OrdersPageState extends State<OrdersPage> {
                             child: RepaintBoundary(
                               child: _OrderCard(
                                 order: order,
-                                onTap: () => _openOrder(order),
+                                onTap: () => unawaited(_openOrder(order)),
                               ),
                             ),
                           ),

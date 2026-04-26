@@ -45,11 +45,13 @@ class AppConstrainedContent extends StatelessWidget {
     super.key,
     required this.child,
     this.padding,
+    this.maxWidth,
     this.alignment = Alignment.topCenter,
   });
 
   final Widget child;
   final EdgeInsetsGeometry? padding;
+  final double? maxWidth;
   final Alignment alignment;
 
   @override
@@ -57,11 +59,14 @@ class AppConstrainedContent extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
+        final resolvedMaxWidth = maxWidth == null
+            ? AppResponsive.maxContentWidth(width)
+            : maxWidth!.clamp(0.0, width).toDouble();
         return Align(
           alignment: alignment,
           child: ConstrainedBox(
             constraints: BoxConstraints(
-              maxWidth: AppResponsive.maxContentWidth(width),
+              maxWidth: resolvedMaxWidth,
             ),
             child: Padding(
               padding: padding ?? AppResponsive.pagePadding(width),

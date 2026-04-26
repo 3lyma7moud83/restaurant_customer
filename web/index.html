@@ -10,18 +10,18 @@
     name="viewport"
     content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
   />
-  <meta name="description" content="Restaurant Customer Web App" />
+  <meta name="description" content="delivery-mat3mk food delivery platform" />
 
   <!-- 📱 Mobile / PWA -->
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black" />
-  <meta name="apple-mobile-web-app-title" content="restaurant_customer" />
+  <meta name="apple-mobile-web-app-title" content="delivery-mat3mk" />
 
   <link rel="apple-touch-icon" href="icons/Icon-192.png" />
   <link rel="icon" type="image/png" href="favicon.png" />
   <link rel="manifest" href="manifest.json" />
 
-  <title>restaurant_customer</title>
+  <title>delivery-mat3mk</title>
 
   <!-- ستايل أساسي -->
   <style>
@@ -66,6 +66,37 @@
         window.visualViewport.addEventListener('resize', applyAppHeight);
         window.visualViewport.addEventListener('scroll', applyAppHeight);
       }
+    })();
+  </script>
+
+  <script>
+    (function () {
+      if (!('serviceWorker' in navigator)) {
+        return;
+      }
+
+      var registrationPromise = navigator.serviceWorker
+        .register('firebase-messaging-sw.js')
+        .then(function (registration) {
+          console.log(
+            '[FCM][web] firebase-messaging-sw.js registered:',
+            registration.scope,
+          );
+          return navigator.serviceWorker.ready;
+        })
+        .then(function (readyRegistration) {
+          console.log(
+            '[FCM][web] firebase-messaging-sw.js ready:',
+            readyRegistration.scope,
+          );
+          return readyRegistration;
+        })
+        .catch(function (error) {
+          console.error('[FCM][web] service worker registration failed.', error);
+          return null;
+        });
+
+      window.__fcmServiceWorkerReady = registrationPromise;
     })();
   </script>
 

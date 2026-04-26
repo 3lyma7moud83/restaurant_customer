@@ -12,6 +12,7 @@ import '../core/orders/order_ui.dart';
 import '../core/realtime/realtime_channel_controller.dart';
 import '../core/services/error_logger.dart';
 import '../core/theme/app_theme.dart';
+import '../core/ui/input_focus_guard.dart';
 import '../services/orders_service.dart';
 import 'order_tracking_page.dart';
 
@@ -474,6 +475,21 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
     await launchUrl(uri);
   }
 
+  Future<void> _openTrackingPage() async {
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!mounted) {
+      return;
+    }
+    Navigator.push(
+      context,
+      AppTheme.platformPageRoute(
+        builder: (_) => OrderTrackingPage(
+          orderId: widget.orderId,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final order = _order;
@@ -522,17 +538,8 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
                         ),
                         const SizedBox(height: 16),
                         ElevatedButton.icon(
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              AppTheme.platformPageRoute(
-                                builder: (_) => OrderTrackingPage(
-                                  orderId: widget.orderId,
-                                ),
-                              ),
-                            );
-                          },
-                          icon: const Icon(Icons.map_outlined),
+                          onPressed: () => unawaited(_openTrackingPage()),
+                          icon: const Icon(Icons.local_shipping_outlined),
                           label: const Text('فتح التتبع'),
                         ),
                       ],
@@ -718,6 +725,9 @@ class _ItemsCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final subtotal =
         totalPrice - deliveryCost > 0 ? totalPrice - deliveryCost : totalPrice;
+    final itemsAnimationDuration = kIsWeb
+        ? const Duration(milliseconds: 140)
+        : AppTheme.sectionTransitionDuration;
 
     return OrderSectionCard(
       child: Column(
@@ -731,11 +741,13 @@ class _ItemsCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 14),
-          AnimatedSize(
-            duration: AppTheme.sectionTransitionDuration,
-            curve: AppTheme.emphasizedCurve,
+          AnimatedSwitcher(
+            duration: itemsAnimationDuration,
+            switchInCurve: AppTheme.emphasizedCurve,
+            switchOutCurve: Curves.easeInCubic,
             child: items.isEmpty
                 ? const Align(
+                    key: ValueKey('details-items-empty'),
                     alignment: Alignment.centerRight,
                     child: Text(
                       'لا توجد عناصر مرتبطة بهذا الطلب.',
@@ -743,6 +755,7 @@ class _ItemsCard extends StatelessWidget {
                     ),
                   )
                 : Column(
+                    key: ValueKey('details-items-${items.length}'),
                     children: items.map((item) {
                       final qty = OrdersService.quantityOfItem(item);
                       final price = OrdersService.itemPriceOf(item);

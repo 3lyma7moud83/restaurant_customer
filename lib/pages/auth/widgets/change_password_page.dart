@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/services/error_logger.dart';
+import '../../../core/ui/app_snackbar.dart';
+import '../../../core/ui/input_focus_guard.dart';
 
 class ChangePasswordPage extends StatefulWidget {
   const ChangePasswordPage({super.key});
@@ -55,7 +57,7 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
   }
 
   void _toast(String m) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+    AppSnackBar.show(context, message: m);
   }
 
   @override
@@ -71,6 +73,7 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
             TextField(
               controller: passCtrl,
               obscureText: true,
+              onTapOutside: (_) => InputFocusGuard.dismiss(),
               decoration: const InputDecoration(hintText: 'كلمة السر الجديدة'),
             ),
             const SizedBox(height: 20),

@@ -1,362 +1,552 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../core/auth/auth_navigation_guard.dart';
+import '../core/localization/app_localizations.dart';
 import '../core/services/error_logger.dart';
 import '../core/theme/app_theme.dart';
-import '../pages/auth/login_page.dart';
+import '../core/ui/input_focus_guard.dart';
+import '../core/ui/app_snackbar.dart';
+import '../services/complaints_service.dart';
 import '../services/restaurants_service.dart';
 import 'restaurant_card_components.dart';
 
 Future<void> showRestaurantInfoSheet(
   BuildContext context, {
   required Map<String, dynamic> restaurant,
-}) {
-  return showModalBottomSheet<void>(
+}) async {
+  await InputFocusGuard.prepareForUiTransition(context: context);
+  if (!context.mounted) {
+    return;
+  }
+
+  await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
     showDragHandle: true,
     backgroundColor: Colors.transparent,
-    builder: (_) => _RestaurantInfoSheet(restaurant: restaurant),
+    builder: (_) => _RestaurantQuickActionsSheet(restaurant: restaurant),
   );
 }
 
-class _RestaurantInfoSheet extends StatefulWidget {
-  const _RestaurantInfoSheet({
+Future<bool?> showComplaintComposerSheet(
+  BuildContext context, {
+  String? restaurantId,
+  String? restaurantName,
+  String? orderId,
+}) async {
+  await InputFocusGuard.prepareForUiTransition(context: context);
+  if (!context.mounted) {
+    return null;
+  }
+
+  return showModalBottomSheet<bool>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    showDragHandle: true,
+    builder: (_) => _ComplaintComposerSheet(
+      restaurantId: restaurantId,
+      restaurantName: restaurantName,
+      orderId: orderId,
+    ),
+  );
+}
+
+class _RestaurantQuickActionsSheet extends StatefulWidget {
+  const _RestaurantQuickActionsSheet({
     required this.restaurant,
   });
 
   final Map<String, dynamic> restaurant;
 
   @override
-  State<_RestaurantInfoSheet> createState() => _RestaurantInfoSheetState();
+  State<_RestaurantQuickActionsSheet> createState() =>
+      _RestaurantQuickActionsSheetState();
 }
 
-class _RestaurantInfoSheetState extends State<_RestaurantInfoSheet> {
-  late Future<Map<String, dynamic>> _detailsFuture;
+class _RestaurantQuickActionsSheetState
+    extends State<_RestaurantQuickActionsSheet> {
+  late final Future<Map<String, dynamic>?> _restaurantDetailsFuture =
+      _loadRestaurantDetails();
 
-  @override
-  void initState() {
-    super.initState();
-    _detailsFuture = _loadDetails();
-  }
-
-  Future<Map<String, dynamic>> _loadDetails({bool forceRefresh = false}) {
-    return RestaurantsService.getRestaurantDetails(
-      RestaurantsService.restaurantIdOf(widget.restaurant),
-      fallbackData: widget.restaurant,
-      forceRefresh: forceRefresh,
-    );
-  }
-
-  void _retryLoadDetails() {
-    setState(() {
-      _detailsFuture = _loadDetails(forceRefresh: true);
-    });
-  }
-
-  Future<void> _openComplaintSheet(Map<String, dynamic> details) async {
-    final restaurantId = RestaurantsService.restaurantIdOf(details);
-    if (restaurantId.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('لا يمكن إرسال الشكوى حالياً.')),
-        );
-      }
+  Future<void> _openComplaintComposer() async {
+    final isAuthenticated = await ensureUserAuthenticated(context);
+    if (!mounted || !isAuthenticated) {
       return;
     }
 
-    final submitted = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      showDragHandle: true,
-      builder: (_) => _ComplaintSheet(
-        restaurantId: restaurantId,
-        restaurantName: RestaurantsService.restaurantNameOf(details),
-      ),
+    final restaurantDetails = await _restaurantDetailsFuture;
+    if (!mounted) {
+      return;
+    }
+    final fallbackRestaurantId = RestaurantsService.restaurantIdOf(
+      widget.restaurant,
     );
-
+    final fallbackRestaurantName = RestaurantsService.restaurantNameOf(
+      widget.restaurant,
+    );
+    final restaurantId = restaurantDetails == null
+        ? fallbackRestaurantId
+        : RestaurantsService.restaurantIdOf(restaurantDetails);
+    final restaurantName = restaurantDetails == null
+        ? fallbackRestaurantName
+        : RestaurantsService.restaurantNameOf(restaurantDetails);
+    final submitted = await showComplaintComposerSheet(
+      context,
+      restaurantId: restaurantId.isEmpty ? null : restaurantId,
+      restaurantName: restaurantName,
+    );
     if (submitted == true && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم إرسال الشكوى وسيتم مراجعتها قريباً.')),
+      AppSnackBar.show(
+        context,
+        message: context.tr('drawer.complaint_sent'),
       );
     }
   }
 
+  Future<Map<String, dynamic>?> _loadRestaurantDetails() async {
+    final restaurantId = RestaurantsService.restaurantIdOf(widget.restaurant);
+    if (restaurantId.isEmpty) {
+      return null;
+    }
+
+    try {
+      final details = await RestaurantsService.getManagerDetailsByRestaurantId(
+        restaurantId,
+        forceRefresh: true,
+      );
+      return details;
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'restaurant_info_sheet.load_details',
+        error: error,
+        stack: stack,
+      );
+      return null;
+    }
+  }
+
+  String _notSpecified(BuildContext context) =>
+      context.tr('common.not_specified');
+
+  String _displayOrUnspecified(BuildContext context, String? value) {
+    final normalized = value?.trim();
+    if (normalized == null ||
+        normalized.isEmpty ||
+        normalized.toLowerCase() == 'null') {
+      return _notSpecified(context);
+    }
+    return normalized;
+  }
+
+  String? _firstNonEmptyString(
+    Map<String, dynamic>? source,
+    List<String> keys,
+  ) {
+    if (source == null) {
+      return null;
+    }
+
+    for (final key in keys) {
+      final normalized = source[key]?.toString().trim();
+      if (normalized != null &&
+          normalized.isNotEmpty &&
+          normalized.toLowerCase() != 'null') {
+        return normalized;
+      }
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final viewInsets = MediaQuery.of(context).viewInsets;
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+      ),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            FutureBuilder<Map<String, dynamic>?>(
+              future: _restaurantDetailsFuture,
+              builder: (context, snapshot) {
+                final details = snapshot.data;
+                final name = _displayOrUnspecified(
+                  context,
+                  _firstNonEmptyString(details, const [
+                    'restaurant_name',
+                    'name',
+                  ]),
+                );
+                final imageUrl =
+                    _firstNonEmptyString(details, const ['image_url']);
+                final type = RestaurantsService.cardTypeOf(
+                        details ?? <String, dynamic>{})
+                    ?.trim();
+                final openingTime = _displayOrUnspecified(
+                  context,
+                  _firstNonEmptyString(details, const [
+                    'opening_time',
+                    'open_time',
+                  ]),
+                );
+                final closingTime = _displayOrUnspecified(
+                  context,
+                  _firstNonEmptyString(details, const [
+                    'closing_time',
+                    'close_time',
+                  ]),
+                );
+                final safeAddress = _displayOrUnspecified(
+                  context,
+                  _firstNonEmptyString(details, const ['address']),
+                );
 
-    return AnimatedPadding(
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOutCubic,
-      padding: EdgeInsets.only(bottom: viewInsets.bottom),
-      child: Container(
-        decoration: const BoxDecoration(
-          color: AppTheme.surface,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-        ),
-        child: FutureBuilder<Map<String, dynamic>>(
-          future: _detailsFuture,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const SizedBox(
-                height: 360,
-                child: Center(child: CircularProgressIndicator()),
-              );
-            }
-
-            if (snapshot.hasError) {
-              return SizedBox(
-                height: 360,
-                child: Center(
+                return Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(24),
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Color(0xFFF7EBDC),
+                        Color(0xFFF4F7FA),
+                      ],
+                    ),
+                  ),
                   child: Column(
-                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const Icon(
-                        Icons.cloud_off_rounded,
-                        size: 42,
-                        color: Color(0xFF98A2B3),
+                      SizedBox(
+                        height: 142,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            if (imageUrl != null && imageUrl.isNotEmpty)
+                              AppCachedImage(
+                                imageUrl: imageUrl,
+                                borderRadius: const BorderRadius.vertical(
+                                  top: Radius.circular(24),
+                                ),
+                                errorWidget: const SizedBox.shrink(),
+                              ),
+                            DecoratedBox(
+                              decoration: BoxDecoration(
+                                borderRadius: const BorderRadius.vertical(
+                                  top: Radius.circular(24),
+                                ),
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [
+                                    Colors.black.withValues(alpha: 0.08),
+                                    Colors.black.withValues(alpha: 0.42),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.right,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  if (type != null && type.isNotEmpty) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      type,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      textAlign: TextAlign.right,
+                                      style: const TextStyle(
+                                        color: Color(0xFFEFEFEF),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 10),
-                      const Text(
-                        'تعذر تحميل التفاصيل',
-                        style: TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                      const SizedBox(height: 8),
-                      TextButton(
-                        onPressed: _retryLoadDetails,
-                        child: const Text('إعادة المحاولة'),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+                        child: Column(
+                          children: [
+                            _InfoFactRow(
+                              icon: Icons.access_time_rounded,
+                              title: context.tr('restaurant.opening_time'),
+                              value: openingTime,
+                            ),
+                            const SizedBox(height: 8),
+                            _InfoFactRow(
+                              icon: Icons.nightlight_round_rounded,
+                              title: context.tr('restaurant.closing_time'),
+                              value: closingTime,
+                            ),
+                            const SizedBox(height: 8),
+                            _InfoFactRow(
+                              icon: Icons.location_on_rounded,
+                              title: context.tr('restaurant.address'),
+                              value: safeAddress,
+                              maxLines: 2,
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
-                ),
-              );
-            }
-
-            final details = snapshot.data ?? widget.restaurant;
-
-            return TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0, end: 1),
-              duration: const Duration(milliseconds: 260),
-              curve: Curves.easeOutCubic,
-              builder: (context, value, child) {
-                return Opacity(
-                  opacity: value,
-                  child: Transform.translate(
-                    offset: Offset(0, (1 - value) * 24),
-                    child: child,
-                  ),
                 );
               },
-              child: _RestaurantInfoContent(
-                details: details,
-                onComplaintTap: () => _openComplaintSheet(details),
-              ),
-            );
-          },
+            ),
+            const SizedBox(height: 18),
+            _SheetActionTile(
+              icon: Icons.report_gmailerrorred_rounded,
+              title: context.tr('drawer.complaint'),
+              onTap: _openComplaintComposer,
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-class _RestaurantInfoContent extends StatelessWidget {
-  const _RestaurantInfoContent({
-    required this.details,
-    required this.onComplaintTap,
+class _InfoFactRow extends StatelessWidget {
+  const _InfoFactRow({
+    required this.icon,
+    required this.title,
+    required this.value,
+    this.maxLines = 1,
   });
 
-  final Map<String, dynamic> details;
-  final VoidCallback onComplaintTap;
+  final IconData icon;
+  final String title;
+  final String value;
+  final int maxLines;
 
   @override
   Widget build(BuildContext context) {
-    final imageUrl = RestaurantsService.restaurantImageOf(details);
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            height: 168,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(26),
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFFF4E6D9),
-                  Color(0xFFE8EFE8),
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.86),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          crossAxisAlignment: maxLines > 1
+              ? CrossAxisAlignment.start
+              : CrossAxisAlignment.center,
+          children: [
+            Container(
+              width: 30,
+              height: 30,
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                icon,
+                size: 18,
+                color: AppTheme.primaryDeep,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    title,
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      color: AppTheme.textMuted,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    value,
+                    maxLines: maxLines,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      color: AppTheme.text,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13.5,
+                    ),
+                  ),
                 ],
               ),
             ),
-            child: Stack(
-              fit: StackFit.expand,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SheetActionTile extends StatelessWidget {
+  const _SheetActionTile({
+    required this.icon,
+    required this.title,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: AppTheme.border),
+            ),
+            child: Row(
               children: [
-                if (imageUrl != null && imageUrl.isNotEmpty)
-                  AppCachedImage(
-                    imageUrl: imageUrl,
-                    borderRadius: BorderRadius.circular(26),
-                    placeholder: const _SheetImagePlaceholder(),
-                    errorWidget: const SizedBox.shrink(),
-                  ),
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(26),
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.black.withValues(alpha: 0.06),
-                        Colors.black.withValues(alpha: 0.42),
-                      ],
-                    ),
-                  ),
+                Icon(
+                  isRtl
+                      ? Icons.chevron_left_rounded
+                      : Icons.chevron_right_rounded,
+                  color: Color(0xFF98A2B3),
                 ),
-                Padding(
-                  padding: const EdgeInsets.all(18),
+                const SizedBox(width: 10),
+                Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
-                    mainAxisAlignment: MainAxisAlignment.end,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.18),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: const Text(
-                          'معلومات المطعم',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
                       Text(
-                        RestaurantsService.restaurantNameOf(details),
-                        textAlign: TextAlign.right,
-                        maxLines: 2,
+                        title,
+                        maxLines: 1,
                         overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.right,
                         style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
+                          color: AppTheme.text,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
                     ],
                   ),
                 ),
+                const SizedBox(width: 12),
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: AppTheme.primary.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, size: 19, color: AppTheme.primaryDeep),
+                ),
               ],
             ),
           ),
-          const SizedBox(height: 20),
-          _InfoTile(
-            icon: Icons.location_on_outlined,
-            title: 'العنوان',
-            value: RestaurantsService.restaurantAddressOf(details),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _SmallInfoTile(
-                  icon: Icons.schedule_outlined,
-                  title: 'يفتح',
-                  value: RestaurantsService.openingTimeOf(details),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _SmallInfoTile(
-                  icon: Icons.nightlight_outlined,
-                  title: 'يغلق',
-                  value: RestaurantsService.closingTimeOf(details),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          ElevatedButton.icon(
-            onPressed: onComplaintTap,
-            icon: const Icon(Icons.report_gmailerrorred_rounded),
-            label: const Text('إرسال شكوى'),
-          ),
-        ],
+        ),
       ),
     );
   }
 }
 
-class _ComplaintSheet extends StatefulWidget {
-  const _ComplaintSheet({
-    required this.restaurantId,
-    required this.restaurantName,
+class _ComplaintComposerSheet extends StatefulWidget {
+  const _ComplaintComposerSheet({
+    this.restaurantId,
+    this.restaurantName,
+    this.orderId,
   });
 
-  final String restaurantId;
-  final String restaurantName;
+  final String? restaurantId;
+  final String? restaurantName;
+  final String? orderId;
 
   @override
-  State<_ComplaintSheet> createState() => _ComplaintSheetState();
+  State<_ComplaintComposerSheet> createState() =>
+      _ComplaintComposerSheetState();
 }
 
-class _ComplaintSheetState extends State<_ComplaintSheet> {
-  final TextEditingController _messageController = TextEditingController();
+class _ComplaintComposerSheetState extends State<_ComplaintComposerSheet> {
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+  final TextEditingController _titleController = TextEditingController();
+  final TextEditingController _descriptionController = TextEditingController();
+
   bool _sending = false;
 
   @override
   void dispose() {
-    _messageController.dispose();
+    _titleController.dispose();
+    _descriptionController.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
-    if (widget.restaurantId.trim().isEmpty) {
-      _showSnack('لا يمكن إرسال الشكوى حالياً.');
+    if (_sending) {
       return;
     }
 
-    final message = _messageController.text.trim();
-    if (message.isEmpty) {
-      _showSnack('اكتب الشكوى أولاً.');
+    final title = _titleController.text.trim();
+    final description = _descriptionController.text.trim();
+    final isValid = _formKey.currentState?.validate() ?? false;
+    if (!isValid) {
+      _showSnack(context.tr('complaint.validation_error'));
       return;
     }
 
-    var user = Supabase.instance.client.auth.currentUser;
+    final isAuthenticated = await ensureUserAuthenticated(context);
+    if (!mounted || !isAuthenticated) {
+      return;
+    }
+
+    final user = Supabase.instance.client.auth.currentUser;
     if (user == null) {
-      await Navigator.of(context).push(
-        AppTheme.platformPageRoute(builder: (_) => const LoginPage()),
+      _showSnack(context.tr('complaint.login_required'));
+      return;
+    }
+
+    setState(() => _sending = true);
+    try {
+      await ComplaintsService.submitComplaint(
+        userId: user.id,
+        restaurantId: widget.restaurantId,
+        orderId: widget.orderId,
+        title: title,
+        description: description,
       );
+
       if (!mounted) {
         return;
       }
-      user = Supabase.instance.client.auth.currentUser;
-      if (user == null) {
-        _showSnack('سجل الدخول لإرسال الشكوى.');
-        return;
-      }
-    }
-
-    if (!mounted) {
-      return;
-    }
-    setState(() => _sending = true);
-
-    try {
-      await RestaurantsService.submitComplaint(
-        restaurantId: widget.restaurantId,
-        customerId: user.id,
-        message: message,
-      );
-
+      await InputFocusGuard.prepareForUiTransition(context: context);
       if (!mounted) {
         return;
       }
@@ -368,7 +558,13 @@ class _ComplaintSheetState extends State<_ComplaintSheet> {
         stack: stack,
       );
       if (mounted) {
-        _showSnack(ErrorLogger.userMessage);
+        final errorText = error.toString();
+        final normalizedError = errorText.startsWith('Exception: ')
+            ? errorText.substring('Exception: '.length).trim()
+            : errorText.trim();
+        _showSnack(
+          normalizedError.isEmpty ? ErrorLogger.userMessage : normalizedError,
+        );
       }
     } finally {
       if (mounted) {
@@ -378,13 +574,20 @@ class _ComplaintSheetState extends State<_ComplaintSheet> {
   }
 
   void _showSnack(String message) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    AppSnackBar.show(context, message: message);
   }
 
   @override
   Widget build(BuildContext context) {
     final viewInsets = MediaQuery.of(context).viewInsets;
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
+    final restaurantName = widget.restaurantName?.trim();
+    final heading = restaurantName == null || restaurantName.isEmpty
+        ? context.tr('complaint.heading')
+        : context.tr(
+            'complaint.heading_with_restaurant',
+            args: {'name': restaurantName},
+          );
 
     return AnimatedPadding(
       duration: const Duration(milliseconds: 180),
@@ -392,203 +595,99 @@ class _ComplaintSheetState extends State<_ComplaintSheet> {
       padding: EdgeInsets.only(bottom: viewInsets.bottom),
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(
-              'شكوى تخص ${widget.restaurantName}',
-              textAlign: TextAlign.right,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-                color: AppTheme.text,
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'اكتب رسالتك بوضوح وسيتم إرسالها لإدارة المطعم للمراجعة.',
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                color: Color(0xFF667085),
-                height: 1.5,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 18),
-            TextField(
-              controller: _messageController,
-              minLines: 4,
-              maxLines: 6,
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(
-                hintText: 'اكتب تفاصيل الشكوى هنا',
-              ),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _sending ? null : _submit,
-                child: _sending
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Text('إرسال الشكوى'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _InfoTile extends StatelessWidget {
-  const _InfoTile({
-    required this.icon,
-    required this.title,
-    required this.value,
-  });
-
-  final IconData icon;
-  final String title;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: AppTheme.primary.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Icon(icon, color: AppTheme.primary),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Color(0xFF667085),
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  value,
-                  textAlign: TextAlign.right,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppTheme.text,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    height: 1.45,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SmallInfoTile extends StatelessWidget {
-  const _SmallInfoTile({
-    required this.icon,
-    required this.title,
-    required this.value,
-  });
-
-  final IconData icon;
-  final String title;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Row(
+        child: Form(
+          key: _formKey,
+          autovalidateMode: AutovalidateMode.onUserInteraction,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Icon(icon, size: 18, color: AppTheme.secondary),
-              const Spacer(),
               Text(
-                title,
+                heading,
+                textAlign: isRtl ? TextAlign.right : TextAlign.left,
+                style: const TextStyle(
+                  fontSize: 19,
+                  fontWeight: FontWeight.w900,
+                  color: AppTheme.text,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                context.tr('complaint.subtitle'),
+                textAlign: isRtl ? TextAlign.right : TextAlign.left,
                 style: const TextStyle(
                   color: Color(0xFF667085),
-                  fontWeight: FontWeight.w700,
+                  height: 1.45,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _titleController,
+                textAlign: isRtl ? TextAlign.right : TextAlign.left,
+                onTapOutside: (_) => InputFocusGuard.dismiss(),
+                textInputAction: TextInputAction.next,
+                maxLength: 120,
+                validator: (value) {
+                  final text = value?.trim() ?? '';
+                  if (text.isEmpty) {
+                    return context.tr('complaint.title_required');
+                  }
+                  if (text.length < 4) {
+                    return context.tr('complaint.title_too_short');
+                  }
+                  return null;
+                },
+                decoration: InputDecoration(
+                  labelText: context.tr('complaint.title_label'),
+                  hintText: context.tr('complaint.title_hint'),
+                  prefixIcon: const Icon(Icons.title_rounded),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _descriptionController,
+                textAlign: isRtl ? TextAlign.right : TextAlign.left,
+                onTapOutside: (_) => InputFocusGuard.dismiss(),
+                minLines: 4,
+                maxLines: 7,
+                maxLength: 1000,
+                validator: (value) {
+                  final text = value?.trim() ?? '';
+                  if (text.isEmpty) {
+                    return context.tr('complaint.message_required');
+                  }
+                  if (text.length < 10) {
+                    return context.tr('complaint.message_too_short');
+                  }
+                  return null;
+                },
+                decoration: InputDecoration(
+                  labelText: context.tr('complaint.message_label'),
+                  hintText: context.tr('complaint.message_hint'),
+                  prefixIcon: const Icon(Icons.notes_rounded),
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _sending ? null : _submit,
+                  icon: _sending
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.send_rounded),
+                  label: Text(context.tr('complaint.send')),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          Text(
-            value,
-            textAlign: TextAlign.right,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: AppTheme.text,
-              fontWeight: FontWeight.w800,
-              fontSize: 16,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SheetImagePlaceholder extends StatelessWidget {
-  const _SheetImagePlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    return const DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Color(0xFFF4E6D9),
-            Color(0xFFE8EFE8),
-          ],
-        ),
-      ),
-      child: Center(
-        child: CircularProgressIndicator(
-          strokeWidth: 2.5,
-          color: AppTheme.primary,
         ),
       ),
     );

@@ -6,14 +6,20 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../cart/cart_page.dart';
 import '../cart/cart_provider.dart';
+import '../core/auth/auth_navigation_guard.dart';
 import '../core/localization/app_localizations.dart';
 import '../core/localization/locale_controller.dart';
 import '../core/location/location_helper.dart';
 import '../core/realtime/realtime_channel_controller.dart';
 import '../core/services/error_logger.dart';
 import '../core/theme/app_theme.dart';
+import '../core/ui/input_focus_guard.dart';
+import '../core/ui/app_snackbar.dart';
 import '../core/ui/responsive.dart';
+import '../pages/app_content_page.dart';
 import '../pages/auth/widgets/profile_page.dart';
+import '../services/app_content_service.dart';
+import '../services/notifications/app_notification_service.dart';
 import '../services/profile_service.dart';
 import '../services/restaurant_feed_utils.dart';
 import '../services/restaurants_service.dart';
@@ -174,21 +180,41 @@ class _HomePageState extends State<HomePage> {
             schema: 'public',
             table: 'managers',
             callback: _handleRestaurantDelete,
+          )
+          .onPostgresChanges(
+            event: PostgresChangeEvent.insert,
+            schema: 'public',
+            table: 'restaurant_locations',
+            callback: _handleRestaurantLocationMutation,
+          )
+          .onPostgresChanges(
+            event: PostgresChangeEvent.update,
+            schema: 'public',
+            table: 'restaurant_locations',
+            callback: _handleRestaurantLocationMutation,
+          )
+          .onPostgresChanges(
+            event: PostgresChangeEvent.delete,
+            schema: 'public',
+            table: 'restaurant_locations',
+            callback: _handleRestaurantLocationMutation,
           );
     });
   }
 
-  void _handleRestaurantInsert(PostgresChangePayload payload) {
+  void _handleRestaurantInsert(PostgresChangePayload _) {
     RestaurantsService.invalidateListCaches();
-    _upsertRestaurantFromRealtimeRecord(
-      payload.newRecord,
-      insertAtTopIfMissing: true,
-    );
+    _scheduleRestaurantsRefresh();
   }
 
-  void _handleRestaurantUpdate(PostgresChangePayload payload) {
+  void _handleRestaurantUpdate(PostgresChangePayload _) {
     RestaurantsService.invalidateListCaches();
-    _upsertRestaurantFromRealtimeRecord(payload.newRecord);
+    _scheduleRestaurantsRefresh();
+  }
+
+  void _handleRestaurantLocationMutation(PostgresChangePayload _) {
+    RestaurantsService.invalidateListCaches();
+    _scheduleRestaurantsRefresh();
   }
 
   void _handleRestaurantDelete(PostgresChangePayload payload) {
@@ -201,36 +227,7 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     _removeRestaurantRealtime(restaurantId);
-  }
-
-  void _upsertRestaurantFromRealtimeRecord(
-    Map<dynamic, dynamic> record, {
-    bool insertAtTopIfMissing = false,
-  }) {
-    final normalized = RestaurantsService.normalizeRealtimeManagerRow(record);
-    if (normalized == null) {
-      return;
-    }
-
-    final restaurantId = RestaurantsService.restaurantIdOf(normalized);
-    if (restaurantId.isEmpty) {
-      return;
-    }
-
-    final withinRange = RestaurantsService.isWithinDeliveryRange(
-      restaurant: normalized,
-      customerLat: userLat,
-      customerLng: userLng,
-    );
-    if (!withinRange) {
-      _removeRestaurantRealtime(restaurantId);
-      return;
-    }
-
-    _upsertRestaurantRealtime(
-      normalized,
-      insertAtTopIfMissing: insertAtTopIfMissing,
-    );
+    _scheduleRestaurantsRefresh();
   }
 
   void _scheduleRestaurantsRefresh() {
@@ -334,48 +331,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  void _upsertRestaurantRealtime(
-    Map<String, dynamic> restaurant, {
-    bool insertAtTopIfMissing = false,
-  }) {
-    final currentShops = _state.shops;
-    final restaurantId = RestaurantsService.restaurantIdOf(restaurant);
-    if (restaurantId.isEmpty) {
-      return;
-    }
-
-    final nextRestaurants = List<Map<String, dynamic>>.from(currentShops);
-    final index = nextRestaurants.indexWhere(
-      (item) => RestaurantsService.restaurantIdOf(item) == restaurantId,
-    );
-
-    if (index == -1) {
-      if (insertAtTopIfMissing) {
-        nextRestaurants.insert(0, restaurant);
-      } else {
-        nextRestaurants.add(restaurant);
-      }
-      _applyRestaurantsSnapshot(
-        nextRestaurants,
-        isLoading: false,
-        hasLoadError: false,
-      );
-      return;
-    }
-
-    final current = nextRestaurants[index];
-    if (identical(current, restaurant) || mapEquals(current, restaurant)) {
-      return;
-    }
-
-    nextRestaurants[index] = restaurant;
-    _applyRestaurantsSnapshot(
-      nextRestaurants,
-      isLoading: false,
-      hasLoadError: false,
-    );
-  }
-
   void _removeRestaurantRealtime(String restaurantId) {
     final currentShops = _state.shops;
     final nextRestaurants = currentShops
@@ -406,19 +361,16 @@ class _HomePageState extends State<HomePage> {
     return _loadRestaurants(forceRefresh: true);
   }
 
+  void _dismissActiveInput() {
+    InputFocusGuard.dismiss(context: context);
+  }
+
   Future<void> _openCart() async {
+    _dismissActiveInput();
     final cart = CartProvider.read(context);
-    final user = _client.auth.currentUser;
-
-    if (user == null) {
-      await Navigator.push(
-        context,
-        AppTheme.platformPageRoute(builder: (_) => const LoginPage()),
-      );
-
-      if (!mounted || _client.auth.currentUser == null) {
-        return;
-      }
+    final isAuthenticated = await ensureUserAuthenticated(context);
+    if (!mounted || !isAuthenticated) {
+      return;
     }
 
     if (!mounted) {
@@ -426,6 +378,10 @@ class _HomePageState extends State<HomePage> {
     }
 
     try {
+      await InputFocusGuard.prepareForUiTransition(context: context);
+      if (!mounted) {
+        return;
+      }
       await Navigator.push(
         context,
         AppTheme.platformPageRoute(
@@ -438,24 +394,32 @@ class _HomePageState extends State<HomePage> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.tr('home.cart_open_failed'))),
+      AppSnackBar.show(
+        context,
+        message: context.tr('home.cart_open_failed'),
       );
     }
   }
 
-  void _openRestaurantMenu(
+  Future<void> _openRestaurantMenu(
     BuildContext context,
     Map<String, dynamic> restaurant,
-  ) {
+  ) async {
+    _dismissActiveInput();
     final managerId = RestaurantsService.managerIdOf(restaurant);
     final restaurantId = RestaurantsService.restaurantIdOf(restaurant);
     final restaurantName = RestaurantsService.restaurantNameOf(restaurant);
 
     if (managerId.isEmpty || restaurantId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.tr('home.restaurant_data_incomplete'))),
+      AppSnackBar.show(
+        context,
+        message: context.tr('home.restaurant_data_incomplete'),
       );
+      return;
+    }
+
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!context.mounted) {
       return;
     }
 
@@ -472,6 +436,11 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _showLocationSheet() async {
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!mounted) {
+      return;
+    }
+
     await showModalBottomSheet(
       context: context,
       isDismissible: false,
@@ -501,8 +470,15 @@ class _HomePageState extends State<HomePage> {
                 width: double.infinity,
                 height: 48,
                 child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(context);
+                  onPressed: () async {
+                    final navigator = Navigator.of(context);
+                    await InputFocusGuard.prepareForUiTransition(
+                      context: context,
+                    );
+                    if (!mounted || !navigator.mounted) {
+                      return;
+                    }
+                    navigator.pop();
                     unawaited(_retryLocation());
                   },
                   child: Text(context.tr('common.enable_location')),
@@ -533,35 +509,53 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
-    final sideWidth = _HomeHeaderMetrics.sideWidthFor(width);
-    final titleSpacing = _HomeHeaderMetrics.titleSpacingFor(width);
+    final appBarLeadingWidth = _HomeHeaderMetrics.menuSlotWidthFor(width);
+    final appBarTitleSpacing = _HomeHeaderMetrics.titleSpacingFor(width);
     final headingFontSize = width < 360
         ? 24.0
         : width < 900
             ? 28.0
             : 30.0;
-    final searchGap = width < 360 ? 13.0 : 15.0;
-    final listGap = width < 360 ? 16.0 : 20.0;
+    final searchGap = width < 360
+        ? 10.0
+        : width < 900
+            ? 12.0
+            : 14.0;
+    final listGap = width < 360
+        ? 12.0
+        : width < 900
+            ? 14.0
+            : 16.0;
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         automaticallyImplyLeading: false,
+        leadingWidth: appBarLeadingWidth,
+        titleSpacing: appBarTitleSpacing,
         toolbarHeight: _HomeHeaderMetrics.toolbarHeightFor(width),
         centerTitle: true,
-        titleSpacing: titleSpacing,
-        leadingWidth: sideWidth,
-        leading: _HomeLeadingActions(
-          onOpenCart: _openCart,
-          viewportWidth: width,
+        leading: Builder(
+          builder: (context) {
+            return IconButton(
+              icon: const Icon(
+                Icons.menu_rounded,
+                size: 28,
+              ),
+              onPressed: () {
+                Scaffold.maybeOf(context)?.openDrawer();
+              },
+            );
+          },
         ),
         title: _HomeAppBarTitle(
           compact: _HomeHeaderMetrics.compactTitleFor(width),
         ),
         actions: [
-          _HomeMenuAction(
-            width: sideWidth,
+          _HomeLanguageActionSlot(viewportWidth: width),
+          _HomeCartActionSlot(
+            onOpenCart: _openCart,
             viewportWidth: width,
           ),
         ],
@@ -573,17 +567,24 @@ class _HomePageState extends State<HomePage> {
           final locationDenied = state.locationDenied;
           return GestureDetector(
             behavior: HitTestBehavior.translucent,
-            onTap: () => FocusScope.of(context).unfocus(),
+            onTap: _dismissActiveInput,
             child: AppConstrainedContent(
+              maxWidth:
+                  kIsWeb ? _HomeHeaderMetrics.contentMaxWidthFor(width) : null,
+              padding: _HomeHeaderMetrics.contentPaddingFor(width),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    context.tr('home.nearby_restaurants'),
-                    style: TextStyle(
-                      fontSize: headingFontSize,
-                      fontWeight: FontWeight.w900,
-                      height: 1.12,
+                  Align(
+                    alignment: Alignment.center,
+                    child: Text(
+                      context.tr('home.nearby_restaurants'),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: headingFontSize,
+                        fontWeight: FontWeight.w900,
+                        height: 1.12,
+                      ),
                     ),
                   ),
                   SizedBox(height: searchGap),
@@ -617,7 +618,9 @@ class _HomePageState extends State<HomePage> {
                           restaurant: restaurant,
                         );
                       },
-                      onRestaurantTap: _openRestaurantMenu,
+                      onRestaurantTap: (context, restaurant) => unawaited(
+                        _openRestaurantMenu(context, restaurant),
+                      ),
                     ),
                   ),
                 ],
@@ -669,6 +672,7 @@ class _HomeAppBarTitle extends StatelessWidget {
     this.compact = false,
   });
 
+  static const String _fixedAppName = 'delivery-mat3mk';
   final bool compact;
 
   @override
@@ -702,7 +706,7 @@ class _HomeAppBarTitle extends StatelessWidget {
             ),
             SizedBox(width: compact ? 5 : 7),
             Text(
-              context.tr('app.name'),
+              _fixedAppName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -721,8 +725,55 @@ class _HomeAppBarTitle extends StatelessWidget {
 class _HomeHeaderMetrics {
   const _HomeHeaderMetrics._();
 
-  static double sideWidthFor(double width) {
-    return (width * 0.33).clamp(108.0, 214.0).toDouble();
+  static double menuSlotWidthFor(double width) {
+    if (width >= 1200) {
+      return 86;
+    }
+    if (width >= 900) {
+      return 82;
+    }
+    if (width >= 520) {
+      return 78;
+    }
+    if (width >= 390) {
+      return 74;
+    }
+    return 72;
+  }
+
+  static double contentMaxWidthFor(double width) {
+    if (width >= 2200) {
+      return 1400;
+    }
+    if (width >= 1800) {
+      return 1360;
+    }
+    if (width >= 1500) {
+      return 1320;
+    }
+    if (width >= 1200) {
+      return 1220;
+    }
+    if (width >= 900) {
+      return 1100;
+    }
+    return width;
+  }
+
+  static EdgeInsets contentPaddingFor(double width) {
+    if (width >= 1200) {
+      return const EdgeInsets.fromLTRB(24, 14, 24, 18);
+    }
+    if (width >= 900) {
+      return const EdgeInsets.fromLTRB(20, 13, 20, 16);
+    }
+    if (width >= 520) {
+      return const EdgeInsets.fromLTRB(14, 12, 14, 14);
+    }
+    if (width >= 390) {
+      return const EdgeInsets.fromLTRB(12, 10, 12, 12);
+    }
+    return const EdgeInsets.fromLTRB(10, 8, 10, 10);
   }
 
   static double toolbarHeightFor(double width) {
@@ -743,18 +794,18 @@ class _HomeHeaderMetrics {
 
   static double actionExtentFor(double width) {
     if (width >= 1200) {
-      return 42;
+      return 50;
     }
     if (width >= 900) {
-      return 40;
+      return 48;
     }
     if (width >= 520) {
-      return 38;
+      return 46;
     }
     if (width >= 390) {
-      return 36;
+      return 44;
     }
-    return 34;
+    return 42;
   }
 
   static double sideInsetFor(double width) {
@@ -767,17 +818,7 @@ class _HomeHeaderMetrics {
     if (width >= 390) {
       return 9;
     }
-    return 7;
-  }
-
-  static double leadingGapFor(double width) {
-    if (width >= 900) {
-      return 10;
-    }
-    if (width >= 390) {
-      return 8;
-    }
-    return 6;
+    return 8;
   }
 
   static double languageHorizontalPaddingFor(double width) {
@@ -847,8 +888,35 @@ class _HomeHeaderMetrics {
   }
 }
 
-class _HomeLeadingActions extends StatelessWidget {
-  const _HomeLeadingActions({
+class _HomeLanguageActionSlot extends StatelessWidget {
+  const _HomeLanguageActionSlot({
+    required this.viewportWidth,
+  });
+
+  final double viewportWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    if (viewportWidth < 360) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: EdgeInsetsDirectional.only(
+        end: _HomeHeaderMetrics.sideInsetFor(viewportWidth) * 0.4,
+      ),
+      child: _HomeLanguageToggleButton(
+        segmentHorizontalPadding:
+            _HomeHeaderMetrics.languageHorizontalPaddingFor(viewportWidth),
+        segmentVerticalPadding:
+            _HomeHeaderMetrics.languageVerticalPaddingFor(viewportWidth),
+        segmentFontSize: _HomeHeaderMetrics.languageFontSizeFor(viewportWidth),
+      ),
+    );
+  }
+}
+
+class _HomeCartActionSlot extends StatelessWidget {
+  const _HomeCartActionSlot({
     required this.onOpenCart,
     required this.viewportWidth,
   });
@@ -860,91 +928,104 @@ class _HomeLeadingActions extends StatelessWidget {
   Widget build(BuildContext context) {
     final buttonExtent = _HomeHeaderMetrics.actionExtentFor(viewportWidth);
     final sideInset = _HomeHeaderMetrics.sideInsetFor(viewportWidth);
-    final itemGap = _HomeHeaderMetrics.leadingGapFor(viewportWidth);
-
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Padding(
-        padding: EdgeInsetsDirectional.only(start: sideInset),
-        child: Directionality(
-          textDirection: TextDirection.ltr,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _HomeCartAction(
-                onTap: onOpenCart,
-                buttonExtent: buttonExtent,
-              ),
-              SizedBox(width: itemGap),
-              _HomeLanguageToggleButton(
-                segmentHorizontalPadding:
-                    _HomeHeaderMetrics.languageHorizontalPaddingFor(
-                  viewportWidth,
-                ),
-                segmentVerticalPadding:
-                    _HomeHeaderMetrics.languageVerticalPaddingFor(
-                  viewportWidth,
-                ),
-                segmentFontSize: _HomeHeaderMetrics.languageFontSizeFor(
-                  viewportWidth,
-                ),
-              ),
-            ],
-          ),
-        ),
+    return Padding(
+      padding: EdgeInsetsDirectional.only(end: sideInset),
+      child: _HomeCartAction(
+        onTap: onOpenCart,
+        buttonExtent: buttonExtent + 2,
       ),
     );
   }
 }
 
-class _HomeMenuAction extends StatelessWidget {
-  const _HomeMenuAction({
-    required this.width,
+class HomeDrawerMenuButton extends StatefulWidget {
+  const HomeDrawerMenuButton({
+    super.key,
     required this.viewportWidth,
   });
 
-  final double width;
   final double viewportWidth;
 
   @override
-  Widget build(BuildContext context) {
-    final buttonExtent = _HomeHeaderMetrics.actionExtentFor(viewportWidth);
-    final sideInset = _HomeHeaderMetrics.sideInsetFor(viewportWidth);
-    final buttonRadius = buttonExtent <= 35 ? 10.0 : 12.0;
+  State<HomeDrawerMenuButton> createState() => _HomeDrawerMenuButtonState();
+}
 
-    return SizedBox(
-      width: width,
-      child: Builder(
-        builder: (context) => Tooltip(
-          message: MaterialLocalizations.of(context).openAppDrawerTooltip,
-          child: Align(
-            alignment: Alignment.centerRight,
-            child: Padding(
-              padding: EdgeInsetsDirectional.only(end: sideInset),
-              child: _TopBarActionShell(
-                radius: buttonRadius,
-                child: Material(
-                  color: Colors.transparent,
-                  borderRadius: BorderRadius.circular(buttonRadius),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(buttonRadius),
-                    onTap: () => Scaffold.of(context).openDrawer(),
-                    child: SizedBox(
-                      width: buttonExtent,
-                      height: buttonExtent,
-                      child: Icon(
-                        Icons.menu_rounded,
-                        size: buttonExtent * 0.56,
-                        color: AppTheme.text,
-                      ),
-                    ),
-                  ),
-                ),
+class _HomeDrawerMenuButtonState extends State<HomeDrawerMenuButton> {
+  bool _openingDrawer = false;
+
+  Future<void> _openDrawer(
+    BuildContext scaffoldContext,
+  ) async {
+    if (_openingDrawer) return;
+
+    setState(() => _openingDrawer = true);
+
+    try {
+      await InputFocusGuard.prepareForUiTransition(
+        context: scaffoldContext,
+      );
+
+      if (!mounted || !scaffoldContext.mounted) return;
+
+      Scaffold.maybeOf(scaffoldContext)?.openDrawer();
+    } finally {
+      if (mounted) {
+        setState(() => _openingDrawer = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final buttonExtent =
+        (_HomeHeaderMetrics.actionExtentFor(widget.viewportWidth) + 4)
+            .clamp(44.0, 54.0)
+            .toDouble();
+
+    final iconSize = buttonExtent * 0.60;
+    final radius = 14.0;
+    final borderSide = BorderSide(
+      color: AppTheme.primaryDeep.withValues(alpha: 0.25),
+      width: 1,
+    );
+
+    return Builder(
+      builder: (scaffoldContext) {
+        final tooltip =
+            MaterialLocalizations.of(scaffoldContext).openAppDrawerTooltip;
+        return Semantics(
+          button: true,
+          label: tooltip,
+          child: IconButton(
+            key: const Key('home-drawer-menu-button'),
+            tooltip: tooltip,
+            onPressed: _openingDrawer
+                ? null
+                : () => unawaited(_openDrawer(scaffoldContext)),
+            icon: Icon(
+              Icons.menu_rounded,
+              size: iconSize,
+              color: AppTheme.primaryDeep,
+            ),
+            splashRadius: buttonExtent * 0.52,
+            visualDensity: VisualDensity.standard,
+            style: IconButton.styleFrom(
+              backgroundColor: const Color(0xFFFFFBF6),
+              foregroundColor: AppTheme.primaryDeep,
+              padding: EdgeInsets.zero,
+              fixedSize: Size.square(buttonExtent),
+              minimumSize: Size.square(buttonExtent),
+              maximumSize: Size.square(buttonExtent),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(radius),
               ),
+              side: borderSide,
+              elevation: kIsWeb ? 0.5 : 2,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -962,18 +1043,90 @@ class _TopBarActionShell extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.white,
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Colors.white, Color(0xFFF8F7F4)],
+        ),
         borderRadius: BorderRadius.circular(radius),
-        border: Border.all(color: AppTheme.border.withValues(alpha: 0.92)),
-        boxShadow: const [
+        border: Border.all(color: AppTheme.border.withValues(alpha: 0.95)),
+        boxShadow: [
           BoxShadow(
-            color: Color(0x12000000),
-            blurRadius: 12,
-            offset: Offset(0, 7),
+            color: AppTheme.primary.withValues(alpha: 0.10),
+            blurRadius: 14,
+            offset: const Offset(0, 8),
+          ),
+          const BoxShadow(
+            color: Color(0x10000000),
+            blurRadius: 9,
+            offset: Offset(0, 5),
           ),
         ],
       ),
       child: child,
+    );
+  }
+}
+
+class _DrawerTile extends StatelessWidget {
+  const _DrawerTile({
+    required this.icon,
+    required this.title,
+    this.subtitle,
+    this.onTap,
+    this.trailing,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final VoidCallback? onTap;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
+
+    return ListTile(
+      dense: false,
+      leading: Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(
+          color: AppTheme.primary.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, size: 19, color: AppTheme.primaryDeep),
+      ),
+      title: Text(
+        title,
+        style: const TextStyle(
+          fontWeight: FontWeight.w700,
+          color: AppTheme.text,
+        ),
+      ),
+      subtitle: subtitle == null
+          ? null
+          : Text(
+              subtitle!,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppTheme.textMuted,
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+              ),
+            ),
+      trailing: trailing ??
+          (onTap == null
+              ? null
+              : Icon(
+                  isRtl
+                      ? Icons.chevron_left_rounded
+                      : Icons.chevron_right_rounded,
+                  color: Color(0xFF98A2B3),
+                )),
+      onTap: onTap,
     );
   }
 }
@@ -990,9 +1143,9 @@ class _HomeCartAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cart = CartProvider.of(context);
-    final buttonRadius = buttonExtent <= 35 ? 10.0 : 12.0;
-    final badgeHeight = buttonExtent <= 35 ? 16.0 : 17.0;
-    final badgeFontSize = buttonExtent <= 35 ? 9.0 : 9.5;
+    final buttonRadius = buttonExtent <= 43 ? 13.0 : 15.0;
+    final badgeHeight = buttonExtent <= 43 ? 18.0 : 19.0;
+    final badgeFontSize = buttonExtent <= 43 ? 9.6 : 10.2;
 
     return Stack(
       clipBehavior: Clip.none,
@@ -1006,14 +1159,17 @@ class _HomeCartAction extends StatelessWidget {
               borderRadius: BorderRadius.circular(buttonRadius),
               child: InkWell(
                 borderRadius: BorderRadius.circular(buttonRadius),
-                onTap: () => unawaited(onTap()),
+                onTap: () {
+                  InputFocusGuard.dismiss(context: context);
+                  unawaited(onTap());
+                },
                 child: SizedBox(
                   width: buttonExtent,
                   height: buttonExtent,
                   child: Icon(
-                    Icons.shopping_cart_outlined,
-                    size: buttonExtent * 0.51,
-                    color: AppTheme.text,
+                    Icons.shopping_bag_outlined,
+                    size: buttonExtent * 0.56,
+                    color: AppTheme.primary,
                   ),
                 ),
               ),
@@ -1022,19 +1178,26 @@ class _HomeCartAction extends StatelessWidget {
         ),
         if (cart.totalCount > 0)
           PositionedDirectional(
-            top: -2,
-            end: -2,
+            top: -3,
+            end: -3,
             child: Container(
               height: badgeHeight,
               constraints: BoxConstraints(minWidth: badgeHeight),
-              padding: const EdgeInsets.symmetric(horizontal: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 5),
               decoration: BoxDecoration(
                 color: AppTheme.primary,
                 borderRadius: BorderRadius.circular(999),
                 border: Border.all(
                   color: Colors.white,
-                  width: 1.1,
+                  width: 1.2,
                 ),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x18000000),
+                    blurRadius: 8,
+                    offset: Offset(0, 3),
+                  ),
+                ],
               ),
               alignment: Alignment.center,
               child: Text(
@@ -1140,7 +1303,10 @@ class _LanguageSegment extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(999),
-        onTap: onTap,
+        onTap: () {
+          InputFocusGuard.dismiss(context: context);
+          onTap();
+        },
         child: AnimatedContainer(
           duration: AppTheme.microInteractionDuration,
           curve: AppTheme.emphasizedCurve,
@@ -1297,6 +1463,8 @@ class _MainDrawerState extends State<_MainDrawer> {
   bool _profileLoading = true;
   bool _signingOut = false;
   bool _drawerVisible = kIsWeb;
+  Locale? _contentLocale;
+  Future<AppContentEntry>? _appVersionFuture;
 
   @override
   void initState() {
@@ -1322,6 +1490,19 @@ class _MainDrawerState extends State<_MainDrawer> {
           setState(() => _drawerVisible = true);
         }
       });
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final locale = Localizations.localeOf(context);
+    if (_contentLocale != locale || _appVersionFuture == null) {
+      _contentLocale = locale;
+      _appVersionFuture = AppContentService.fetchEntry(
+        section: AppContentSection.appSettings,
+        locale: locale,
+      );
     }
   }
 
@@ -1369,7 +1550,12 @@ class _MainDrawerState extends State<_MainDrawer> {
   }
 
   Future<void> _openLoginPage() async {
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!mounted) {
+      return;
+    }
     Navigator.pop(context);
+
     await Navigator.push(
       context,
       AppTheme.platformPageRoute(builder: (_) => const LoginPage()),
@@ -1379,6 +1565,19 @@ class _MainDrawerState extends State<_MainDrawer> {
     await _loadCustomerProfile();
   }
 
+  Future<void> _openDrawerPage(Widget page) async {
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!mounted) {
+      return;
+    }
+    Navigator.pop(context);
+
+    await Navigator.push(
+      context,
+      AppTheme.platformPageRoute(builder: (_) => page),
+    );
+  }
+
   Future<void> _signOut() async {
     if (_signingOut || !mounted) {
       return;
@@ -1386,6 +1585,19 @@ class _MainDrawerState extends State<_MainDrawer> {
 
     setState(() => _signingOut = true);
     try {
+      try {
+        await AppNotificationService.instance
+            .deactivateCurrentTokenBeforeSignOut(
+          reason: 'signed_out',
+        );
+      } catch (error, stack) {
+        await ErrorLogger.logError(
+          module: 'home_page.sign_out.deactivate_push_token',
+          error: error,
+          stack: stack,
+        );
+      }
+
       await widget.client.auth.signOut();
     } catch (error, stack) {
       await ErrorLogger.logError(
@@ -1399,6 +1611,57 @@ class _MainDrawerState extends State<_MainDrawer> {
         setState(() => _signingOut = false);
       }
     }
+  }
+
+  Future<void> _openContentPage({
+    required AppContentSection section,
+    required String fallbackTitle,
+  }) async {
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!mounted) {
+      return;
+    }
+    Navigator.pop(context);
+
+    await Navigator.push(
+      context,
+      AppTheme.platformPageRoute(
+        builder: (_) => AppContentPage(
+          section: section,
+          fallbackTitle: fallbackTitle,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openComplaintSheet() async {
+    final sentMessage = context.tr('drawer.complaint_sent');
+    final cart = CartProvider.maybeOf(context);
+    final preferredRestaurantId = cart?.restaurantId?.trim();
+
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!mounted) {
+      return;
+    }
+    Navigator.pop(context);
+
+    final isAuthenticated = await ensureUserAuthenticated(context);
+    if (!mounted || !isAuthenticated) {
+      return;
+    }
+
+    final submitted = await showComplaintComposerSheet(
+      context,
+      restaurantId:
+          preferredRestaurantId?.isEmpty == true ? null : preferredRestaurantId,
+    );
+    if (!mounted || submitted != true) {
+      return;
+    }
+    AppSnackBar.show(
+      context,
+      message: sentMessage,
+    );
   }
 
   @override
@@ -1515,42 +1778,75 @@ class _MainDrawerState extends State<_MainDrawer> {
               ),
             )
           else ...[
-            ListTile(
-              leading: const Icon(Icons.person_outline),
-              title: Text(context.tr('home.profile')),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  AppTheme.platformPageRoute(
-                    builder: (_) => const ProfilePage(),
-                  ),
-                );
-              },
+            _DrawerTile(
+              icon: Icons.person_outline,
+              title: context.tr('home.profile'),
+              onTap: () => unawaited(_openDrawerPage(const ProfilePage())),
             ),
-            ListTile(
-              leading: const Icon(Icons.receipt_long),
-              title: Text(context.tr('home.orders')),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  AppTheme.platformPageRoute(
-                    builder: (_) => const OrdersPage(),
-                  ),
-                );
-              },
+            _DrawerTile(
+              icon: Icons.receipt_long,
+              title: context.tr('home.orders'),
+              onTap: () => unawaited(_openDrawerPage(const OrdersPage())),
             ),
-            const Divider(),
-            ListTile(
-              leading: const Icon(
-                Icons.logout,
-                color: Colors.red,
+          ],
+          const Divider(height: 22),
+          _DrawerTile(
+            icon: Icons.support_agent_rounded,
+            title: context.tr('drawer.support'),
+            onTap: () => unawaited(
+              _openContentPage(
+                section: AppContentSection.supportSettings,
+                fallbackTitle: context.tr('drawer.support'),
               ),
-              title: Text(
-                context.tr('home.logout'),
-                style: const TextStyle(color: Colors.red),
+            ),
+          ),
+          _DrawerTile(
+            icon: Icons.report_gmailerrorred_rounded,
+            title: context.tr('drawer.complaint'),
+            onTap: () => unawaited(_openComplaintSheet()),
+          ),
+          _DrawerTile(
+            icon: Icons.privacy_tip_outlined,
+            title: context.tr('drawer.privacy'),
+            onTap: () => unawaited(
+              _openContentPage(
+                section: AppContentSection.privacyPolicy,
+                fallbackTitle: context.tr('drawer.privacy'),
               ),
+            ),
+          ),
+          _DrawerTile(
+            icon: Icons.shield_outlined,
+            title: context.tr('drawer.security'),
+            onTap: () => unawaited(
+              _openContentPage(
+                section: AppContentSection.securityPolicy,
+                fallbackTitle: context.tr('drawer.security'),
+              ),
+            ),
+          ),
+          FutureBuilder<AppContentEntry>(
+            future: _appVersionFuture,
+            builder: (context, snapshot) {
+              final versionLabel = (snapshot.data?.content ?? 'v1.0.0').trim();
+              return _DrawerTile(
+                icon: Icons.info_outline_rounded,
+                title: context.tr('drawer.version'),
+                subtitle: versionLabel.isEmpty ? 'v1.0.0' : versionLabel,
+                onTap: () => unawaited(
+                  _openContentPage(
+                    section: AppContentSection.appSettings,
+                    fallbackTitle: context.tr('drawer.version'),
+                  ),
+                ),
+              );
+            },
+          ),
+          if (!isGuest) ...[
+            const Divider(height: 22),
+            _DrawerTile(
+              icon: Icons.logout,
+              title: context.tr('home.logout'),
               trailing: _signingOut
                   ? const SizedBox(
                       width: 18,
@@ -1567,12 +1863,15 @@ class _MainDrawerState extends State<_MainDrawer> {
 
     final drawerAnimationDuration =
         kIsWeb ? Duration.zero : const Duration(milliseconds: 220);
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
 
     return Drawer(
       child: AnimatedSlide(
-        offset: _drawerVisible ? Offset.zero : const Offset(-0.035, 0),
+        offset: _drawerVisible
+            ? Offset.zero
+            : (isRtl ? const Offset(0.035, 0) : const Offset(-0.035, 0)),
         duration: drawerAnimationDuration,
-        curve: Curves.easeOutCubic,
+        curve: Curves.easeOutBack,
         child: AnimatedOpacity(
           opacity: _drawerVisible ? 1 : 0.92,
           duration: drawerAnimationDuration,
@@ -1618,7 +1917,7 @@ class _SearchBar extends StatelessWidget {
           child: TextField(
             controller: controller,
             textInputAction: TextInputAction.search,
-            onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+            onTapOutside: (_) => InputFocusGuard.dismiss(),
             scrollPadding: EdgeInsets.only(
               top: 20,
               bottom: mobileWebInputFix ? 132 : 92,

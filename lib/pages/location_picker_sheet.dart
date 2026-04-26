@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 
+import '../core/ui/input_focus_guard.dart';
+
 class LocationResult {
   final double lat;
   final double lng;
@@ -135,7 +137,11 @@ class _LocationPickerSheetState extends State<LocationPickerSheet> {
     lng = center.lng.toDouble();
   }
 
-  void _confirmLocation() {
+  Future<void> _confirmLocation() async {
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!mounted) {
+      return;
+    }
     Navigator.pop(
       context,
       LocationResult(

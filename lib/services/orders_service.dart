@@ -93,11 +93,16 @@ class OrdersService {
     'pending',
     'accepted',
     'on_the_way',
+    'delivered',
   ];
 
   static const List<String> _orderOwnerColumns = [
     'customer_id',
     'user_id',
+  ];
+  static const List<String> _customerRelationTables = [
+    'customers',
+    'profiles',
   ];
   static const String _orderSelect = '*';
   static Future<List<Map<String, dynamic>>> getCustomerOrders(
@@ -338,14 +343,51 @@ class OrdersService {
   }
 
   static String customerNameOf(Map<String, dynamic> order) {
+    final customer = customerDataOf(order);
     return _stringValue(order['customer_name']) ??
+        _firstStringValue(customer, const [
+          'name',
+          'full_name',
+          'customer_name',
+        ]) ??
         _stringValue(order['name']) ??
         'العميل';
   }
 
   static String? customerPhoneOf(Map<String, dynamic> order) {
+    final customer = customerDataOf(order);
     return _stringValue(order['customer_phone']) ??
+        _firstStringValue(customer, const [
+          'phone',
+          'mobile',
+          'phone_number',
+          'mobile_number',
+          'customer_phone',
+        ]) ??
         _stringValue(order['phone']);
+  }
+
+  static String? customerIdOf(Map<String, dynamic> order) {
+    return _stringValue(order['customer_id']) ?? _stringValue(order['user_id']);
+  }
+
+  static Map<String, dynamic>? customerDataOf(Map<String, dynamic> order) {
+    final hydrated = order['customer_data'];
+    if (hydrated is Map) {
+      return Map<String, dynamic>.from(hydrated);
+    }
+
+    for (final key in const ['customer', 'customers', 'profile', 'profiles']) {
+      final value = order[key];
+      if (value is Map) {
+        return Map<String, dynamic>.from(value);
+      }
+      if (value is List && value.isNotEmpty && value.first is Map) {
+        return Map<String, dynamic>.from(value.first as Map);
+      }
+    }
+
+    return null;
   }
 
   static double? customerLatOf(Map<String, dynamic> order) {
@@ -384,6 +426,12 @@ class OrdersService {
         _coordinateFromDynamic(order['driver_location'], isLatitude: false);
   }
 
+  static String? driverIdOf(Map<String, dynamic> order) {
+    return _stringValue(order['driver_id']) ??
+        _stringValue(order['courier_id']) ??
+        _stringValue(order['rider_id']);
+  }
+
   static String restaurantNameOf(Map<String, dynamic> order) {
     final restaurant = restaurantDataOf(order);
     if (restaurant == null) {
@@ -409,6 +457,44 @@ class OrdersService {
     }
 
     return RestaurantsService.restaurantPhoneOf(restaurant);
+  }
+
+  static String restaurantAddressOf(Map<String, dynamic> order) {
+    final restaurant = restaurantDataOf(order);
+    if (restaurant != null) {
+      return RestaurantsService.restaurantAddressOf(restaurant);
+    }
+
+    return _stringValue(order['restaurant_address']) ??
+        _stringValue(order['restaurant_full_address']) ??
+        _stringValue(order['restaurant_location_address']) ??
+        _stringValue(order['restaurant_street_address']) ??
+        'العنوان غير متوفر';
+  }
+
+  static String deliveryDetailsOf(Map<String, dynamic> order) {
+    final details = <String>[
+      ..._deliveryDetailsFromMap(order),
+      ..._deliveryDetailsFromDynamic(order['address_details']),
+      ..._deliveryDetailsFromDynamic(order['delivery_details_data']),
+      ..._deliveryDetailsFromDynamic(order['delivery_address_data']),
+      ..._deliveryDetailsFromDynamic(order['customer_address']),
+      ..._deliveryDetailsFromDynamic(order['customer_address_data']),
+    ];
+
+    final uniqueDetails = <String>[];
+    final seenDetails = <String>{};
+    for (final detail in details) {
+      if (seenDetails.add(detail)) {
+        uniqueDetails.add(detail);
+      }
+    }
+
+    if (uniqueDetails.isEmpty) {
+      return 'لا توجد تفاصيل إضافية.';
+    }
+
+    return uniqueDetails.join(' - ');
   }
 
   static double? restaurantLatOf(Map<String, dynamic> order) {
@@ -516,14 +602,22 @@ class OrdersService {
         .map((order) => _stringValue(order['restaurant_id']) ?? '')
         .where((id) => id.isNotEmpty)
         .toList(growable: false);
+    final customerIds = orders
+        .map(customerIdOf)
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
     final restaurantMap =
         await RestaurantsService.getOrderRestaurantsByIds(restaurantIds);
+    final customerMap = await _loadCustomerRelationsByIds(customerIds);
 
     final hydratedOrders = orders
         .map(
-          (order) => _attachRestaurantData(
+          (order) => _attachHydratedData(
             order,
-            restaurantMap[_stringValue(order['restaurant_id']) ?? ''],
+            restaurant:
+                restaurantMap[_stringValue(order['restaurant_id']) ?? ''],
+            customer: customerMap[customerIdOf(order) ?? ''],
           ),
         )
         .toList(growable: false);
@@ -537,28 +631,43 @@ class OrdersService {
     Map<String, dynamic> order,
   ) async {
     final restaurantId = _stringValue(order['restaurant_id']) ?? '';
-    if (restaurantId.isEmpty) {
-      return order;
+    final customerId = customerIdOf(order) ?? '';
+
+    Map<String, dynamic>? restaurant;
+    if (restaurantId.isNotEmpty) {
+      final restaurantMap =
+          await RestaurantsService.getOrderRestaurantsByIds([restaurantId]);
+      restaurant = restaurantMap[restaurantId];
     }
 
-    final restaurantMap =
-        await RestaurantsService.getOrderRestaurantsByIds([restaurantId]);
-    final hydrated = _attachRestaurantData(order, restaurantMap[restaurantId]);
+    Map<String, dynamic>? customer;
+    if (customerId.isNotEmpty) {
+      final customerMap = await _loadCustomerRelationsByIds([customerId]);
+      customer = customerMap[customerId];
+    }
+
+    final hydrated = _attachHydratedData(
+      order,
+      restaurant: restaurant,
+      customer: customer,
+    );
     _writeOrderCache(hydrated);
     return hydrated;
   }
 
-  static Map<String, dynamic> _attachRestaurantData(
-    Map<String, dynamic> order,
+  static Map<String, dynamic> _attachHydratedData(
+    Map<String, dynamic> order, {
     Map<String, dynamic>? restaurant,
-  ) {
-    if (restaurant == null) {
+    Map<String, dynamic>? customer,
+  }) {
+    if (restaurant == null && customer == null) {
       return Map<String, dynamic>.from(order);
     }
 
-    return {
+    return <String, dynamic>{
       ...order,
-      'restaurant_data': restaurant,
+      if (restaurant != null) 'restaurant_data': restaurant,
+      if (customer != null) 'customer_data': customer,
     };
   }
 
@@ -918,6 +1027,61 @@ class OrdersService {
     return 'RC${stamp.substring(stamp.length - 6)}$suffix';
   }
 
+  static Future<Map<String, Map<String, dynamic>>> _loadCustomerRelationsByIds(
+    Iterable<String> customerIds,
+  ) async {
+    final requestedIds = customerIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (requestedIds.isEmpty) {
+      return const <String, Map<String, dynamic>>{};
+    }
+
+    final relations = <String, Map<String, dynamic>>{};
+
+    for (final table in _customerRelationTables) {
+      try {
+        final rows =
+            await SessionManager.instance.runWithValidSession<List<dynamic>>(
+          () {
+            final query = _client.from(table).select('*');
+            if (requestedIds.length == 1) {
+              return query.eq('id', requestedIds.first);
+            }
+            return query.inFilter('id', requestedIds);
+          },
+          requireSession: true,
+        );
+
+        for (final row in _mapRows(rows)) {
+          final customerId = _stringValue(row['id']);
+          if (customerId == null || customerId.isEmpty) {
+            continue;
+          }
+          if (!requestedIds.contains(customerId)) {
+            continue;
+          }
+
+          final existing = relations[customerId];
+          relations[customerId] = existing == null
+              ? row
+              : {
+                  ...row,
+                  ...existing,
+                };
+        }
+      } on PostgrestException {
+        continue;
+      } catch (_) {
+        continue;
+      }
+    }
+
+    return relations;
+  }
+
   static String? _stringValue(dynamic value) {
     final text = value?.toString().trim();
     if (text == null || text.isEmpty || text == 'null') {
@@ -960,6 +1124,106 @@ class OrdersService {
       }
     }
 
+    return null;
+  }
+
+  static List<String> _deliveryDetailsFromDynamic(dynamic value) {
+    if (value is Map) {
+      return _deliveryDetailsFromMap(Map<String, dynamic>.from(value));
+    }
+    if (value is String) {
+      final normalized = value.trim();
+      if (normalized.isEmpty || normalized.toLowerCase() == 'null') {
+        return const [];
+      }
+      try {
+        final decoded = jsonDecode(normalized);
+        if (decoded is Map) {
+          return _deliveryDetailsFromMap(Map<String, dynamic>.from(decoded));
+        }
+      } catch (_) {
+        // Keep raw text fallback when the value is not JSON.
+      }
+      return [normalized];
+    }
+    return const [];
+  }
+
+  static List<String> _deliveryDetailsFromMap(Map<String, dynamic> source) {
+    final details = <String>[];
+    final direct = _firstStringValue(source, const [
+      'delivery_details',
+      'delivery_note',
+      'delivery_notes',
+      'note',
+      'notes',
+      'additional_notes',
+      'special_instructions',
+      'instructions',
+    ]);
+    if (direct != null) {
+      details.add(direct);
+    }
+
+    final house = _firstStringValue(source, const [
+      'house_apartment_no',
+      'building_number',
+      'house_number',
+      'building',
+    ]);
+    if (house != null) {
+      details.add('رقم المبنى/الشقة: $house');
+    }
+
+    final floor = _firstStringValue(source, const ['floor', 'level']);
+    if (floor != null) {
+      details.add('الدور: $floor');
+    }
+
+    final apartment = _firstStringValue(source, const [
+      'apartment',
+      'flat',
+      'unit',
+      'apartment_no',
+      'unit_number',
+    ]);
+    if (apartment != null) {
+      details.add('الشقة: $apartment');
+    }
+
+    final area = _firstStringValue(source, const ['area', 'district']);
+    if (area != null) {
+      details.add('المنطقة: $area');
+    }
+
+    final landmark = _firstStringValue(source, const ['landmark']);
+    if (landmark != null) {
+      details.add('علامة مميزة: $landmark');
+    }
+
+    final seen = <String>{};
+    final unique = <String>[];
+    for (final detail in details) {
+      if (seen.add(detail)) {
+        unique.add(detail);
+      }
+    }
+    return unique;
+  }
+
+  static String? _firstStringValue(
+    Map<String, dynamic>? source,
+    List<String> keys,
+  ) {
+    if (source == null) {
+      return null;
+    }
+    for (final key in keys) {
+      final value = _stringValue(source[key]);
+      if (value != null) {
+        return value;
+      }
+    }
     return null;
   }
 

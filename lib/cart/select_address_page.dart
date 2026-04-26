@@ -10,6 +10,8 @@ import '../core/config/env.dart';
 import '../core/location/location_service.dart';
 import '../core/services/error_logger.dart';
 import '../core/theme/app_theme.dart';
+import '../core/ui/app_snackbar.dart';
+import '../core/ui/input_focus_guard.dart';
 
 class SelectAddressPage extends StatefulWidget {
   const SelectAddressPage({
@@ -337,7 +339,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
     await _selectPoint(point);
   }
 
-  void _confirm() {
+  Future<void> _confirm() async {
     if (_selectedPoint == null || loadingAddress) {
       return;
     }
@@ -350,6 +352,10 @@ class _SelectAddressPageState extends State<SelectAddressPage>
 
     final houseNumber = _houseNumberController.text.trim();
 
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!mounted) {
+      return;
+    }
     Navigator.pop(context, {
       'address': address,
       'lat': _selectedPoint!.latitude,
@@ -386,8 +392,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
   }
 
   void _showSnack(String message) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    AppSnackBar.show(context, message: message);
   }
 
   @override
@@ -520,6 +525,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
                         TextField(
                           controller: _addressController,
                           focusNode: _addressFocusNode,
+                          onTapOutside: (_) => InputFocusGuard.dismiss(),
                           textAlign: TextAlign.right,
                           minLines: 2,
                           maxLines: 3,
@@ -534,6 +540,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
                         TextField(
                           controller: _houseNumberController,
                           focusNode: _houseNumberFocusNode,
+                          onTapOutside: (_) => InputFocusGuard.dismiss(),
                           textAlign: TextAlign.right,
                           decoration: const InputDecoration(
                             labelText: 'رقم البيت',

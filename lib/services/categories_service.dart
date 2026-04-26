@@ -33,7 +33,7 @@ class CategoriesService {
           await SessionManager.instance.runWithValidSession<List<dynamic>>(
         () => _client
             .from('categories')
-            .select('id, name, image_url')
+            .select('id, name, image_url, created_at')
             .eq('manager_id', managerId)
             .order('created_at'),
       );
@@ -45,11 +45,12 @@ class CategoriesService {
           .whereType<Map>()
           .map((row) => Map<String, dynamic>.from(row))
           .toList(growable: false);
+      final sortedCategories = _sortCategories(categories);
       _categoriesCache[cacheKey] = _CategoriesCacheEntry(
-        value: categories,
+        value: sortedCategories,
         cachedAt: DateTime.now(),
       );
-      return categories;
+      return sortedCategories;
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'categories_service.getByManager',
@@ -58,6 +59,42 @@ class CategoriesService {
       );
       throw Exception(ErrorLogger.userMessage);
     }
+  }
+
+  // Deterministic order for UI:
+  // 1) created_at ascending (older first to preserve manager insertion order)
+  // 2) localized name
+  // 3) id fallback for stable ties
+  static List<Map<String, dynamic>> _sortCategories(
+    List<Map<String, dynamic>> source,
+  ) {
+    final next = List<Map<String, dynamic>>.from(source);
+    next.sort((a, b) {
+      final createdA = DateTime.tryParse((a['created_at'] ?? '').toString());
+      final createdB = DateTime.tryParse((b['created_at'] ?? '').toString());
+      if (createdA != null && createdB != null) {
+        final byCreated = createdA.compareTo(createdB);
+        if (byCreated != 0) {
+          return byCreated;
+        }
+      } else if (createdA != null) {
+        return -1;
+      } else if (createdB != null) {
+        return 1;
+      }
+
+      final nameA = (a['name'] ?? '').toString().trim().toLowerCase();
+      final nameB = (b['name'] ?? '').toString().trim().toLowerCase();
+      final byName = nameA.compareTo(nameB);
+      if (byName != 0) {
+        return byName;
+      }
+
+      final idA = (a['id'] ?? '').toString();
+      final idB = (b['id'] ?? '').toString();
+      return idA.compareTo(idB);
+    });
+    return next;
   }
 }
 

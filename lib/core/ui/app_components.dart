@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'input_focus_guard.dart';
 import '../theme/app_theme.dart';
 
 enum AppTextRole { hero, title, body, caption, label }
@@ -422,6 +423,7 @@ class _AppInputState extends State<AppInput> {
                   enabled: widget.enabled,
                   readOnly: widget.readOnly,
                   obscureText: _obscured,
+                  onTapOutside: (_) => InputFocusGuard.dismiss(),
                   scrollPadding: EdgeInsets.only(
                     top: 20,
                     bottom: mobileWebInputFix ? 140 : 90,

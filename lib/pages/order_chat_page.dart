@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/services/error_logger.dart';
+import '../core/ui/app_snackbar.dart';
+import '../core/ui/input_focus_guard.dart';
 import '../services/session_manager.dart';
 
 class OrderChatPage extends StatefulWidget {
@@ -161,8 +163,7 @@ class _OrderChatPageState extends State<OrderChatPage> {
   }
 
   void _toast(String message) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    AppSnackBar.show(context, message: message);
   }
 
   //================================
@@ -206,7 +207,10 @@ class _OrderChatPageState extends State<OrderChatPage> {
               child: Row(
                 children: [
                   Expanded(
-                    child: TextField(controller: _controller),
+                    child: TextField(
+                      controller: _controller,
+                      onTapOutside: (_) => InputFocusGuard.dismiss(),
+                    ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.send),

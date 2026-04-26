@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/theme/app_theme.dart';
+import '../core/ui/input_focus_guard.dart';
 import '../pages/auth/login_page.dart';
 
 class SessionExpiredException implements Exception {
@@ -131,14 +132,21 @@ class SessionManager {
         return;
       }
 
-      navigator
-          .pushAndRemoveUntil(
-            AppTheme.platformPageRoute<void>(
-              builder: (_) => const LoginPage(),
-            ),
-            (_) => false,
-          )
-          .whenComplete(() => _redirectInFlight = false);
+      unawaited(
+        InputFocusGuard.prepareForUiTransition().then((_) {
+          if (!_redirectInFlight) {
+            return;
+          }
+          navigator
+              .pushAndRemoveUntil(
+                AppTheme.platformPageRoute<void>(
+                  builder: (_) => const LoginPage(),
+                ),
+                (_) => false,
+              )
+              .whenComplete(() => _redirectInFlight = false);
+        }),
+      );
     }
 
     pushLogin();

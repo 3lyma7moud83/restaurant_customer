@@ -1,11 +1,11 @@
 {
-    "name": "restaurant_customer",
-    "short_name": "restaurant_customer",
+    "name": "delivery-mat3mk",
+    "short_name": "delivery-mat3mk",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#FFF6EB",
+    "theme_color": "#FF8A00",
+    "description": "delivery-mat3mk food delivery platform.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
@@ -30,6 +30,11 @@
             "sizes": "512x512",
             "type": "image/png",
             "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-splash-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
         }
     ]
 }

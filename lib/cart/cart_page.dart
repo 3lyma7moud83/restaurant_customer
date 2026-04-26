@@ -9,9 +9,13 @@ import '../core/services/error_logger.dart';
 import '../core/orders/order_status_utils.dart';
 import '../core/orders/order_ui.dart';
 import '../core/theme/app_theme.dart';
+import '../core/ui/app_snackbar.dart';
+import '../core/ui/input_focus_guard.dart';
 import '../core/ui/responsive.dart';
 import '../pages/order_details_page.dart';
 import '../pages/order_tracking_page.dart';
+import '../services/discount_codes_service.dart';
+import '../services/customer_address_service.dart';
 import '../services/orders_service.dart';
 import '../services/profile_service.dart';
 import '../services/session_manager.dart';
@@ -43,15 +47,21 @@ class _CartPageState extends State<CartPage> {
   final phoneCtrl = TextEditingController();
   final addressCtrl = TextEditingController();
   final houseNumberCtrl = TextEditingController();
+  final discountCodeCtrl = TextEditingController();
 
   bool _contentVisible = kIsWeb;
 
   bool loadingProfile = true;
   bool creatingOrder = false;
+  bool _applyingDiscount = false;
   bool _didSyncAddress = false;
   bool _didSyncHouseNumber = false;
   String? _loadedActiveOrderId;
   Map<String, dynamic>? _activeOrder;
+  AppliedDiscountCode? _appliedDiscountCode;
+  CustomerAddress? _primaryAddress;
+  String? _discountFeedback;
+  bool _discountFeedbackIsError = false;
 
   @override
   void initState() {
@@ -82,6 +92,8 @@ class _CartPageState extends State<CartPage> {
       _loadedActiveOrderId = activeOrderId;
       unawaited(_loadActiveOrder(cart));
     }
+
+    _syncAppliedDiscountWithCart(cart);
   }
 
   @override
@@ -90,18 +102,208 @@ class _CartPageState extends State<CartPage> {
     phoneCtrl.dispose();
     addressCtrl.dispose();
     houseNumberCtrl.dispose();
+    discountCodeCtrl.dispose();
     super.dispose();
+  }
+
+  void _syncAppliedDiscountWithCart(CartController cart) {
+    final applied = _appliedDiscountCode;
+    if (applied == null) {
+      return;
+    }
+
+    final subtotal = cart.totalPrice;
+    final isSameRestaurant = applied.restaurantId == widget.restaurantId;
+    final stillValid =
+        subtotal > 0 && isSameRestaurant && applied.meetsMinimum(subtotal);
+    if (stillValid) {
+      return;
+    }
+
+    final minOrderText = localizedCurrency(context, applied.minOrderPrice);
+    setState(() {
+      _appliedDiscountCode = null;
+      _discountFeedback = context.tr(
+        'cart.discount_removed_min_order',
+        args: {'minimum': minOrderText},
+      );
+      _discountFeedbackIsError = true;
+    });
+  }
+
+  void _clearAppliedDiscount({bool clearFeedback = false}) {
+    final hadDiscount = _appliedDiscountCode != null;
+    final hasFeedback = _discountFeedback != null;
+    if (!hadDiscount && (!clearFeedback || !hasFeedback)) {
+      return;
+    }
+
+    setState(() {
+      _appliedDiscountCode = null;
+      if (clearFeedback) {
+        _discountFeedback = null;
+        _discountFeedbackIsError = false;
+      }
+    });
+  }
+
+  String _discountFailureMessage(DiscountCodeValidationException error) {
+    switch (error.failure) {
+      case DiscountCodeFailure.emptyCode:
+        return context.tr('cart.discount_empty_code');
+      case DiscountCodeFailure.codeNotFound:
+      case DiscountCodeFailure.inactive:
+        return context.tr('cart.discount_invalid_or_expired');
+      case DiscountCodeFailure.belowMinimumOrder:
+        final minValue = localizedCurrency(
+          context,
+          error.minimumOrderPrice ?? 0,
+        );
+        return context.tr(
+          'cart.discount_min_order_not_met',
+          args: {'minimum': minValue},
+        );
+      case DiscountCodeFailure.unsupportedType:
+      case DiscountCodeFailure.invalidDiscountValue:
+        return context.tr('cart.discount_invalid_amount');
+    }
+  }
+
+  Future<void> _applyDiscountCode(CartController cart) async {
+    if (_applyingDiscount) {
+      return;
+    }
+    if (cart.isLocked) {
+      setState(() {
+        _discountFeedback = context.tr('cart.discount_locked');
+        _discountFeedbackIsError = true;
+      });
+      return;
+    }
+
+    final currentApplied = _appliedDiscountCode;
+    final enteredCode = discountCodeCtrl.text.trim();
+    if (enteredCode.isEmpty) {
+      setState(() {
+        _discountFeedback = context.tr('cart.discount_empty_code');
+        _discountFeedbackIsError = true;
+      });
+      return;
+    }
+
+    final normalizedInput = enteredCode.toLowerCase();
+    if (currentApplied != null &&
+        currentApplied.normalizedCode == normalizedInput) {
+      setState(() {
+        _discountFeedback = context.tr('cart.discount_already_applied');
+        _discountFeedbackIsError = true;
+      });
+      return;
+    }
+    if (currentApplied != null) {
+      setState(() {
+        _discountFeedback = context.tr('cart.discount_single_code_only');
+        _discountFeedbackIsError = true;
+      });
+      return;
+    }
+
+    setState(() {
+      _applyingDiscount = true;
+      _discountFeedback = null;
+      _discountFeedbackIsError = false;
+    });
+
+    try {
+      final validated = await DiscountCodesService.validateCode(
+        restaurantId: widget.restaurantId,
+        code: enteredCode,
+        orderSubtotal: cart.totalPrice,
+      );
+      if (!mounted) {
+        return;
+      }
+
+      _setControllerValue(discountCodeCtrl, validated.code);
+      setState(() {
+        _appliedDiscountCode = validated;
+        _discountFeedback = context.tr(
+          'cart.discount_apply_success',
+          args: {'code': validated.code},
+        );
+        _discountFeedbackIsError = false;
+      });
+    } on DiscountCodeValidationException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _discountFeedback = _discountFailureMessage(error);
+        _discountFeedbackIsError = true;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _discountFeedback = context.tr('cart.discount_error_generic');
+        _discountFeedbackIsError = true;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _applyingDiscount = false;
+        });
+      }
+    }
   }
 
   Future<void> _loadProfile() async {
     try {
-      final profile = await _profileService.getOrCreateProfile();
+      final profileFuture = _profileService.getOrCreateProfile();
+      final addressFuture = CustomerAddressService.getPrimaryAddress();
+      final profile = await profileFuture;
+      final savedPrimaryAddress = await addressFuture;
       if (!mounted) {
         return;
       }
 
       _setControllerValue(nameCtrl, (profile['name'] ?? '').toString());
       _setControllerValue(phoneCtrl, (profile['phone'] ?? '').toString());
+      _primaryAddress = savedPrimaryAddress;
+
+      if (savedPrimaryAddress != null) {
+        final currentAddress = addressCtrl.text.trim();
+        if (currentAddress.isEmpty) {
+          _setControllerValue(addressCtrl, savedPrimaryAddress.primaryAddress);
+        }
+        if (houseNumberCtrl.text.trim().isEmpty) {
+          _setControllerValue(
+            houseNumberCtrl,
+            savedPrimaryAddress.houseApartmentNo,
+          );
+        }
+
+        final cart = CartProvider.maybeOf(context);
+        if (cart != null &&
+            !cart.isLocked &&
+            (cart.deliveryAddress == null ||
+                cart.deliveryAddress!.trim().isEmpty)) {
+          final hasGeoPoint = savedPrimaryAddress.lat != null &&
+              savedPrimaryAddress.lng != null;
+          if (hasGeoPoint) {
+            cart.setDeliveryLocation(
+              address: savedPrimaryAddress.primaryAddress,
+              lat: savedPrimaryAddress.lat!,
+              lng: savedPrimaryAddress.lng!,
+              houseNumber: savedPrimaryAddress.houseApartmentNo,
+            );
+          } else {
+            cart.setDeliveryAddress(savedPrimaryAddress.primaryAddress);
+            cart.setHouseNumber(savedPrimaryAddress.houseApartmentNo);
+          }
+        }
+      }
     } catch (_) {
       if (mounted) {
         _showSnack(context.tr('cart.profile_load_error'));
@@ -179,6 +381,11 @@ class _CartPageState extends State<CartPage> {
 
   Future<void> _openLocationPicker(CartController cart) async {
     if (cart.isLocked) {
+      return;
+    }
+
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!mounted) {
       return;
     }
 
@@ -280,7 +487,7 @@ class _CartPageState extends State<CartPage> {
     }
 
     if (cart.isLocked) {
-      _openCurrentOrder();
+      await _openCurrentOrder();
       return;
     }
 
@@ -306,6 +513,11 @@ class _CartPageState extends State<CartPage> {
       return;
     }
 
+    final hasPrimaryAddress = await _ensurePrimaryAddressForCheckout(cart);
+    if (!hasPrimaryAddress) {
+      return;
+    }
+
     final session = await SessionManager.instance.ensureValidSession(
       requireSession: true,
     );
@@ -318,6 +530,7 @@ class _CartPageState extends State<CartPage> {
       address: cart.deliveryAddress!,
       houseNumber: houseNumberCtrl.text,
     );
+    final pricing = _pricingFor(cart);
 
     setState(() => creatingOrder = true);
 
@@ -331,7 +544,7 @@ class _CartPageState extends State<CartPage> {
           address: fullAddress,
           customerLat: cart.deliveryLat!,
           customerLng: cart.deliveryLng!,
-          totalPrice: cart.totalPrice + cart.deliveryCost,
+          totalPrice: pricing.finalTotal,
           deliveryCost: cart.deliveryCost,
           paymentMethod: cart.selectedPaymentMethod?.value,
           items: cart.items
@@ -348,6 +561,11 @@ class _CartPageState extends State<CartPage> {
 
       await cart.markOrderPlaced(orderId);
 
+      if (!mounted) {
+        return;
+      }
+
+      await InputFocusGuard.prepareForUiTransition(context: context);
       if (!mounted) {
         return;
       }
@@ -374,6 +592,11 @@ class _CartPageState extends State<CartPage> {
     final currentPhone = phoneCtrl.text.trim();
     if (currentName.isNotEmpty && currentPhone.length >= 8) {
       return true;
+    }
+
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!mounted) {
+      return false;
     }
 
     final result = await showModalBottomSheet<_CustomerInfoResult>(
@@ -412,7 +635,76 @@ class _CartPageState extends State<CartPage> {
     }
   }
 
-  void _openCurrentOrder() {
+  Future<bool> _ensurePrimaryAddressForCheckout(CartController cart) async {
+    final cachedAddress = _primaryAddress;
+    if (cachedAddress != null && cachedAddress.isComplete) {
+      return true;
+    }
+
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!mounted) {
+      return false;
+    }
+
+    final result = await showModalBottomSheet<_PrimaryAddressResult>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (_) => _PrimaryAddressSheet(
+        initialAddress: addressCtrl.text.trim(),
+        initialHouseApartmentNo: houseNumberCtrl.text.trim(),
+        initialLat: cart.deliveryLat ?? cachedAddress?.lat,
+        initialLng: cart.deliveryLng ?? cachedAddress?.lng,
+        initialCustomerName: nameCtrl.text.trim(),
+        initialCustomerPhone: phoneCtrl.text.trim(),
+      ),
+    );
+
+    if (result == null) {
+      return false;
+    }
+
+    try {
+      final saved = await CustomerAddressService.savePrimaryAddress(
+        primaryAddress: result.primaryAddress,
+        houseApartmentNo: result.houseApartmentNo,
+        area: '',
+        additionalNotes: '',
+        lat: result.lat,
+        lng: result.lng,
+      );
+
+      if (!mounted) {
+        return false;
+      }
+
+      setState(() => _primaryAddress = saved);
+
+      _setControllerValue(addressCtrl, saved.primaryAddress);
+      _setControllerValue(houseNumberCtrl, saved.houseApartmentNo);
+
+      if (!cart.isLocked) {
+        final lat = saved.lat ?? result.lat;
+        final lng = saved.lng ?? result.lng;
+        cart.setDeliveryLocation(
+          address: saved.primaryAddress,
+          lat: lat,
+          lng: lng,
+          houseNumber: saved.houseApartmentNo,
+        );
+      }
+
+      return true;
+    } catch (_) {
+      if (mounted) {
+        _showSnack(context.tr('cart.profile_save_error'));
+      }
+      return false;
+    }
+  }
+
+  Future<void> _openCurrentOrder() async {
     final order = _activeOrder;
     final orderId =
         order == null ? _loadedActiveOrderId : OrdersService.idOf(order);
@@ -429,12 +721,46 @@ class _CartPageState extends State<CartPage> {
           : OrderDetailsPage(orderId: orderId),
     );
 
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!mounted) {
+      return;
+    }
     Navigator.push(context, route);
   }
 
+  _CartPricingBreakdown _pricingFor(CartController cart) {
+    final subtotal = cart.totalPrice;
+    final delivery = cart.deliveryCost;
+    final beforeDiscount = subtotal + delivery;
+    final applied = _appliedDiscountCode;
+
+    if (applied == null ||
+        applied.restaurantId != widget.restaurantId ||
+        !applied.meetsMinimum(subtotal)) {
+      return _CartPricingBreakdown(
+        subtotal: subtotal,
+        delivery: delivery,
+        beforeDiscount: beforeDiscount,
+        discount: 0,
+        finalTotal: beforeDiscount,
+        appliedDiscount: null,
+      );
+    }
+
+    final discount = applied.valueForSubtotal(subtotal);
+    final finalTotal = (beforeDiscount - discount).clamp(0, double.infinity);
+    return _CartPricingBreakdown(
+      subtotal: subtotal,
+      delivery: delivery,
+      beforeDiscount: beforeDiscount,
+      discount: discount,
+      finalTotal: finalTotal.toDouble(),
+      appliedDiscount: applied,
+    );
+  }
+
   void _showSnack(String message) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    AppSnackBar.show(context, message: message);
   }
 
   void _setControllerValue(
@@ -455,8 +781,9 @@ class _CartPageState extends State<CartPage> {
   @override
   Widget build(BuildContext context) {
     final cart = CartProvider.of(context);
-    final subtotal = cart.totalPrice;
-    final total = subtotal + cart.deliveryCost;
+    final pricing = _pricingFor(cart);
+    final subtotal = pricing.subtotal;
+    final total = pricing.finalTotal;
     final hasPaymentMethod = cart.selectedPaymentMethod != null;
     final activeStatus = _activeOrder == null
         ? null
@@ -484,7 +811,7 @@ class _CartPageState extends State<CartPage> {
                           if (cart.isLocked) ...[
                             _ActiveOrderCard(
                               order: _activeOrder,
-                              onOpenOrder: _openCurrentOrder,
+                              onOpenOrder: () => unawaited(_openCurrentOrder()),
                               fallbackOrderId: cart.activeOrderId,
                             ),
                             const SizedBox(height: 16),
@@ -544,6 +871,14 @@ class _CartPageState extends State<CartPage> {
                                 TextField(
                                   controller: addressCtrl,
                                   enabled: !cart.isLocked,
+                                  readOnly: true,
+                                  onTap: cart.isLocked
+                                      ? null
+                                      : () => unawaited(
+                                            _openLocationPicker(cart),
+                                          ),
+                                  onTapOutside: (_) =>
+                                      InputFocusGuard.dismiss(),
                                   textAlign: TextAlign.right,
                                   minLines: 2,
                                   maxLines: 3,
@@ -568,6 +903,8 @@ class _CartPageState extends State<CartPage> {
                                 TextField(
                                   controller: houseNumberCtrl,
                                   enabled: !cart.isLocked,
+                                  onTapOutside: (_) =>
+                                      InputFocusGuard.dismiss(),
                                   textAlign: TextAlign.right,
                                   decoration: InputDecoration(
                                     labelText: context.tr('cart.house_number'),
@@ -611,6 +948,31 @@ class _CartPageState extends State<CartPage> {
                           ),
                           const SizedBox(height: 16),
                           _SectionCard(
+                            title: context.tr('cart.discount_section'),
+                            child: _DiscountCodeSection(
+                              codeController: discountCodeCtrl,
+                              applying: _applyingDiscount,
+                              locked: cart.isLocked,
+                              hasAppliedDiscount:
+                                  pricing.appliedDiscount != null,
+                              feedback: _discountFeedback,
+                              feedbackIsError: _discountFeedbackIsError,
+                              discountTypeLabel: pricing.appliedDiscount == null
+                                  ? null
+                                  : context.tr(
+                                      pricing.appliedDiscount!.type ==
+                                              DiscountType.percentage
+                                          ? 'cart.discount_type_percentage'
+                                          : 'cart.discount_type_fixed',
+                                    ),
+                              onApply: () => _applyDiscountCode(cart),
+                              onRemove: () => _clearAppliedDiscount(
+                                clearFeedback: true,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          _SectionCard(
                             title: context.tr('cart.price_summary'),
                             child: Column(
                               children: [
@@ -623,15 +985,34 @@ class _CartPageState extends State<CartPage> {
                                   label: context.tr('cart.delivery'),
                                   value: localizedCurrency(
                                     context,
-                                    cart.deliveryCost,
+                                    pricing.delivery,
                                   ),
                                 ),
+                                if (pricing.appliedDiscount != null) ...[
+                                  const SizedBox(height: 10),
+                                  _PriceRow(
+                                    label: context.tr('cart.discount_before'),
+                                    value: localizedCurrency(
+                                      context,
+                                      pricing.beforeDiscount,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  _PriceRow(
+                                    label: context.tr('cart.discount_value'),
+                                    value:
+                                        '- ${localizedCurrency(context, pricing.discount)}',
+                                    valueColor: const Color(0xFF027A48),
+                                  ),
+                                ],
                                 const Padding(
                                   padding: EdgeInsets.symmetric(vertical: 14),
                                   child: Divider(height: 1),
                                 ),
                                 _PriceRow(
-                                  label: context.tr('cart.total'),
+                                  label: pricing.appliedDiscount == null
+                                      ? context.tr('cart.total')
+                                      : context.tr('cart.discount_final'),
                                   value: localizedCurrency(context, total),
                                   emphasized: true,
                                 ),
@@ -952,16 +1333,149 @@ class _PaymentMethodTile extends StatelessWidget {
   }
 }
 
+class _DiscountCodeSection extends StatelessWidget {
+  const _DiscountCodeSection({
+    required this.codeController,
+    required this.applying,
+    required this.locked,
+    required this.hasAppliedDiscount,
+    required this.feedback,
+    required this.feedbackIsError,
+    required this.discountTypeLabel,
+    required this.onApply,
+    required this.onRemove,
+  });
+
+  final TextEditingController codeController;
+  final bool applying;
+  final bool locked;
+  final bool hasAppliedDiscount;
+  final String? feedback;
+  final bool feedbackIsError;
+  final String? discountTypeLabel;
+  final VoidCallback onApply;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final disabled = locked || applying;
+    final canApply = !disabled && !hasAppliedDiscount;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 410;
+        final applyButton = SizedBox(
+          width: compact ? double.infinity : 118,
+          child: ElevatedButton(
+            onPressed: canApply ? onApply : null,
+            style: ElevatedButton.styleFrom(
+              minimumSize: Size(compact ? double.infinity : 118, 46),
+            ),
+            child: applying
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : Text(context.tr('cart.discount_apply')),
+          ),
+        );
+
+        final input = TextField(
+          controller: codeController,
+          enabled: !locked && !hasAppliedDiscount,
+          onTapOutside: (_) => InputFocusGuard.dismiss(),
+          textAlign: TextAlign.left,
+          textDirection: TextDirection.ltr,
+          decoration: InputDecoration(
+            labelText: context.tr('cart.discount_code_label'),
+            hintText: context.tr('cart.discount_code_hint'),
+          ),
+        );
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            if (compact) ...[
+              input,
+              const SizedBox(height: 10),
+              applyButton,
+            ] else
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  applyButton,
+                  const SizedBox(width: 12),
+                  Expanded(child: input),
+                ],
+              ),
+            if (hasAppliedDiscount) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: locked ? null : onRemove,
+                    icon: const Icon(Icons.close_rounded, size: 16),
+                    label: Text(context.tr('cart.discount_remove')),
+                  ),
+                  const SizedBox(width: 10),
+                  if (discountTypeLabel != null)
+                    Expanded(
+                      child: Text(
+                        context.tr(
+                          'cart.discount_type',
+                          args: {'type': discountTypeLabel!},
+                        ),
+                        textAlign: TextAlign.right,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF027A48),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+            if (feedback != null && feedback!.trim().isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Text(
+                  feedback!,
+                  textAlign: TextAlign.start,
+                  style: TextStyle(
+                    color: feedbackIsError
+                        ? const Color(0xFFB42318)
+                        : const Color(0xFF027A48),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _PriceRow extends StatelessWidget {
   const _PriceRow({
     required this.label,
     required this.value,
     this.emphasized = false,
+    this.valueColor,
   });
 
   final String label;
   final String value;
   final bool emphasized;
+  final Color? valueColor;
 
   @override
   Widget build(BuildContext context) {
@@ -970,7 +1484,8 @@ class _PriceRow extends StatelessWidget {
         Text(
           value,
           style: TextStyle(
-            color: emphasized ? AppTheme.primary : AppTheme.text,
+            color:
+                valueColor ?? (emphasized ? AppTheme.primary : AppTheme.text),
             fontWeight: FontWeight.w800,
             fontSize: emphasized ? 16 : 14,
           ),
@@ -986,6 +1501,24 @@ class _PriceRow extends StatelessWidget {
       ],
     );
   }
+}
+
+class _CartPricingBreakdown {
+  const _CartPricingBreakdown({
+    required this.subtotal,
+    required this.delivery,
+    required this.beforeDiscount,
+    required this.discount,
+    required this.finalTotal,
+    required this.appliedDiscount,
+  });
+
+  final double subtotal;
+  final double delivery;
+  final double beforeDiscount;
+  final double discount;
+  final double finalTotal;
+  final AppliedDiscountCode? appliedDiscount;
 }
 
 class _ActiveOrderCard extends StatelessWidget {
@@ -1151,7 +1684,7 @@ class _CustomerInfoSheetState extends State<_CustomerInfoSheet> {
     super.dispose();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     final name = _nameCtrl.text.trim();
     final phone = _phoneCtrl.text.trim();
 
@@ -1165,6 +1698,10 @@ class _CustomerInfoSheetState extends State<_CustomerInfoSheet> {
       return;
     }
 
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!mounted) {
+      return;
+    }
     Navigator.pop(
       context,
       _CustomerInfoResult(name: name, phone: phone),
@@ -1172,8 +1709,7 @@ class _CustomerInfoSheetState extends State<_CustomerInfoSheet> {
   }
 
   void _showSnack(String message) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    AppSnackBar.show(context, message: message);
   }
 
   @override
@@ -1211,6 +1747,7 @@ class _CustomerInfoSheetState extends State<_CustomerInfoSheet> {
             const SizedBox(height: 18),
             TextField(
               controller: _nameCtrl,
+              onTapOutside: (_) => InputFocusGuard.dismiss(),
               textAlign: TextAlign.right,
               decoration: InputDecoration(
                 labelText: context.tr('cart.name'),
@@ -1219,6 +1756,7 @@ class _CustomerInfoSheetState extends State<_CustomerInfoSheet> {
             const SizedBox(height: 12),
             TextField(
               controller: _phoneCtrl,
+              onTapOutside: (_) => InputFocusGuard.dismiss(),
               textAlign: TextAlign.right,
               keyboardType: TextInputType.phone,
               decoration: InputDecoration(
@@ -1231,6 +1769,243 @@ class _CustomerInfoSheetState extends State<_CustomerInfoSheet> {
               child: ElevatedButton(
                 onPressed: _submit,
                 child: Text(context.tr('cart.save_and_continue')),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PrimaryAddressResult {
+  const _PrimaryAddressResult({
+    required this.primaryAddress,
+    required this.houseApartmentNo,
+    required this.lat,
+    required this.lng,
+  });
+
+  final String primaryAddress;
+  final String houseApartmentNo;
+  final double lat;
+  final double lng;
+}
+
+class _PrimaryAddressSheet extends StatefulWidget {
+  const _PrimaryAddressSheet({
+    required this.initialAddress,
+    required this.initialHouseApartmentNo,
+    this.initialLat,
+    this.initialLng,
+    this.initialCustomerName,
+    this.initialCustomerPhone,
+  });
+
+  final String initialAddress;
+  final String initialHouseApartmentNo;
+  final double? initialLat;
+  final double? initialLng;
+  final String? initialCustomerName;
+  final String? initialCustomerPhone;
+
+  @override
+  State<_PrimaryAddressSheet> createState() => _PrimaryAddressSheetState();
+}
+
+class _PrimaryAddressSheetState extends State<_PrimaryAddressSheet> {
+  late final TextEditingController _addressCtrl =
+      TextEditingController(text: widget.initialAddress);
+  late final TextEditingController _houseCtrl =
+      TextEditingController(text: widget.initialHouseApartmentNo);
+  double? _selectedLat;
+  double? _selectedLng;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedLat = widget.initialLat;
+    _selectedLng = widget.initialLng;
+  }
+
+  @override
+  void dispose() {
+    _addressCtrl.dispose();
+    _houseCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final address = _addressCtrl.text.trim();
+    final house = _houseCtrl.text.trim();
+
+    if (address.isEmpty) {
+      _showSnack('اكتب العنوان الأساسي.');
+      return;
+    }
+    if (house.isEmpty) {
+      _showSnack('اكتب رقم البيت / الشقة.');
+      return;
+    }
+    if (_selectedLat == null || _selectedLng == null) {
+      _showSnack('حدد موقع العنوان من الخريطة أولاً.');
+      return;
+    }
+
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!mounted) {
+      return;
+    }
+    Navigator.pop(
+      context,
+      _PrimaryAddressResult(
+        primaryAddress: address,
+        houseApartmentNo: house,
+        lat: _selectedLat!,
+        lng: _selectedLng!,
+      ),
+    );
+  }
+
+  Future<void> _openAddressPicker() async {
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!mounted) {
+      return;
+    }
+
+    final result = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => SelectAddressPage(
+        initialLat: _selectedLat,
+        initialLng: _selectedLng,
+        initialAddress: _addressCtrl.text.trim(),
+        initialHouseNumber: _houseCtrl.text.trim(),
+        initialCustomerName: widget.initialCustomerName,
+        initialCustomerPhone: widget.initialCustomerPhone,
+      ),
+    );
+
+    if (result == null || !mounted) {
+      return;
+    }
+
+    final lat = (result['lat'] as num?)?.toDouble();
+    final lng = (result['lng'] as num?)?.toDouble();
+    final fullAddress =
+        (result['address'] ?? result['fullAddress'] ?? '').toString().trim();
+    final houseNumber = (result['house_number'] ?? result['houseNumber'] ?? '')
+        .toString()
+        .trim();
+
+    if (lat == null || lng == null || fullAddress.isEmpty) {
+      _showSnack('تعذر اعتماد الموقع المحدد، حاول مرة أخرى.');
+      return;
+    }
+
+    _addressCtrl.value = _addressCtrl.value.copyWith(
+      text: fullAddress,
+      selection: TextSelection.collapsed(offset: fullAddress.length),
+      composing: TextRange.empty,
+    );
+    _houseCtrl.value = _houseCtrl.value.copyWith(
+      text: houseNumber,
+      selection: TextSelection.collapsed(offset: houseNumber.length),
+      composing: TextRange.empty,
+    );
+    setState(() {
+      _selectedLat = lat;
+      _selectedLng = lng;
+    });
+  }
+
+  void _showSnack(String message) {
+    AppSnackBar.show(context, message: message);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final viewInsets = MediaQuery.of(context).viewInsets;
+    return AnimatedPadding(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      padding: EdgeInsets.only(bottom: viewInsets.bottom),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            const Text(
+              'أكمل عنوانك الأساسي',
+              style: TextStyle(
+                color: AppTheme.text,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'لا يمكن تنفيذ أول طلب قبل حفظ العنوان الأساسي. بعد الحفظ يمكنك تعديله لاحقًا من الملف الشخصي.',
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                color: Color(0xFF667085),
+                height: 1.45,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _addressCtrl,
+              readOnly: true,
+              onTap: _openAddressPicker,
+              onTapOutside: (_) => InputFocusGuard.dismiss(),
+              textAlign: TextAlign.right,
+              minLines: 2,
+              maxLines: 3,
+              decoration: InputDecoration(
+                labelText: 'العنوان الأساسي',
+                hintText: 'اختر العنوان من الخريطة',
+                prefixIcon: Icon(Icons.location_on_outlined),
+                suffixIcon: IconButton(
+                  onPressed: _openAddressPicker,
+                  icon: const Icon(Icons.map_outlined),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _houseCtrl,
+              onTapOutside: (_) => InputFocusGuard.dismiss(),
+              textAlign: TextAlign.right,
+              decoration: const InputDecoration(
+                labelText: 'رقم البيت / الشقة',
+                hintText: 'مثال: عمارة 12 - شقة 7',
+                prefixIcon: Icon(Icons.home_outlined),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Text(
+                _selectedLat == null || _selectedLng == null
+                    ? 'لم يتم تحديد موقع الخريطة بعد.'
+                    : 'الموقع مضبوط (${_selectedLat!.toStringAsFixed(5)}, ${_selectedLng!.toStringAsFixed(5)})',
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                  color: Color(0xFF667085),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _submit,
+                icon: const Icon(Icons.save_outlined),
+                label: const Text('حفظ ومتابعة'),
               ),
             ),
           ],

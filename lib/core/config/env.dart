@@ -11,6 +11,19 @@ class AppEnv {
   };
   static const String _defaultEnvironment = 'dev';
   static const String _primaryEnvFile = 'assets/env/app.env';
+  static const List<String> _firebaseKeys = <String>[
+    'FIREBASE_API_KEY',
+    'FIREBASE_PROJECT_ID',
+    'FIREBASE_MESSAGING_SENDER_ID',
+    'FIREBASE_STORAGE_BUCKET',
+    'FIREBASE_ANDROID_APP_ID',
+    'FIREBASE_IOS_APP_ID',
+    'FIREBASE_IOS_BUNDLE_ID',
+    'FIREBASE_WEB_APP_ID',
+    'FIREBASE_AUTH_DOMAIN',
+    'FIREBASE_MEASUREMENT_ID',
+    'FIREBASE_WEB_VAPID_KEY',
+  ];
 
   static bool _loaded = false;
   static String _activeEnvironment = _defaultEnvironment;
@@ -129,6 +142,43 @@ class AppEnv {
         '"$_activeEnvironment".',
       );
     }
+
+    _validateFirebaseValues();
+  }
+
+  static void _validateFirebaseValues() {
+    final hasFirebaseConfig =
+        _firebaseKeys.any((key) => _readOptional(key) != null);
+    if (!hasFirebaseConfig) {
+      return;
+    }
+
+    final androidAppId = _readOptional('FIREBASE_ANDROID_APP_ID');
+    if (androidAppId != null && !androidAppId.contains(':android:')) {
+      throw StateError(
+        'Invalid FIREBASE_ANDROID_APP_ID in $_loadedFile. '
+        'Expected an Android App ID containing ":android:".',
+      );
+    }
+
+    final webAppId = _readOptional('FIREBASE_WEB_APP_ID');
+    if (webAppId != null && !webAppId.contains(':web:')) {
+      throw StateError(
+        'Invalid FIREBASE_WEB_APP_ID in $_loadedFile. '
+        'Expected a Web App ID containing ":web:".',
+      );
+    }
+
+    final webVapidKey = _readOptional('FIREBASE_WEB_VAPID_KEY');
+    if (webAppId != null &&
+        (webVapidKey == null ||
+            webVapidKey.length < 20 ||
+            _looksLikePlaceholder(webVapidKey))) {
+      throw StateError(
+        'Missing or invalid FIREBASE_WEB_VAPID_KEY in $_loadedFile '
+        'while FIREBASE_WEB_APP_ID is configured.',
+      );
+    }
   }
 
   static bool _looksLikePlaceholder(String value) {
@@ -148,7 +198,8 @@ class AppEnv {
   }
 
   static String _readRequired(String key) {
-    final value = dotenv.env[key]?.trim();
+    final rawValue = dotenv.env[key];
+    final value = rawValue == null ? null : _sanitize(rawValue);
     if (value == null || value.isEmpty) {
       throw StateError('Missing required environment variable "$key".');
     }
@@ -156,10 +207,23 @@ class AppEnv {
   }
 
   static String? _readOptional(String key) {
-    final value = dotenv.env[key]?.trim();
+    final rawValue = dotenv.env[key];
+    final value = rawValue == null ? null : _sanitize(rawValue);
     if (value == null || value.isEmpty) {
       return null;
     }
     return value;
+  }
+
+  static String _sanitize(String rawValue) {
+    final trimmed = rawValue.trim();
+    if (trimmed.length >= 2) {
+      final startsWithDouble = trimmed.startsWith('"') && trimmed.endsWith('"');
+      final startsWithSingle = trimmed.startsWith("'") && trimmed.endsWith("'");
+      if (startsWithDouble || startsWithSingle) {
+        return trimmed.substring(1, trimmed.length - 1).trim();
+      }
+    }
+    return trimmed;
   }
 }

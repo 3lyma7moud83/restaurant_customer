@@ -9,6 +9,8 @@ import '../core/location/location_helper.dart';
 import '../core/realtime/realtime_channel_controller.dart';
 import '../core/services/error_logger.dart';
 import '../core/theme/app_theme.dart';
+import '../core/ui/app_snackbar.dart';
+import '../core/ui/input_focus_guard.dart';
 import '../core/ui/responsive.dart';
 import '../services/restaurant_feed_utils.dart';
 import '../services/restaurants_service.dart';
@@ -87,21 +89,41 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
             schema: 'public',
             table: 'managers',
             callback: _handleRestaurantDelete,
+          )
+          .onPostgresChanges(
+            event: PostgresChangeEvent.insert,
+            schema: 'public',
+            table: 'restaurant_locations',
+            callback: _handleRestaurantLocationMutation,
+          )
+          .onPostgresChanges(
+            event: PostgresChangeEvent.update,
+            schema: 'public',
+            table: 'restaurant_locations',
+            callback: _handleRestaurantLocationMutation,
+          )
+          .onPostgresChanges(
+            event: PostgresChangeEvent.delete,
+            schema: 'public',
+            table: 'restaurant_locations',
+            callback: _handleRestaurantLocationMutation,
           );
     });
   }
 
-  void _handleRestaurantInsert(PostgresChangePayload payload) {
+  void _handleRestaurantInsert(PostgresChangePayload _) {
     RestaurantsService.invalidateListCaches();
-    _upsertRestaurantFromRealtimeRecord(
-      payload.newRecord,
-      insertAtTopIfMissing: true,
-    );
+    _scheduleRestaurantsRefresh();
   }
 
-  void _handleRestaurantUpdate(PostgresChangePayload payload) {
+  void _handleRestaurantUpdate(PostgresChangePayload _) {
     RestaurantsService.invalidateListCaches();
-    _upsertRestaurantFromRealtimeRecord(payload.newRecord);
+    _scheduleRestaurantsRefresh();
+  }
+
+  void _handleRestaurantLocationMutation(PostgresChangePayload _) {
+    RestaurantsService.invalidateListCaches();
+    _scheduleRestaurantsRefresh();
   }
 
   void _handleRestaurantDelete(PostgresChangePayload payload) {
@@ -114,36 +136,7 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
       return;
     }
     _removeRestaurantRealtime(restaurantId);
-  }
-
-  void _upsertRestaurantFromRealtimeRecord(
-    Map<dynamic, dynamic> record, {
-    bool insertAtTopIfMissing = false,
-  }) {
-    final normalized = RestaurantsService.normalizeRealtimeManagerRow(record);
-    if (normalized == null) {
-      return;
-    }
-
-    final restaurantId = RestaurantsService.restaurantIdOf(normalized);
-    if (restaurantId.isEmpty) {
-      return;
-    }
-
-    final withinRange = RestaurantsService.isWithinDeliveryRange(
-      restaurant: normalized,
-      customerLat: _userLat,
-      customerLng: _userLng,
-    );
-    if (!withinRange) {
-      _removeRestaurantRealtime(restaurantId);
-      return;
-    }
-
-    _upsertRestaurantRealtime(
-      normalized,
-      insertAtTopIfMissing: insertAtTopIfMissing,
-    );
+    _scheduleRestaurantsRefresh();
   }
 
   void _scheduleRestaurantsRefresh() {
@@ -254,50 +247,6 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
     );
   }
 
-  void _upsertRestaurantRealtime(
-    Map<String, dynamic> restaurant, {
-    bool insertAtTopIfMissing = false,
-  }) {
-    final currentRestaurants = _state.restaurants;
-    final restaurantId = RestaurantsService.restaurantIdOf(restaurant);
-    if (restaurantId.isEmpty) {
-      return;
-    }
-
-    final nextRestaurants = List<Map<String, dynamic>>.from(
-      currentRestaurants,
-    );
-    final index = nextRestaurants.indexWhere(
-      (item) => RestaurantsService.restaurantIdOf(item) == restaurantId,
-    );
-
-    if (index == -1) {
-      if (insertAtTopIfMissing) {
-        nextRestaurants.insert(0, restaurant);
-      } else {
-        nextRestaurants.add(restaurant);
-      }
-      _applyRestaurantsSnapshot(
-        nextRestaurants,
-        isLoading: false,
-        hasLoadError: false,
-      );
-      return;
-    }
-
-    final current = nextRestaurants[index];
-    if (identical(current, restaurant) || mapEquals(current, restaurant)) {
-      return;
-    }
-
-    nextRestaurants[index] = restaurant;
-    _applyRestaurantsSnapshot(
-      nextRestaurants,
-      isLoading: false,
-      hasLoadError: false,
-    );
-  }
-
   void _removeRestaurantRealtime(String restaurantId) {
     final currentRestaurants = _state.restaurants;
     final nextRestaurants = currentRestaurants
@@ -328,18 +277,29 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
     return _load(forceRefresh: true);
   }
 
-  void _openRestaurantMenu(
+  void _dismissActiveInput() {
+    InputFocusGuard.dismiss(context: context);
+  }
+
+  Future<void> _openRestaurantMenu(
     BuildContext context,
     Map<String, dynamic> restaurant,
-  ) {
+  ) async {
+    _dismissActiveInput();
     final managerId = RestaurantsService.managerIdOf(restaurant);
     final restaurantId = RestaurantsService.restaurantIdOf(restaurant);
     final restaurantName = RestaurantsService.restaurantNameOf(restaurant);
 
     if (managerId.isEmpty || restaurantId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.tr('home.restaurant_data_incomplete'))),
+      AppSnackBar.show(
+        context,
+        message: context.tr('home.restaurant_data_incomplete'),
       );
+      return;
+    }
+
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!context.mounted) {
       return;
     }
 
@@ -386,7 +346,7 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
       body: SafeArea(
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
-          onTap: () => FocusScope.of(context).unfocus(),
+          onTap: _dismissActiveInput,
           child: AppConstrainedContent(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -430,7 +390,9 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
                             restaurant: restaurant,
                           );
                         },
-                        onRestaurantTap: _openRestaurantMenu,
+                        onRestaurantTap: (context, restaurant) => unawaited(
+                          _openRestaurantMenu(context, restaurant),
+                        ),
                       );
                     },
                   ),
@@ -508,7 +470,7 @@ class _RestaurantsSearchField extends StatelessWidget {
         child: TextField(
           controller: controller,
           textInputAction: TextInputAction.search,
-          onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+          onTapOutside: (_) => InputFocusGuard.dismiss(),
           scrollPadding: EdgeInsets.only(
             top: 20,
             bottom: mobileWebInputFix ? 132 : 92,

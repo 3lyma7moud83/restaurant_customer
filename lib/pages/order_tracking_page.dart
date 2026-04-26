@@ -4,9 +4,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../cart/cart_provider.dart';
 import '../core/orders/order_status_utils.dart';
@@ -526,19 +525,70 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
     );
   }
 
+  Future<void> _callRestaurant(String phone) async {
+    final normalizedPhone = phone.trim();
+    if (normalizedPhone.isEmpty) {
+      return;
+    }
+
+    final uri = Uri.parse('tel:$normalizedPhone');
+    if (!await canLaunchUrl(uri)) {
+      return;
+    }
+    await launchUrl(uri);
+  }
+
+  void _openChatPage() {
+    Navigator.push(
+      context,
+      AppTheme.platformPageRoute(
+        builder: (_) => OrderChatPage(orderId: widget.orderId),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final order = _order;
-    final hasRouteMap =
-        order != null && _TrackingRouteSnapshot.fromOrder(order) != null;
     final switcherDuration =
         kIsWeb ? Duration.zero : const Duration(milliseconds: 220);
+    final restaurantPhone =
+        order == null ? null : OrdersService.restaurantPhoneOf(order);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF6F7FB),
       appBar: AppBar(
+        automaticallyImplyLeading: false,
+        leadingWidth: 72,
         title: const Text('تتبع الطلب'),
         centerTitle: true,
+        leading: Builder(
+          builder: (scaffoldContext) {
+            final tooltip =
+                MaterialLocalizations.of(scaffoldContext).openAppDrawerTooltip;
+            return IconButton(
+              key: const Key('tracking-drawer-menu-button'),
+              tooltip: tooltip,
+              icon: const Icon(
+                Icons.menu_rounded,
+                size: 28,
+              ),
+              onPressed: () => Scaffold.of(scaffoldContext).openDrawer(),
+            );
+          },
+        ),
+        actions: [
+          if (Navigator.of(context).canPop())
+            IconButton(
+              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+              icon: const BackButtonIcon(),
+              onPressed: () => Navigator.maybePop(context),
+            ),
+        ],
+      ),
+      drawer: _TrackingDrawer(
+        order: order,
+        onOpenChat: order == null ? null : _openChatPage,
       ),
       body: AnimatedSwitcher(
         duration: switcherDuration,
@@ -562,24 +612,37 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
                       cacheExtent: 540,
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                       children: [
-                        if (hasRouteMap) ...[
-                          RepaintBoundary(
-                            child: _TrackingRouteMap(order: order),
-                          ),
-                          const SizedBox(height: 16),
-                        ],
                         _AnimatedTrackingSection(
                           delay: const Duration(milliseconds: 40),
-                          child: _TrackingOrderInfoCard(
+                          child: _TrackingStatusCard(
                             order: order,
-                            items: _items,
                           ),
                         ),
                         const SizedBox(height: 16),
                         _AnimatedTrackingSection(
                           delay: const Duration(milliseconds: 80),
-                          child: _TrackingStatusCard(
+                          child: _TrackingOrderSummaryCard(order: order),
+                        ),
+                        const SizedBox(height: 16),
+                        _AnimatedTrackingSection(
+                          delay: const Duration(milliseconds: 120),
+                          child: _TrackingRestaurantCard(
                             order: order,
+                            onCall: _callRestaurant,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        _AnimatedTrackingSection(
+                          delay: const Duration(milliseconds: 160),
+                          child: _TrackingAddressCard(order: order),
+                        ),
+                        const SizedBox(height: 16),
+                        _AnimatedTrackingSection(
+                          delay: const Duration(milliseconds: 200),
+                          child: _TrackingItemsCard(
+                            items: _items,
+                            totalPrice: OrdersService.totalPriceOf(order),
+                            deliveryCost: OrdersService.deliveryCostOf(order),
                           ),
                         ),
                       ],
@@ -588,17 +651,26 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
       ),
       floatingActionButton: order == null
           ? null
-          : FloatingActionButton.extended(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  AppTheme.platformPageRoute(
-                    builder: (_) => OrderChatPage(orderId: widget.orderId),
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (restaurantPhone != null && restaurantPhone.isNotEmpty) ...[
+                  FloatingActionButton.extended(
+                    heroTag: 'tracking-call-${widget.orderId}',
+                    onPressed: () =>
+                        unawaited(_callRestaurant(restaurantPhone)),
+                    icon: const Icon(Icons.phone_outlined),
+                    label: const Text('تواصل'),
                   ),
-                );
-              },
-              icon: const Icon(Icons.chat_bubble_outline),
-              label: const Text('محادثة'),
+                  const SizedBox(width: 10),
+                ],
+                FloatingActionButton.extended(
+                  heroTag: 'tracking-chat-${widget.orderId}',
+                  onPressed: _openChatPage,
+                  icon: const Icon(Icons.chat_bubble_outline),
+                  label: const Text('محادثة'),
+                ),
+              ],
             ),
     );
   }
@@ -636,32 +708,127 @@ class _AnimatedTrackingSection extends StatelessWidget {
   }
 }
 
-class _TrackingOrderInfoCard extends StatelessWidget {
-  const _TrackingOrderInfoCard({
+class _TrackingDrawer extends StatelessWidget {
+  const _TrackingDrawer({
     required this.order,
-    required this.items,
+    this.onOpenChat,
   });
 
-  final Map<String, dynamic> order;
-  final List<Map<String, dynamic>> items;
+  final Map<String, dynamic>? order;
+  final VoidCallback? onOpenChat;
 
   @override
   Widget build(BuildContext context) {
-    final animationDuration =
-        kIsWeb ? Duration.zero : AppTheme.sectionTransitionDuration;
-    final customerName = OrdersService.customerNameOf(order);
-    final customerPhone = OrdersService.customerPhoneOf(order) ?? '--';
-    final address = _composeAddress(order);
-    final itemRows = items
-        .map((item) => _OrderItemRow(key: ValueKey(_itemKey(item)), item: item))
-        .toList(growable: false);
+    final statusText = order == null
+        ? null
+        : resolveOrderStatus(order!['status']?.toString()).text;
+    final receipt =
+        order == null ? null : OrdersService.receiptNumberOf(order!);
+
+    return Drawer(
+      child: SafeArea(
+        child: Column(
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [AppTheme.primary, AppTheme.secondary],
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'قائمة التتبع',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  if (receipt != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'ريسيت #$receipt',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                  if (statusText != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      statusText,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.home_outlined),
+                    title: const Text('الرئيسية'),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.of(context).popUntil((route) => route.isFirst);
+                    },
+                  ),
+                  if (onOpenChat != null)
+                    ListTile(
+                      leading: const Icon(Icons.chat_bubble_outline_rounded),
+                      title: const Text('محادثة الطلب'),
+                      onTap: () {
+                        Navigator.pop(context);
+                        onOpenChat!.call();
+                      },
+                    ),
+                  ListTile(
+                    leading: const Icon(Icons.close_rounded),
+                    title: const Text('إغلاق القائمة'),
+                    onTap: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TrackingOrderSummaryCard extends StatelessWidget {
+  const _TrackingOrderSummaryCard({
+    required this.order,
+  });
+
+  final Map<String, dynamic> order;
+
+  @override
+  Widget build(BuildContext context) {
+    final statusInfo = resolveOrderStatus(order['status']?.toString());
+    final orderId = OrdersService.idOf(order);
+    final orderNumber =
+        orderId.isEmpty ? '--' : '#${OrdersService.shortIdOf(order)}';
 
     return OrderSectionCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'معلومات الطلب',
+            'تفاصيل الطلب',
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w800,
@@ -669,176 +836,384 @@ class _TrackingOrderInfoCard extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           _TrackingMetaRow(
-            icon: Icons.location_on_outlined,
-            label: 'عنوان التوصيل',
-            value: address,
+            icon: Icons.receipt_long_outlined,
+            label: 'رقم الطلب',
+            value: orderNumber,
           ),
           const SizedBox(height: 10),
           _TrackingMetaRow(
-            icon: Icons.person_outline,
+            icon: Icons.confirmation_number_outlined,
+            label: 'رقم الريسيت',
+            value: OrdersService.receiptNumberOf(order),
+          ),
+          const SizedBox(height: 10),
+          _TrackingMetaRow(
+            icon: Icons.flag_outlined,
+            label: 'حالة الطلب الحالية',
+            value: statusInfo.text,
+          ),
+          const SizedBox(height: 10),
+          _TrackingMetaRow(
+            icon: Icons.person_outline_rounded,
             label: 'اسم العميل',
-            value: customerName,
+            value: OrdersService.customerNameOf(order),
+          ),
+          const SizedBox(height: 10),
+          _TrackingMetaRow(
+            icon: Icons.payments_outlined,
+            label: 'الإجمالي النهائي',
+            value: formatPrice(OrdersService.totalPriceOf(order)),
+          ),
+          const SizedBox(height: 10),
+          _TrackingMetaRow(
+            icon: Icons.calendar_today_outlined,
+            label: 'تاريخ ووقت الطلب',
+            value: formatOrderDate(OrdersService.createdAtOf(order)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrackingRestaurantCard extends StatelessWidget {
+  const _TrackingRestaurantCard({
+    required this.order,
+    required this.onCall,
+  });
+
+  final Map<String, dynamic> order;
+  final Future<void> Function(String phone) onCall;
+
+  @override
+  Widget build(BuildContext context) {
+    final restaurantPhone = OrdersService.restaurantPhoneOf(order);
+
+    return OrderSectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'بيانات المطعم',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 14),
+          _TrackingMetaRow(
+            icon: Icons.storefront_outlined,
+            label: 'اسم المطعم',
+            value: OrdersService.restaurantNameOf(order),
+          ),
+          const SizedBox(height: 10),
+          _TrackingMetaRow(
+            icon: Icons.location_on_outlined,
+            label: 'عنوان المطعم',
+            value: OrdersService.restaurantAddressOf(order),
+            maxValueLines: 4,
+          ),
+          if (restaurantPhone != null && restaurantPhone.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: OutlinedButton.icon(
+                onPressed: () => onCall(restaurantPhone),
+                icon: const Icon(Icons.phone_outlined),
+                label: Text(restaurantPhone),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TrackingAddressCard extends StatelessWidget {
+  const _TrackingAddressCard({
+    required this.order,
+  });
+
+  final Map<String, dynamic> order;
+
+  @override
+  Widget build(BuildContext context) {
+    final customerPhone = OrdersService.customerPhoneOf(order);
+
+    return OrderSectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'عنوان التوصيل',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 14),
+          _TrackingMetaRow(
+            icon: Icons.location_city_outlined,
+            label: 'العنوان الكامل',
+            value: OrdersService.addressOf(order),
+            maxValueLines: 4,
           ),
           const SizedBox(height: 10),
           _TrackingMetaRow(
             icon: Icons.phone_android_outlined,
             label: 'رقم العميل',
-            value: customerPhone,
+            value: customerPhone == null || customerPhone.isEmpty
+                ? 'غير متوفر'
+                : customerPhone,
           ),
-          const SizedBox(height: 14),
-          const Divider(height: 1),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
+          _TrackingMetaRow(
+            icon: Icons.notes_rounded,
+            label: 'تفاصيل التوصيل',
+            value: OrdersService.deliveryDetailsOf(order),
+            maxValueLines: 4,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrackingItemsCard extends StatelessWidget {
+  const _TrackingItemsCard({
+    required this.items,
+    required this.totalPrice,
+    required this.deliveryCost,
+  });
+
+  final List<Map<String, dynamic>> items;
+  final double totalPrice;
+  final double deliveryCost;
+
+  @override
+  Widget build(BuildContext context) {
+    final itemsAnimationDuration = kIsWeb
+        ? const Duration(milliseconds: 140)
+        : AppTheme.sectionTransitionDuration;
+    var subtotal = 0.0;
+    for (final item in items) {
+      final qty = OrdersService.quantityOfItem(item).clamp(1, 9999);
+      subtotal += OrdersService.itemPriceOf(item) * qty;
+    }
+    if (subtotal <= 0) {
+      final fallbackSubtotal = totalPrice - deliveryCost;
+      subtotal = fallbackSubtotal > 0 ? fallbackSubtotal : totalPrice;
+    }
+
+    return OrderSectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
           const Text(
-            'الأصناف المطلوبة',
+            'الأصناف',
             style: TextStyle(
-              fontSize: 15,
+              fontSize: 16,
               fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(height: 10),
-          const _ItemsHeaderRow(),
-          const SizedBox(height: 8),
-          AnimatedSize(
-            duration: animationDuration,
-            curve: AppTheme.emphasizedCurve,
+          const SizedBox(height: 14),
+          AnimatedSwitcher(
+            duration: itemsAnimationDuration,
+            switchInCurve: AppTheme.emphasizedCurve,
+            switchOutCurve: Curves.easeInCubic,
             child: items.isEmpty
                 ? const Align(
+                    key: ValueKey('tracking-items-empty'),
                     alignment: Alignment.centerRight,
                     child: Text(
                       'لا توجد أصناف مرتبطة بهذا الطلب.',
                       style: TextStyle(color: Color(0xFF667085)),
                     ),
                   )
-                : Column(children: itemRows),
+                : Column(
+                    key: ValueKey('tracking-items-${items.length}'),
+                    children: items.map((item) {
+                      final qty =
+                          OrdersService.quantityOfItem(item).clamp(1, 9999);
+                      final unitPrice = OrdersService.itemPriceOf(item);
+                      final lineTotal = unitPrice * qty;
+
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: const Color(0xFFD9E2EC),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              OrdersService.itemNameOf(item),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    'الكمية: $qty',
+                                    style: const TextStyle(
+                                      color: Color(0xFF475467),
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: Text(
+                                    'السعر: ${formatPrice(unitPrice)}',
+                                    textAlign: TextAlign.end,
+                                    style: const TextStyle(
+                                      color: Color(0xFF475467),
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Align(
+                              alignment: AlignmentDirectional.centerEnd,
+                              child: Text(
+                                'الإجمالي: ${formatPrice(lineTotal)}',
+                                style: const TextStyle(
+                                  color: AppTheme.primaryDeep,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(growable: false),
+                  ),
+          ),
+          const Divider(height: 28),
+          Row(
+            children: [
+              Text(
+                formatPrice(subtotal),
+                style: const TextStyle(
+                  color: Color(0xFF475467),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const Spacer(),
+              const Text(
+                'إجمالي الأصناف',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Text(
+                formatPrice(deliveryCost),
+                style: const TextStyle(
+                  color: Color(0xFF475467),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const Spacer(),
+              const Text(
+                'رسوم التوصيل',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+          const Divider(height: 28),
+          Row(
+            children: [
+              const Text(
+                'الإجمالي النهائي',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              const Spacer(),
+              Text(
+                formatPrice(totalPrice),
+                style: const TextStyle(
+                  color: Color(0xFF2E7D32),
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
-
-  static String _composeAddress(Map<String, dynamic> order) {
-    final baseAddress = OrdersService.addressOf(order).trim();
-    final houseNumber = (order['house_number'] ?? '').toString().trim();
-    if (houseNumber.isEmpty) {
-      return baseAddress;
-    }
-    return '$baseAddress - رقم البيت: $houseNumber';
-  }
-
-  static String _itemKey(Map<String, dynamic> item) {
-    final itemId = OrdersService.itemIdOf(item);
-    if (itemId.isNotEmpty) {
-      return itemId;
-    }
-
-    return '${OrdersService.itemNameOf(item)}-'
-        '${OrdersService.quantityOfItem(item)}-'
-        '${OrdersService.itemPriceOf(item)}-'
-        '${OrdersService.createdAtOf(item).microsecondsSinceEpoch}';
-  }
 }
 
-class _ItemsHeaderRow extends StatelessWidget {
-  const _ItemsHeaderRow();
+class _TrackingMetaRow extends StatelessWidget {
+  const _TrackingMetaRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.maxValueLines = 2,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final int maxValueLines;
 
   @override
   Widget build(BuildContext context) {
-    const headerStyle = TextStyle(
-      color: Color(0xFF667085),
-      fontWeight: FontWeight.w700,
-      fontSize: 12,
-    );
-
     return Row(
-      children: const [
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: const Color(0xFF667085)),
+        const SizedBox(width: 8),
         Expanded(
-          flex: 3,
-          child: Text(
-            'السعر',
-            style: headerStyle,
-            textAlign: TextAlign.start,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  color: Color(0xFF667085),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                maxLines: maxValueLines,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF101828),
+                  fontWeight: FontWeight.w700,
+                  height: 1.4,
+                ),
+              ),
+            ],
           ),
-        ),
-        Expanded(
-          flex: 2,
-          child: Text(
-            'الكمية',
-            style: headerStyle,
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-        Expanded(
-          flex: 5,
-          child: Text('الصنف', style: headerStyle, textAlign: TextAlign.end),
         ),
       ],
     );
   }
 }
 
-class _OrderItemRow extends StatelessWidget {
-  const _OrderItemRow({
-    super.key,
-    required this.item,
-  });
-
-  final Map<String, dynamic> item;
-
-  @override
-  Widget build(BuildContext context) {
-    final qty = OrdersService.quantityOfItem(item);
-    final price = OrdersService.itemPriceOf(item);
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        children: [
-          Expanded(
-            flex: 3,
-            child: Text(
-              formatPrice(price),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFF475467),
-                fontWeight: FontWeight.w700,
-              ),
-              textAlign: TextAlign.start,
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Text(
-              '$qty',
-              style: const TextStyle(
-                color: Color(0xFF344054),
-                fontWeight: FontWeight.w700,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ),
-          Expanded(
-            flex: 5,
-            child: Text(
-              OrdersService.itemNameOf(item),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFF101828),
-                fontWeight: FontWeight.w700,
-                height: 1.4,
-              ),
-              textAlign: TextAlign.end,
-            ),
-          ),
-        ],
-      ),
-    );
+String _trackingStatusLabelForCustomer(String rawStatus) {
+  final normalized = normalizeOrderStatus(rawStatus);
+  if (normalized == 'accepted') {
+    return 'قيد التحضير';
   }
+  return rawStatus;
 }
 
 class _TrackingStatusCard extends StatelessWidget {
@@ -853,6 +1228,7 @@ class _TrackingStatusCard extends StatelessWidget {
     final animationDuration =
         kIsWeb ? Duration.zero : AppTheme.sectionTransitionDuration;
     final rawStatus = (order['status'] ?? '').toString().trim();
+    final mappedRawStatus = _trackingStatusLabelForCustomer(rawStatus);
     final progressState = _TrackingDeliveryProgress.fromOrder(order);
     const stages = [
       ('قيد التحضير', _TrackingDeliveryStage.preparing),
@@ -887,23 +1263,18 @@ class _TrackingStatusCard extends StatelessWidget {
               ),
             ),
           ),
-          AnimatedSize(
-            duration: animationDuration,
-            curve: AppTheme.emphasizedCurve,
-            child: rawStatus.isEmpty
-                ? const SizedBox.shrink()
-                : Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      rawStatus,
-                      style: const TextStyle(
-                        color: Color(0xFF667085),
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-          ),
+          if (mappedRawStatus.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                mappedRawStatus,
+                style: const TextStyle(
+                  color: Color(0xFF667085),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+              ),
+            ),
           if (progressState.distanceSummary != null) ...[
             const SizedBox(height: 8),
             Text(
@@ -915,10 +1286,31 @@ class _TrackingStatusCard extends StatelessWidget {
               ),
             ),
           ],
+          const SizedBox(height: 8),
+          Text(
+            progressState.driverStatus,
+            style: const TextStyle(
+              color: Color(0xFF667085),
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
+          ),
+          if (progressState.etaSummary != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              progressState.etaSummary!,
+              style: const TextStyle(
+                color: Color(0xFF475467),
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
           _TrackingPipeProgress(
             value: progressState.progress,
             color: progressState.color,
+            showMotorcycle: progressState.showMotorcycle,
           ),
           const SizedBox(height: 10),
           Wrap(
@@ -943,10 +1335,12 @@ class _TrackingPipeProgress extends StatelessWidget {
   const _TrackingPipeProgress({
     required this.value,
     required this.color,
+    required this.showMotorcycle,
   });
 
   final double value;
   final Color color;
+  final bool showMotorcycle;
 
   @override
   Widget build(BuildContext context) {
@@ -955,6 +1349,7 @@ class _TrackingPipeProgress extends StatelessWidget {
       return _TrackingPipeBar(
         value: clampedValue,
         color: color,
+        showMotorcycle: showMotorcycle,
       );
     }
 
@@ -966,6 +1361,7 @@ class _TrackingPipeProgress extends StatelessWidget {
         return _TrackingPipeBar(
           value: animatedValue,
           color: color,
+          showMotorcycle: showMotorcycle,
         );
       },
     );
@@ -976,38 +1372,89 @@ class _TrackingPipeBar extends StatelessWidget {
   const _TrackingPipeBar({
     required this.value,
     required this.color,
+    required this.showMotorcycle,
   });
 
   final double value;
   final Color color;
+  final bool showMotorcycle;
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(999),
-      child: Stack(
-        children: [
-          Container(
-            height: 16,
-            width: double.infinity,
-            color: const Color(0xFFDDE3EA),
-          ),
-          FractionallySizedBox(
-            widthFactor: value,
-            child: Container(
-              height: 16,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    color.withValues(alpha: 0.9),
-                    color,
-                  ],
+    const trackHeight = 16.0;
+    const iconSize = 28.0;
+    final clampedValue = value.clamp(0.0, 1.0);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxLeft = math.max(0, constraints.maxWidth - iconSize);
+        final iconLeft = (maxLeft * clampedValue).toDouble();
+
+        return SizedBox(
+          height: trackHeight + iconSize * 0.75,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              PositionedDirectional(
+                top: iconSize * 0.45,
+                start: 0,
+                end: 0,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: Stack(
+                    children: [
+                      Container(
+                        height: trackHeight,
+                        width: double.infinity,
+                        color: const Color(0xFFDDE3EA),
+                      ),
+                      FractionallySizedBox(
+                        widthFactor: clampedValue,
+                        child: Container(
+                          height: trackHeight,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                color.withValues(alpha: 0.9),
+                                color,
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
+              if (showMotorcycle)
+                PositionedDirectional(
+                  top: 0,
+                  start: iconLeft,
+                  child: Container(
+                    width: iconSize,
+                    height: iconSize,
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Color(0x26000000),
+                          blurRadius: 10,
+                          offset: Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.delivery_dining_rounded,
+                      color: Color(0xFFFB8C00),
+                      size: 19,
+                    ),
+                  ),
+                ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -1060,14 +1507,20 @@ class _TrackingDeliveryProgress {
     required this.progress,
     required this.color,
     required this.label,
+    required this.showMotorcycle,
+    required this.driverStatus,
     this.distanceSummary,
+    this.etaSummary,
   });
 
   final _TrackingDeliveryStage stage;
   final double progress;
   final Color color;
   final String label;
+  final bool showMotorcycle;
+  final String driverStatus;
   final String? distanceSummary;
+  final String? etaSummary;
 
   bool isStageReached(_TrackingDeliveryStage other) {
     return _stageRank(stage) >= _stageRank(other);
@@ -1076,23 +1529,13 @@ class _TrackingDeliveryProgress {
   static _TrackingDeliveryProgress fromOrder(Map<String, dynamic> order) {
     final normalizedStatus = normalizeOrderStatus(order['status']?.toString());
     final snapshot = _TrackingRouteSnapshot.fromOrder(order);
-    final isDelivered = _isDeliveredStatus(normalizedStatus);
+    final isFinalDelivered = _isFinalDeliveryStatus(normalizedStatus);
+    final isTransit = _isTransitStatus(normalizedStatus);
+    final hasAssignedDriver = OrdersService.driverIdOf(order) != null;
+    final hasLiveDriverPoint = snapshot?.driverPoint != null;
 
-    final totalDistance = snapshot == null
-        ? null
-        : _distanceMeters(
-            snapshot.restaurantPoint,
-            snapshot.customerPoint,
-          );
-    final remainingDistance = snapshot == null
-        ? null
-        : snapshot.driverPoint == null
-            ? totalDistance
-            : _distanceMeters(
-                snapshot.driverPoint!,
-                snapshot.customerPoint,
-              );
-    final hasDriver = snapshot?.driverPoint != null;
+    final totalDistance = snapshot?.totalDistanceToCustomer;
+    final remainingDistance = snapshot?.remainingDriverDistanceToCustomer;
 
     var geometryProgress = 0.0;
     if (totalDistance != null &&
@@ -1103,29 +1546,34 @@ class _TrackingDeliveryProgress {
           .toDouble();
     }
 
-    if (isDelivered) {
+    if (isFinalDelivered) {
       final summary = totalDistance == null
           ? null
           : 'اكتملت الرحلة (${_distanceLabel(totalDistance)})';
-      return const _TrackingDeliveryProgress(
+      return _TrackingDeliveryProgress(
         stage: _TrackingDeliveryStage.delivered,
         progress: 1,
         color: Color(0xFF2E7D32),
         label: 'تم التسليم',
-      ).copyWith(distanceSummary: summary);
+        showMotorcycle: false,
+        driverStatus: 'حالة السائق: تم إنهاء الطلب بنجاح.',
+        distanceSummary: summary,
+        etaSummary: 'وقت الوصول المتوقع: تم التسليم.',
+      );
     }
 
     final nearThreshold =
         totalDistance == null ? 180.0 : math.max(130.0, totalDistance * 0.12);
 
-    final bool nearCustomer = hasDriver &&
+    final bool nearCustomer = isTransit &&
+        hasLiveDriverPoint &&
         remainingDistance != null &&
         remainingDistance <= nearThreshold;
 
     final _TrackingDeliveryStage stage;
     if (nearCustomer) {
       stage = _TrackingDeliveryStage.nearCustomer;
-    } else if (hasDriver || _isOnWayStatus(normalizedStatus)) {
+    } else if (isTransit) {
       stage = _TrackingDeliveryStage.onTheWay;
     } else {
       stage = _TrackingDeliveryStage.preparing;
@@ -1135,14 +1583,14 @@ class _TrackingDeliveryProgress {
     switch (stage) {
       case _TrackingDeliveryStage.preparing:
         progress =
-            (progress > 0 ? progress : 0.08).clamp(0.08, 0.24).toDouble();
+            (progress > 0 ? progress : 0.18).clamp(0.14, 0.30).toDouble();
         break;
       case _TrackingDeliveryStage.onTheWay:
         progress =
-            (progress > 0 ? progress : 0.38).clamp(0.35, 0.90).toDouble();
+            (progress > 0 ? progress : 0.42).clamp(0.32, 0.89).toDouble();
         break;
       case _TrackingDeliveryStage.nearCustomer:
-        progress = math.max(progress, 0.82).clamp(0.82, 0.98).toDouble();
+        progress = math.max(progress, 0.90).clamp(0.90, 0.98).toDouble();
         break;
       case _TrackingDeliveryStage.delivered:
         progress = 1.0;
@@ -1165,41 +1613,119 @@ class _TrackingDeliveryProgress {
         _TrackingDeliveryStage.delivered => const Color(0xFF2E7D32),
       },
       label: switch (stage) {
-        _TrackingDeliveryStage.preparing => 'جارِ تجهيز الطلب',
-        _TrackingDeliveryStage.onTheWay => 'المندوب في الطريق',
-        _TrackingDeliveryStage.nearCustomer => 'المندوب قريب منك',
+        _TrackingDeliveryStage.preparing => 'قيد التحضير',
+        _TrackingDeliveryStage.onTheWay => 'في الطريق',
+        _TrackingDeliveryStage.nearCustomer => 'قريب من العميل',
         _TrackingDeliveryStage.delivered => 'تم التسليم',
       },
+      showMotorcycle: stage == _TrackingDeliveryStage.onTheWay ||
+          stage == _TrackingDeliveryStage.nearCustomer,
+      driverStatus: _driverStatusLabel(
+        stage: stage,
+        hasAssignedDriver: hasAssignedDriver,
+        hasLiveDriverPoint: hasLiveDriverPoint,
+      ),
       distanceSummary: summary,
+      etaSummary: _etaSummaryLabel(
+        stage: stage,
+        remainingDistance: remainingDistance,
+        hasAssignedDriver: hasAssignedDriver,
+      ),
     );
   }
 
-  _TrackingDeliveryProgress copyWith({
-    _TrackingDeliveryStage? stage,
-    double? progress,
-    Color? color,
-    String? label,
-    String? distanceSummary,
+  static String _etaSummaryLabel({
+    required _TrackingDeliveryStage stage,
+    required double? remainingDistance,
+    required bool hasAssignedDriver,
   }) {
-    return _TrackingDeliveryProgress(
-      stage: stage ?? this.stage,
-      progress: progress ?? this.progress,
-      color: color ?? this.color,
-      label: label ?? this.label,
-      distanceSummary: distanceSummary ?? this.distanceSummary,
-    );
+    if (stage == _TrackingDeliveryStage.delivered) {
+      return 'وقت الوصول المتوقع: تم التسليم.';
+    }
+    if (!hasAssignedDriver) {
+      return 'وقت الوصول المتوقع: جارِ تعيين السائق.';
+    }
+    if (remainingDistance == null) {
+      return 'وقت الوصول المتوقع: جارِ احتساب الوقت.';
+    }
+
+    const averageMetersPerMinute = 320.0;
+    var minutes = (remainingDistance / averageMetersPerMinute).round();
+    switch (stage) {
+      case _TrackingDeliveryStage.preparing:
+        minutes += 10;
+        break;
+      case _TrackingDeliveryStage.onTheWay:
+        minutes += 3;
+        break;
+      case _TrackingDeliveryStage.nearCustomer:
+        minutes = minutes.clamp(1, 8);
+        break;
+      case _TrackingDeliveryStage.delivered:
+        minutes = 0;
+        break;
+    }
+
+    if (minutes < 1) {
+      minutes = 1;
+    }
+    return 'وقت الوصول المتوقع: حوالي ${_minutesLabel(minutes)}';
   }
 
-  static bool _isDeliveredStatus(String normalizedStatus) {
-    return normalizedStatus == 'delivered' || normalizedStatus == 'completed';
+  static String _minutesLabel(int minutes) {
+    if (minutes >= 60) {
+      final hours = minutes ~/ 60;
+      final remainingMinutes = minutes % 60;
+      if (remainingMinutes == 0) {
+        return '$hours ساعة';
+      }
+      return '$hours ساعة و$remainingMinutes دقيقة';
+    }
+    return '$minutes دقيقة';
   }
 
-  static bool _isOnWayStatus(String normalizedStatus) {
-    return normalizedStatus == 'on_way' ||
+  static String _driverStatusLabel({
+    required _TrackingDeliveryStage stage,
+    required bool hasAssignedDriver,
+    required bool hasLiveDriverPoint,
+  }) {
+    if (stage == _TrackingDeliveryStage.delivered) {
+      return 'حالة السائق: تم إنهاء التوصيل.';
+    }
+    if (stage == _TrackingDeliveryStage.nearCustomer) {
+      return 'حالة السائق: قريب جدًا من العميل.';
+    }
+    if (stage == _TrackingDeliveryStage.onTheWay) {
+      if (hasLiveDriverPoint) {
+        return 'حالة السائق: متجه الآن إلى العميل.';
+      }
+      if (hasAssignedDriver) {
+        return 'حالة السائق: تم التعيين وجارٍ تحديث موقعه.';
+      }
+      return 'حالة السائق: جارِ تعيين سائق للطلب.';
+    }
+    if (hasAssignedDriver) {
+      return 'حالة السائق: بانتظار الانطلاق من المطعم.';
+    }
+    return 'حالة السائق: لم يتم تعيين سائق بعد.';
+  }
+
+  static bool _isTransitStatus(String normalizedStatus) {
+    return normalizedStatus == 'delivered' ||
+        normalizedStatus == 'on_way' ||
         normalizedStatus == 'on_the_way' ||
         normalizedStatus == 'on_theway' ||
         normalizedStatus == 'onway' ||
         normalizedStatus == 'arrived';
+  }
+
+  static bool _isFinalDeliveryStatus(String normalizedStatus) {
+    return normalizedStatus == 'completed' ||
+        normalizedStatus == 'done' ||
+        normalizedStatus == 'delivered_final' ||
+        normalizedStatus == 'delivered_confirmed' ||
+        normalizedStatus == 'delivery_confirmed' ||
+        normalizedStatus == 'received';
   }
 
   static int _stageRank(_TrackingDeliveryStage stage) {
@@ -1226,8 +1752,65 @@ class _TrackingDeliveryProgress {
     }
     return '${km.toStringAsFixed(1)} كم';
   }
+}
 
-  static double _distanceMeters(LatLng start, LatLng end) {
+class _TrackingRouteSnapshot {
+  const _TrackingRouteSnapshot({
+    required this.customerPoint,
+    this.restaurantPoint,
+    this.driverPoint,
+  });
+
+  final _TrackingGeoPoint customerPoint;
+  final _TrackingGeoPoint? restaurantPoint;
+  final _TrackingGeoPoint? driverPoint;
+
+  static _TrackingRouteSnapshot? fromOrder(Map<String, dynamic> order) {
+    final customerLat = OrdersService.customerLatOf(order);
+    final customerLng = OrdersService.customerLngOf(order);
+    if (customerLat == null || customerLng == null) {
+      return null;
+    }
+
+    final restaurantLat = OrdersService.restaurantLatOf(order);
+    final restaurantLng = OrdersService.restaurantLngOf(order);
+    final driverLat = OrdersService.driverLatOf(order);
+    final driverLng = OrdersService.driverLngOf(order);
+
+    return _TrackingRouteSnapshot(
+      customerPoint: _TrackingGeoPoint(customerLat, customerLng),
+      restaurantPoint: restaurantLat != null && restaurantLng != null
+          ? _TrackingGeoPoint(restaurantLat, restaurantLng)
+          : null,
+      driverPoint: driverLat != null && driverLng != null
+          ? _TrackingGeoPoint(driverLat, driverLng)
+          : null,
+    );
+  }
+
+  double? get totalDistanceToCustomer {
+    final fromPoint = restaurantPoint ?? driverPoint;
+    if (fromPoint == null) {
+      return null;
+    }
+    return _TrackingGeoPoint.distanceMeters(fromPoint, customerPoint);
+  }
+
+  double? get remainingDriverDistanceToCustomer {
+    if (driverPoint == null) {
+      return totalDistanceToCustomer;
+    }
+    return _TrackingGeoPoint.distanceMeters(driverPoint!, customerPoint);
+  }
+}
+
+class _TrackingGeoPoint {
+  const _TrackingGeoPoint(this.latitude, this.longitude);
+
+  final double latitude;
+  final double longitude;
+
+  static double distanceMeters(_TrackingGeoPoint start, _TrackingGeoPoint end) {
     const earthRadius = 6371000.0;
     final dLat = (end.latitude - start.latitude) * (math.pi / 180);
     final dLng = (end.longitude - start.longitude) * (math.pi / 180);
@@ -1242,432 +1825,6 @@ class _TrackingDeliveryProgress {
     final centralAngle =
         2 * math.atan2(math.sqrt(haversine), math.sqrt(1 - haversine));
     return earthRadius * centralAngle;
-  }
-}
-
-class _TrackingRouteMap extends StatefulWidget {
-  const _TrackingRouteMap({
-    required this.order,
-  });
-
-  final Map<String, dynamic> order;
-
-  @override
-  State<_TrackingRouteMap> createState() => _TrackingRouteMapState();
-}
-
-class _TrackingRouteMapState extends State<_TrackingRouteMap> {
-  final MapController _mapController = MapController();
-  late final ValueNotifier<List<Marker>> _markersNotifier =
-      ValueNotifier<List<Marker>>(const []);
-  late final ValueNotifier<List<Polyline>> _polylinesNotifier =
-      ValueNotifier<List<Polyline>>(const []);
-
-  _TrackingRouteSnapshot? _snapshot;
-  Widget? _mapShell;
-
-  @override
-  void initState() {
-    super.initState();
-    _syncSnapshot(widget.order, moveMap: false);
-  }
-
-  @override
-  void didUpdateWidget(covariant _TrackingRouteMap oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _syncSnapshot(widget.order);
-  }
-
-  @override
-  void dispose() {
-    _markersNotifier.dispose();
-    _polylinesNotifier.dispose();
-    super.dispose();
-  }
-
-  void _syncSnapshot(
-    Map<String, dynamic> order, {
-    bool moveMap = true,
-  }) {
-    final previous = _snapshot;
-    final next = _TrackingRouteSnapshot.fromOrder(order);
-    if (next == previous) {
-      return;
-    }
-
-    _snapshot = next;
-    if (next == null) {
-      return;
-    }
-
-    _ensureMapShell(next);
-    final routeGeometryChanged = previous == null ||
-        !_samePoint(previous.restaurantPoint, next.restaurantPoint) ||
-        !_samePoint(previous.customerPoint, next.customerPoint);
-    final driverChanged = previous == null ||
-        !_sameOptionalPoint(previous.driverPoint, next.driverPoint);
-
-    if (routeGeometryChanged || driverChanged) {
-      _polylinesNotifier.value = _buildRoutePolylines(next);
-    }
-
-    _markersNotifier.value = _buildMarkers(next);
-
-    if (routeGeometryChanged && moveMap) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _mapController.move(next.center, 13);
-        }
-      });
-    }
-  }
-
-  void _ensureMapShell(_TrackingRouteSnapshot snapshot) {
-    _mapShell ??= _TrackingRouteMapShell(
-      mapController: _mapController,
-      initialCenter: snapshot.center,
-      markersListenable: _markersNotifier,
-      polylinesListenable: _polylinesNotifier,
-    );
-  }
-
-  List<Marker> _buildMarkers(_TrackingRouteSnapshot snapshot) {
-    final markers = <Marker>[
-      Marker(
-        point: snapshot.restaurantPoint,
-        width: 42,
-        height: 42,
-        child: const _MapMarker(
-          icon: Icons.storefront_rounded,
-          color: Color(0xFF1E88E5),
-        ),
-      ),
-      Marker(
-        point: snapshot.customerPoint,
-        width: 42,
-        height: 42,
-        child: const _MapMarker(
-          icon: Icons.location_on_rounded,
-          color: Color(0xFF2E7D32),
-        ),
-      ),
-    ];
-
-    final driverPoint = snapshot.driverPoint;
-    if (driverPoint != null) {
-      markers.add(
-        Marker(
-          point: driverPoint,
-          width: 52,
-          height: 52,
-          child: _DriverMarker(
-            angle: _bearingRadians(driverPoint, snapshot.customerPoint),
-          ),
-        ),
-      );
-    }
-
-    return markers;
-  }
-
-  List<Polyline> _buildRoutePolylines(_TrackingRouteSnapshot snapshot) {
-    final driverPoint = snapshot.driverPoint;
-    if (driverPoint == null) {
-      return [
-        Polyline(
-          points: [snapshot.restaurantPoint, snapshot.customerPoint],
-          strokeWidth: 5.5,
-          color: const Color(0xFF1565C0),
-        ),
-      ];
-    }
-
-    return [
-      Polyline(
-        points: [snapshot.restaurantPoint, driverPoint],
-        strokeWidth: 5.5,
-        color: const Color(0xFF2E7D32),
-      ),
-      Polyline(
-        points: [driverPoint, snapshot.customerPoint],
-        strokeWidth: 5.5,
-        color: const Color(0xFF1565C0),
-      ),
-    ];
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final snapshot = _snapshot;
-    if (snapshot == null) {
-      return const SizedBox.shrink();
-    }
-
-    _ensureMapShell(snapshot);
-    return RepaintBoundary(child: _mapShell!);
-  }
-
-  static bool _samePoint(LatLng first, LatLng second) {
-    return first.latitude == second.latitude &&
-        first.longitude == second.longitude;
-  }
-
-  static bool _sameOptionalPoint(LatLng? first, LatLng? second) {
-    if (first == null || second == null) {
-      return first == second;
-    }
-    return _samePoint(first, second);
-  }
-
-  static double _bearingRadians(LatLng from, LatLng to) {
-    final lat1 = from.latitude * (math.pi / 180);
-    final lat2 = to.latitude * (math.pi / 180);
-    final dLon = (to.longitude - from.longitude) * (math.pi / 180);
-
-    final y = math.sin(dLon) * math.cos(lat2);
-    final x = math.cos(lat1) * math.sin(lat2) -
-        math.sin(lat1) * math.cos(lat2) * math.cos(dLon);
-
-    return math.atan2(y, x);
-  }
-}
-
-class _TrackingRouteMapShell extends StatelessWidget {
-  const _TrackingRouteMapShell({
-    required this.mapController,
-    required this.initialCenter,
-    required this.markersListenable,
-    required this.polylinesListenable,
-  });
-
-  final MapController mapController;
-  final LatLng initialCenter;
-  final ValueListenable<List<Marker>> markersListenable;
-  final ValueListenable<List<Polyline>> polylinesListenable;
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(24),
-      child: SizedBox(
-        height: 300,
-        child: FlutterMap(
-          mapController: mapController,
-          options: MapOptions(
-            initialCenter: initialCenter,
-            initialZoom: 13,
-            interactionOptions: const InteractionOptions(
-              flags: InteractiveFlag.pinchZoom | InteractiveFlag.drag,
-            ),
-          ),
-          children: [
-            TileLayer(
-              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              userAgentPackageName: 'restaurant_customer',
-            ),
-            ValueListenableBuilder<List<Polyline>>(
-              valueListenable: polylinesListenable,
-              builder: (context, polylines, _) {
-                return PolylineLayer(polylines: polylines);
-              },
-            ),
-            ValueListenableBuilder<List<Marker>>(
-              valueListenable: markersListenable,
-              builder: (context, markers, _) {
-                return MarkerLayer(markers: markers);
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _TrackingRouteSnapshot {
-  const _TrackingRouteSnapshot({
-    required this.restaurantPoint,
-    required this.customerPoint,
-    required this.center,
-    this.driverPoint,
-  });
-
-  final LatLng restaurantPoint;
-  final LatLng customerPoint;
-  final LatLng center;
-  final LatLng? driverPoint;
-
-  static _TrackingRouteSnapshot? fromOrder(Map<String, dynamic> order) {
-    final restaurantLat = OrdersService.restaurantLatOf(order);
-    final restaurantLng = OrdersService.restaurantLngOf(order);
-    final customerLat = OrdersService.customerLatOf(order);
-    final customerLng = OrdersService.customerLngOf(order);
-    if (restaurantLat == null ||
-        restaurantLng == null ||
-        customerLat == null ||
-        customerLng == null) {
-      return null;
-    }
-
-    final restaurantPoint = LatLng(restaurantLat, restaurantLng);
-    final customerPoint = LatLng(customerLat, customerLng);
-    final driverLat = OrdersService.driverLatOf(order);
-    final driverLng = OrdersService.driverLngOf(order);
-    final driverPoint = driverLat != null && driverLng != null
-        ? LatLng(driverLat, driverLng)
-        : null;
-    final routePoints = <LatLng>[
-      restaurantPoint,
-      customerPoint,
-      if (driverPoint != null) driverPoint,
-    ];
-    final averageLat =
-        routePoints.map((point) => point.latitude).reduce((a, b) => a + b) /
-            routePoints.length;
-    final averageLng =
-        routePoints.map((point) => point.longitude).reduce((a, b) => a + b) /
-            routePoints.length;
-
-    return _TrackingRouteSnapshot(
-      restaurantPoint: restaurantPoint,
-      customerPoint: customerPoint,
-      center: LatLng(averageLat, averageLng),
-      driverPoint: driverPoint,
-    );
-  }
-
-  @override
-  bool operator ==(Object other) {
-    if (identical(this, other)) {
-      return true;
-    }
-    return other is _TrackingRouteSnapshot &&
-        restaurantPoint.latitude == other.restaurantPoint.latitude &&
-        restaurantPoint.longitude == other.restaurantPoint.longitude &&
-        customerPoint.latitude == other.customerPoint.latitude &&
-        customerPoint.longitude == other.customerPoint.longitude &&
-        driverPoint?.latitude == other.driverPoint?.latitude &&
-        driverPoint?.longitude == other.driverPoint?.longitude;
-  }
-
-  @override
-  int get hashCode => Object.hash(
-        restaurantPoint.latitude,
-        restaurantPoint.longitude,
-        customerPoint.latitude,
-        customerPoint.longitude,
-        driverPoint?.latitude,
-        driverPoint?.longitude,
-      );
-}
-
-class _DriverMarker extends StatelessWidget {
-  const _DriverMarker({
-    required this.angle,
-  });
-
-  final double angle;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: Color(0x22000000),
-            blurRadius: 12,
-            offset: Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Center(
-        child: Transform.rotate(
-          angle: angle,
-          child: const Icon(
-            Icons.navigation_rounded,
-            color: Color(0xFFFB8C00),
-            size: 28,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _MapMarker extends StatelessWidget {
-  const _MapMarker({
-    required this.icon,
-    required this.color,
-  });
-
-  final IconData icon;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: Color(0x22000000),
-            blurRadius: 10,
-            offset: Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Icon(icon, color: color, size: 22),
-    );
-  }
-}
-
-class _TrackingMetaRow extends StatelessWidget {
-  const _TrackingMetaRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 18, color: const Color(0xFF667085)),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Text(
-            '$label: ',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFF667085),
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-        const SizedBox(width: 4),
-        Expanded(
-          child: Text(
-            value,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFF101828),
-              fontWeight: FontWeight.w700,
-              height: 1.4,
-            ),
-          ),
-        ),
-      ],
-    );
   }
 }
 

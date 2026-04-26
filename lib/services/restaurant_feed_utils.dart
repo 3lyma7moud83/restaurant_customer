@@ -5,6 +5,10 @@ import 'restaurants_service.dart';
 class RestaurantFeedUtils {
   RestaurantFeedUtils._();
 
+  static const double _tabletBreakpoint = 700;
+  static const double _desktopBreakpoint = 1000;
+  static const double _wideDesktopBreakpoint = 1400;
+
   static List<Map<String, dynamic>> filterByRange({
     required List<Map<String, dynamic>> source,
     required double? customerLat,
@@ -74,29 +78,37 @@ class RestaurantFeedUtils {
   }
 
   static int calcGridCount(double width) {
-    if (width >= 1320) {
+    if (!width.isFinite || width <= 0) {
+      return 1;
+    }
+    if (width > _wideDesktopBreakpoint) {
       return 4;
     }
-    if (width >= 980) {
+    if (width > _desktopBreakpoint) {
       return 3;
     }
-    if (width >= 700) {
+    if (width > _tabletBreakpoint) {
       return 2;
     }
     return 1;
   }
 
-  static double cardAspectRatioFor(int crossAxisCount) {
-    if (crossAxisCount <= 1) {
-      return 2.04;
-    }
-    if (crossAxisCount == 2) {
-      return 1.92;
-    }
-    if (crossAxisCount == 3) {
-      return 1.84;
-    }
-    return 1.72;
+  static double cardAspectRatioFor({
+    required int crossAxisCount,
+    required double maxWidth,
+  }) {
+    final safeCount = crossAxisCount <= 0 ? 1 : crossAxisCount;
+    final safeWidth = maxWidth.isFinite && maxWidth > 0 ? maxWidth : 360.0;
+    final estimatedSpacing = safeCount <= 1 ? 0.0 : (safeCount - 1) * 14.0;
+    final estimatedCardWidth =
+        ((safeWidth - estimatedSpacing) / safeCount).clamp(220.0, 620.0);
+    final targetHeight = switch (safeCount) {
+      1 => (estimatedCardWidth * 0.50).clamp(138.0, 186.0),
+      2 => (estimatedCardWidth * 0.46).clamp(138.0, 180.0),
+      3 => (estimatedCardWidth * 0.44).clamp(136.0, 172.0),
+      _ => (estimatedCardWidth * 0.42).clamp(132.0, 166.0),
+    };
+    return (estimatedCardWidth / targetHeight).clamp(2.08, 2.95).toDouble();
   }
 
   static bool gridNeedsScroll({

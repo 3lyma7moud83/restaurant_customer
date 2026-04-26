@@ -34,6 +34,17 @@ migrate_working_dir/
 /build/
 .env
 
+# Secrets and local environment files
+supabase.env
+supabase.env.*
+!supabase.env.example
+assets/**/env/app.env
+assets/**/env/app.env.*
+!assets/**/env/app.env.example
+assets/assets/env/
+*.env.local
+*.local.env
+
 # Symbolication related
 app.*.symbols
 

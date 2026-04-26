@@ -3,8 +3,17 @@
 
 const _builds =
     (_flutter && _flutter.buildConfig && _flutter.buildConfig.builds) || [];
-const _hasHtmlRenderer = _builds.some((build) => build.renderer === "html");
+const _availableRenderers = _builds
+    .map((build) => build && build.renderer)
+    .filter((renderer) => typeof renderer === "string");
+
+let _preferredRenderer = null;
+if (_availableRenderers.includes("canvaskit")) {
+  _preferredRenderer = "canvaskit";
+} else if (_availableRenderers.includes("skwasm")) {
+  _preferredRenderer = "skwasm";
+}
 
 _flutter.loader.load({
-  config: _hasHtmlRenderer ? { renderer: "html" } : {},
+  config: _preferredRenderer ? { renderer: _preferredRenderer } : {},
 });

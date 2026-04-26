@@ -9,8 +9,19 @@ if (!window._flutter) {
 _flutter.buildConfig = {"engineRevision":"cb4b5fff73850b2e42bd4de7cb9a4310a78ac40d","builds":[{"compileTarget":"dart2js","renderer":"canvaskit","mainJsPath":"main.dart.js"}]};
 
 
+const _builds =
+    (_flutter && _flutter.buildConfig && _flutter.buildConfig.builds) || [];
+const _availableRenderers = _builds
+    .map((build) => build && build.renderer)
+    .filter((renderer) => typeof renderer === "string");
+
+let _preferredRenderer = null;
+if (_availableRenderers.includes("canvaskit")) {
+  _preferredRenderer = "canvaskit";
+} else if (_availableRenderers.includes("skwasm")) {
+  _preferredRenderer = "skwasm";
+}
+
 _flutter.loader.load({
-  serviceWorkerSettings: {
-    serviceWorkerVersion: "693341648"
-  }
+  config: _preferredRenderer ? { renderer: _preferredRenderer } : {},
 });

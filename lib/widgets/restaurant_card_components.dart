@@ -5,11 +5,10 @@ import 'package:flutter/scheduler.dart';
 
 import '../core/localization/app_localizations.dart';
 import '../core/theme/app_theme.dart';
-import '../services/restaurant_feed_utils.dart';
 
 const Duration _kCardAnimationDuration = AppTheme.sectionTransitionDuration;
 const BorderRadius _kRestaurantCardRadius = BorderRadius.all(
-  Radius.circular(16),
+  Radius.circular(18),
 );
 
 class AppCachedImage extends StatelessWidget {
@@ -151,7 +150,6 @@ class RestaurantListCard extends StatelessWidget {
     super.key,
     required this.name,
     required this.imageUrl,
-    required this.rating,
     required this.deliveryMinutes,
     required this.categoryLabel,
     required this.distanceLabel,
@@ -163,10 +161,9 @@ class RestaurantListCard extends StatelessWidget {
 
   final String name;
   final String? imageUrl;
-  final double rating;
-  final int deliveryMinutes;
-  final String categoryLabel;
-  final String distanceLabel;
+  final int? deliveryMinutes;
+  final String? categoryLabel;
+  final String? distanceLabel;
   final String statusLabel;
   final bool statusPositive;
   final VoidCallback onTap;
@@ -177,154 +174,155 @@ class RestaurantListCard extends StatelessWidget {
     final displayName =
         name.trim().isEmpty ? context.tr('common.restaurant') : name.trim();
 
-    return _InteractiveRestaurantCard(
-      onTap: onTap,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final metrics = _RestaurantCardMetrics.fromConstraints(constraints);
-          final minutesText = '${deliveryMinutes.clamp(1, 300)} '
-              '${context.tr('common.minutes')}';
-          final normalizedCategory = categoryLabel.trim().isEmpty
-              ? context.tr('common.restaurant')
-              : categoryLabel.trim();
-          final normalizedDistance = distanceLabel.trim().isEmpty
-              ? context.tr('common.distance_unknown')
-              : distanceLabel.trim();
-          final normalizedStatus = statusLabel.trim().isEmpty
-              ? context.tr('common.open_now')
-              : statusLabel.trim();
-
-          return Padding(
-            padding: EdgeInsets.all(metrics.contentPadding),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SizedBox(
-                  width: metrics.imageWidth,
-                  child: RestaurantCardImage(
-                    imageUrl: imageUrl,
-                    borderRadius: BorderRadius.circular(metrics.imageRadius),
-                  ),
+    return Align(
+      alignment: Alignment.topCenter,
+      child: _InteractiveRestaurantCard(
+        onTap: onTap,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final metrics = _RestaurantCardMetrics.fromConstraints(constraints);
+            final safeDeliveryMinutes = deliveryMinutes;
+            final minutesText = safeDeliveryMinutes == null
+                ? null
+                : '${safeDeliveryMinutes.clamp(1, 300)} '
+                    '${context.tr('common.minutes')}';
+            final normalizedCategory = categoryLabel?.trim().isNotEmpty == true
+                ? categoryLabel!.trim()
+                : null;
+            final normalizedDistance = distanceLabel?.trim().isNotEmpty == true
+                ? distanceLabel!.trim()
+                : null;
+            final normalizedStatus = statusLabel.trim().isEmpty
+                ? context.tr('common.open_now')
+                : statusLabel.trim();
+            final metaWidgets = <Widget>[
+              if (minutesText != null)
+                _InlineMetaPill(
+                  icon: Icons.schedule_rounded,
+                  label: minutesText,
+                  fontSize: metrics.metaFontSize,
+                  iconSize: metrics.metaIconSize,
+                  iconColor: AppTheme.textMuted,
                 ),
-                SizedBox(width: metrics.horizontalGap),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Text(
-                              displayName,
-                              maxLines: metrics.titleMaxLines,
-                              overflow: TextOverflow.ellipsis,
-                              textAlign: TextAlign.start,
-                              style: TextStyle(
-                                fontSize: metrics.titleFontSize,
-                                height: 1.2,
-                                fontWeight: FontWeight.w800,
-                                color: AppTheme.text,
+            ];
+            final infoBadges = <Widget>[
+              if (normalizedCategory != null)
+                _InfoBadge(
+                  label: normalizedCategory,
+                  fontSize: metrics.badgeFontSize,
+                  icon: Icons.local_dining_rounded,
+                  iconSize: metrics.badgeIconSize,
+                  background: const Color(0xFFF8F5EF),
+                ),
+              if (normalizedDistance != null)
+                _InfoBadge(
+                  label: normalizedDistance,
+                  fontSize: metrics.badgeFontSize,
+                  icon: Icons.place_rounded,
+                  iconSize: metrics.badgeIconSize,
+                  background: const Color(0xFFF4F7FA),
+                ),
+            ];
+            final statusBadge = _InfoBadge(
+              label: normalizedStatus,
+              fontSize: metrics.badgeFontSize,
+              icon: statusPositive
+                  ? Icons.check_circle_rounded
+                  : Icons.pause_circle_rounded,
+              iconSize: metrics.badgeIconSize,
+              background: statusPositive
+                  ? const Color(0xFFE9F7EF)
+                  : const Color(0xFFF5F0F0),
+              foreground: statusPositive
+                  ? const Color(0xFF177A49)
+                  : const Color(0xFF7A3A3A),
+            );
+            final hasMetaSection =
+                metaWidgets.isNotEmpty || infoBadges.isNotEmpty;
+
+            return Padding(
+              padding: EdgeInsets.all(metrics.contentPadding),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: metrics.imageWidth,
+                    height: metrics.imageHeight,
+                    child: RestaurantCardImage(
+                      imageUrl: imageUrl,
+                      borderRadius: BorderRadius.circular(metrics.imageRadius),
+                    ),
+                  ),
+                  SizedBox(width: metrics.horizontalGap),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                displayName,
+                                maxLines: metrics.titleMaxLines,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.start,
+                                style: TextStyle(
+                                  fontSize: metrics.titleFontSize,
+                                  height: 1.2,
+                                  fontWeight: FontWeight.w800,
+                                  color: AppTheme.text,
+                                ),
                               ),
                             ),
-                          ),
-                          if (onInfoTap != null) ...[
-                            SizedBox(width: metrics.titleToInfoGap),
-                            _OverflowActionButton(
-                              onTap: onInfoTap!,
-                              padding: metrics.infoPadding,
-                              iconSize: metrics.infoIconSize,
-                            ),
+                            if (onInfoTap != null) ...[
+                              SizedBox(width: metrics.titleToInfoGap),
+                              _OverflowActionButton(
+                                onTap: onInfoTap!,
+                                padding: metrics.infoPadding,
+                                iconSize: metrics.infoIconSize,
+                              ),
+                            ],
                           ],
+                        ),
+                        if (hasMetaSection)
+                          SizedBox(height: metrics.blockSpacing),
+                        if (metaWidgets.isNotEmpty) ...[
+                          Wrap(
+                            spacing: metrics.metaSpacing,
+                            runSpacing: metrics.metaRunSpacing,
+                            children: metaWidgets,
+                          ),
+                          SizedBox(height: metrics.badgeSectionSpacing),
                         ],
-                      ),
-                      SizedBox(height: metrics.blockSpacing),
-                      Wrap(
-                        spacing: metrics.metaSpacing,
-                        runSpacing: metrics.metaRunSpacing,
-                        children: [
-                          _InlineMetaPill(
-                            icon: Icons.star_rounded,
-                            label: rating.toStringAsFixed(1),
-                            fontSize: metrics.metaFontSize,
-                            iconSize: metrics.metaIconSize,
-                            iconColor: AppTheme.primaryDeep,
+                        if (infoBadges.isNotEmpty) ...[
+                          Wrap(
+                            spacing: metrics.badgeSpacing,
+                            runSpacing: metrics.badgeRunSpacing,
+                            children: infoBadges,
                           ),
-                          _InlineMetaPill(
-                            icon: Icons.schedule_rounded,
-                            label: minutesText,
-                            fontSize: metrics.metaFontSize,
-                            iconSize: metrics.metaIconSize,
-                            iconColor: AppTheme.textMuted,
-                          ),
+                          SizedBox(height: metrics.badgeSectionSpacing),
                         ],
-                      ),
-                      SizedBox(height: metrics.badgeSectionSpacing),
-                      Wrap(
-                        spacing: metrics.badgeSpacing,
-                        runSpacing: metrics.badgeRunSpacing,
-                        children: [
-                          _InfoBadge(
-                            label: normalizedCategory,
-                            fontSize: metrics.badgeFontSize,
-                            icon: Icons.local_dining_rounded,
-                            iconSize: metrics.badgeIconSize,
-                            background: const Color(0xFFF8F5EF),
+                        _StatusAndCtaRow(
+                          spacing: metrics.statusToCtaSpacing,
+                          badgeSpacing: metrics.badgeSpacing,
+                          badgeRunSpacing: metrics.badgeRunSpacing,
+                          statusBadge: statusBadge,
+                          menuBadge: _MenuCtaBadge(
+                            fontSize: metrics.ctaFontSize,
+                            iconSize: metrics.ctaIconSize,
+                            label: context.tr('common.view_menu'),
                           ),
-                          _InfoBadge(
-                            label: normalizedDistance,
-                            fontSize: metrics.badgeFontSize,
-                            icon: Icons.place_rounded,
-                            iconSize: metrics.badgeIconSize,
-                            background: const Color(0xFFF4F7FA),
-                          ),
-                          _InfoBadge(
-                            label: normalizedStatus,
-                            fontSize: metrics.badgeFontSize,
-                            icon: statusPositive
-                                ? Icons.check_circle_rounded
-                                : Icons.pause_circle_rounded,
-                            iconSize: metrics.badgeIconSize,
-                            background: statusPositive
-                                ? const Color(0xFFE9F7EF)
-                                : const Color(0xFFF5F0F0),
-                            foreground: statusPositive
-                                ? const Color(0xFF177A49)
-                                : const Color(0xFF7A3A3A),
-                          ),
-                        ],
-                      ),
-                      const Spacer(),
-                      SizedBox(height: metrics.ctaTopSpacing),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.menu_book_rounded,
-                            size: metrics.ctaIconSize,
-                            color: AppTheme.primary,
-                          ),
-                          const SizedBox(width: 5),
-                          Text(
-                            context.tr('common.view_menu'),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: AppTheme.primaryDeep,
-                              fontSize: metrics.ctaFontSize,
-                              fontWeight: FontWeight.w800,
-                              height: 1.2,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
-          );
-        },
+                ],
+              ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -334,6 +332,7 @@ class RestaurantGridSkeleton extends StatelessWidget {
   const RestaurantGridSkeleton({
     super.key,
     required this.crossAxisCount,
+    required this.childAspectRatio,
     this.itemCount = 6,
     this.padding = EdgeInsets.zero,
     this.mainAxisSpacing = 12,
@@ -342,6 +341,7 @@ class RestaurantGridSkeleton extends StatelessWidget {
   });
 
   final int crossAxisCount;
+  final double childAspectRatio;
   final int itemCount;
   final EdgeInsets padding;
   final double mainAxisSpacing;
@@ -350,10 +350,6 @@ class RestaurantGridSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final childAspectRatio = RestaurantFeedUtils.cardAspectRatioFor(
-      crossAxisCount,
-    );
-
     return GridView.builder(
       padding: padding,
       physics: physics ?? const NeverScrollableScrollPhysics(),
@@ -375,95 +371,97 @@ class _RestaurantSkeletonCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: _kRestaurantCardRadius,
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x14000000),
-            blurRadius: 16,
-            offset: Offset(0, 8),
-          ),
-        ],
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final metrics = _RestaurantCardMetrics.fromConstraints(constraints);
-          final titleWidth = (constraints.maxWidth * 0.48).clamp(120.0, 220.0);
-          final subtitleWidth =
-              (constraints.maxWidth * 0.36).clamp(84.0, 170.0);
-
-          return Padding(
-            padding: EdgeInsets.all(metrics.contentPadding),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _ImageSkeleton(
-                  width: metrics.imageWidth,
-                  height: metrics.imageHeight,
-                  borderRadius: metrics.imageRadius,
-                ),
-                SizedBox(width: metrics.horizontalGap),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _SkeletonLine(
-                        width: titleWidth.toDouble(),
-                        height: metrics.titleLineHeight,
-                      ),
-                      const SizedBox(height: 8),
-                      _SkeletonLine(
-                        width: subtitleWidth.toDouble(),
-                        height: metrics.subtitleLineHeight,
-                      ),
-                      SizedBox(height: metrics.blockSpacing + 2),
-                      Wrap(
-                        spacing: metrics.metaSpacing,
-                        runSpacing: metrics.metaRunSpacing,
-                        children: [
-                          _SkeletonPill(
-                            width: metrics.metaPillWidth,
-                            height: metrics.metaPillHeight,
-                          ),
-                          _SkeletonPill(
-                            width: metrics.metaPillWideWidth,
-                            height: metrics.metaPillHeight,
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: metrics.badgeSectionSpacing),
-                      Wrap(
-                        spacing: metrics.badgeSpacing,
-                        runSpacing: metrics.badgeRunSpacing,
-                        children: [
-                          _SkeletonPill(
-                            width: metrics.badgePillWidth,
-                            height: metrics.badgePillHeight,
-                          ),
-                          _SkeletonPill(
-                            width: metrics.badgePillWideWidth,
-                            height: metrics.badgePillHeight,
-                          ),
-                          _SkeletonPill(
-                            width: metrics.badgePillWidth,
-                            height: metrics.badgePillHeight,
-                          ),
-                        ],
-                      ),
-                      const Spacer(),
-                      _SkeletonLine(
-                        width: (constraints.maxWidth * 0.28).clamp(86.0, 140.0),
-                        height: metrics.subtitleLineHeight,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+    return Align(
+      alignment: Alignment.topCenter,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: _kRestaurantCardRadius,
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x14000000),
+              blurRadius: 16,
+              offset: Offset(0, 8),
             ),
-          );
-        },
+          ],
+        ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final metrics = _RestaurantCardMetrics.fromConstraints(constraints);
+            final titleWidth =
+                (constraints.maxWidth * 0.48).clamp(120.0, 220.0);
+            final subtitleWidth =
+                (constraints.maxWidth * 0.36).clamp(84.0, 170.0);
+
+            return Padding(
+              padding: EdgeInsets.all(metrics.contentPadding),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _ImageSkeleton(
+                    width: metrics.imageWidth,
+                    height: metrics.imageHeight,
+                    borderRadius: metrics.imageRadius,
+                  ),
+                  SizedBox(width: metrics.horizontalGap),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _SkeletonLine(
+                          width: titleWidth.toDouble(),
+                          height: metrics.titleLineHeight,
+                        ),
+                        SizedBox(height: metrics.blockSpacing),
+                        _SkeletonLine(
+                          width: subtitleWidth.toDouble(),
+                          height: metrics.subtitleLineHeight,
+                        ),
+                        SizedBox(height: metrics.blockSpacing),
+                        Wrap(
+                          spacing: metrics.metaSpacing,
+                          runSpacing: metrics.metaRunSpacing,
+                          children: [
+                            _SkeletonPill(
+                              width: metrics.metaPillWidth,
+                              height: metrics.metaPillHeight,
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: metrics.badgeSectionSpacing),
+                        Wrap(
+                          spacing: metrics.badgeSpacing,
+                          runSpacing: metrics.badgeRunSpacing,
+                          children: [
+                            _SkeletonPill(
+                              width: metrics.badgePillWidth,
+                              height: metrics.badgePillHeight,
+                            ),
+                            _SkeletonPill(
+                              width: metrics.badgePillWideWidth,
+                              height: metrics.badgePillHeight,
+                            ),
+                            _SkeletonPill(
+                              width: metrics.badgePillWidth,
+                              height: metrics.badgePillHeight,
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: metrics.badgeSectionSpacing),
+                        _SkeletonLine(
+                          width:
+                              (constraints.maxWidth * 0.28).clamp(86.0, 140.0),
+                          height: metrics.subtitleLineHeight,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -539,7 +537,6 @@ class _SkeletonPill extends StatelessWidget {
 
 class _RestaurantCardMetrics {
   const _RestaurantCardMetrics({
-    required this.compact,
     required this.contentPadding,
     required this.imageWidth,
     required this.imageHeight,
@@ -560,7 +557,7 @@ class _RestaurantCardMetrics {
     required this.badgeRunSpacing,
     required this.badgeFontSize,
     required this.badgeIconSize,
-    required this.ctaTopSpacing,
+    required this.statusToCtaSpacing,
     required this.ctaFontSize,
     required this.ctaIconSize,
     required this.titleLineHeight,
@@ -575,55 +572,60 @@ class _RestaurantCardMetrics {
 
   factory _RestaurantCardMetrics.fromConstraints(BoxConstraints constraints) {
     final width = constraints.maxWidth.clamp(240.0, 620.0).toDouble();
-    final height = constraints.maxHeight.clamp(124.0, 228.0).toDouble();
-    final compact = width < 350;
-    final roomy = width >= 460;
+    final compact = width < 360;
+    final roomy = width >= 440;
     final contentPadding = compact
-        ? 10.0
+        ? 7.0
         : roomy
-            ? 14.0
-            : 12.0;
+            ? 9.0
+            : 8.0;
     final imageWidth =
-        (width * (compact ? 0.33 : 0.31)).clamp(96.0, 150.0).toDouble();
-    final imageHeight = (height - (contentPadding * 2)).clamp(92.0, 180.0);
+        (width * (compact ? 0.30 : 0.28)).clamp(84.0, 124.0).toDouble();
+    final imageHeight = compact
+        ? 82.0
+        : roomy
+            ? 90.0
+            : 86.0;
 
     return _RestaurantCardMetrics(
-      compact: compact,
       contentPadding: contentPadding,
       imageWidth: imageWidth,
       imageHeight: imageHeight,
-      imageRadius: compact ? 14.0 : 16.0,
-      horizontalGap: compact ? 10.0 : 13.0,
-      titleMaxLines: 2,
-      titleFontSize: compact ? 16.0 : 17.8,
-      titleToInfoGap: compact ? 12.0 : 14.0,
-      infoPadding: compact ? 5.0 : 6.0,
-      infoIconSize: compact ? 17.0 : 18.5,
-      blockSpacing: compact ? 8.0 : 10.0,
-      metaSpacing: compact ? 8.0 : 10.0,
-      metaRunSpacing: compact ? 6.0 : 7.0,
-      metaFontSize: compact ? 11.2 : 12.2,
-      metaIconSize: compact ? 14.0 : 15.0,
-      badgeSectionSpacing: compact ? 7.0 : 8.0,
-      badgeSpacing: compact ? 7.0 : 8.0,
-      badgeRunSpacing: compact ? 6.0 : 7.0,
-      badgeFontSize: compact ? 10.2 : 11.1,
-      badgeIconSize: compact ? 13.5 : 14.5,
-      ctaTopSpacing: compact ? 7.0 : 8.0,
-      ctaFontSize: compact ? 11.2 : 12.0,
-      ctaIconSize: compact ? 15.0 : 16.0,
-      titleLineHeight: compact ? 13.0 : 14.0,
-      subtitleLineHeight: compact ? 11.0 : 12.0,
-      metaPillHeight: compact ? 24.0 : 26.0,
-      metaPillWidth: compact ? 58.0 : 64.0,
-      metaPillWideWidth: compact ? 88.0 : 102.0,
-      badgePillHeight: compact ? 22.0 : 24.0,
-      badgePillWidth: compact ? 66.0 : 74.0,
-      badgePillWideWidth: compact ? 80.0 : 94.0,
+      imageRadius: compact ? 12.0 : 14.0,
+      horizontalGap: compact ? 7.0 : 9.0,
+      titleMaxLines: compact ? 1 : 2,
+      titleFontSize: compact
+          ? 14.2
+          : roomy
+              ? 15.8
+              : 14.9,
+      titleToInfoGap: compact ? 5.0 : 6.0,
+      infoPadding: compact ? 4.2 : 4.8,
+      infoIconSize: compact ? 15.0 : 16.2,
+      blockSpacing: compact ? 2.6 : 3.2,
+      metaSpacing: compact ? 5.0 : 6.0,
+      metaRunSpacing: compact ? 3.4 : 4.0,
+      metaFontSize: compact ? 10.2 : 10.8,
+      metaIconSize: compact ? 12.4 : 13.2,
+      badgeSectionSpacing: compact ? 2.8 : 3.4,
+      badgeSpacing: compact ? 4.6 : 5.4,
+      badgeRunSpacing: compact ? 3.4 : 4.0,
+      badgeFontSize: compact ? 9.9 : 10.6,
+      badgeIconSize: compact ? 12.2 : 13.2,
+      statusToCtaSpacing: compact ? 4.0 : 5.0,
+      ctaFontSize: compact ? 9.9 : 10.6,
+      ctaIconSize: compact ? 13.4 : 14.4,
+      titleLineHeight: compact ? 12.0 : 13.0,
+      subtitleLineHeight: compact ? 10.0 : 11.0,
+      metaPillHeight: compact ? 20.0 : 22.0,
+      metaPillWidth: compact ? 56.0 : 66.0,
+      metaPillWideWidth: compact ? 78.0 : 92.0,
+      badgePillHeight: compact ? 19.0 : 21.0,
+      badgePillWidth: compact ? 64.0 : 74.0,
+      badgePillWideWidth: compact ? 78.0 : 92.0,
     );
   }
 
-  final bool compact;
   final double contentPadding;
   final double imageWidth;
   final double imageHeight;
@@ -644,7 +646,7 @@ class _RestaurantCardMetrics {
   final double badgeRunSpacing;
   final double badgeFontSize;
   final double badgeIconSize;
-  final double ctaTopSpacing;
+  final double statusToCtaSpacing;
   final double ctaFontSize;
   final double ctaIconSize;
   final double titleLineHeight;
@@ -671,17 +673,140 @@ class _OverflowActionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: const Color(0xFFF8F9FB),
+      color: const Color(0xFFFFFAF3),
       borderRadius: BorderRadius.circular(999),
+      elevation: 0,
+      shadowColor: Colors.transparent,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(999),
-        child: Padding(
-          padding: EdgeInsets.all(padding),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          padding: EdgeInsets.all(padding + 1),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: AppTheme.border.withValues(alpha: 0.95),
+            ),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x11000000),
+                blurRadius: 8,
+                offset: Offset(0, 4),
+              ),
+            ],
+          ),
           child: Icon(
-            Icons.more_horiz_rounded,
+            Icons.error_outline_rounded,
             size: iconSize,
-            color: AppTheme.textMuted,
+            color: AppTheme.primaryDeep,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusAndCtaRow extends StatelessWidget {
+  const _StatusAndCtaRow({
+    required this.spacing,
+    required this.badgeSpacing,
+    required this.badgeRunSpacing,
+    required this.statusBadge,
+    required this.menuBadge,
+  });
+
+  final double spacing;
+  final double badgeSpacing;
+  final double badgeRunSpacing;
+  final Widget statusBadge;
+  final Widget menuBadge;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final narrow = constraints.maxWidth < 260;
+        if (narrow) {
+          return Wrap(
+            spacing: badgeSpacing,
+            runSpacing: badgeRunSpacing,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              statusBadge,
+              menuBadge,
+            ],
+          );
+        }
+
+        return Row(
+          children: [
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: statusBadge,
+              ),
+            ),
+            SizedBox(width: spacing),
+            Flexible(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: menuBadge,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _MenuCtaBadge extends StatelessWidget {
+  const _MenuCtaBadge({
+    required this.fontSize,
+    required this.iconSize,
+    required this.label,
+  });
+
+  final double fontSize;
+  final double iconSize;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final maxChipWidth =
+        (MediaQuery.sizeOf(context).width * 0.40).clamp(116.0, 220.0);
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxChipWidth.toDouble()),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: AppTheme.primary.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: AppTheme.primary.withValues(alpha: 0.24)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.menu_book_rounded,
+                  size: iconSize, color: AppTheme.primaryDeep),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  '$label \u2192',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AppTheme.primaryDeep,
+                    fontWeight: FontWeight.w800,
+                    fontSize: fontSize,
+                    height: 1.15,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -712,7 +837,7 @@ class _InlineMetaPill extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -754,7 +879,7 @@ class _InfoBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final textColor = foreground ?? AppTheme.textMuted;
     final maxChipWidth =
-        (MediaQuery.sizeOf(context).width * 0.42).clamp(108.0, 192.0);
+        (MediaQuery.sizeOf(context).width * 0.40).clamp(110.0, 212.0);
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxChipWidth.toDouble()),
       child: DecoratedBox(
@@ -763,7 +888,7 @@ class _InfoBadge extends StatelessWidget {
           borderRadius: BorderRadius.circular(999),
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -847,59 +972,69 @@ class _InteractiveRestaurantCardState
 
   @override
   Widget build(BuildContext context) {
-    final trackInteractionState = !kIsWeb;
-    final enableAnimations = trackInteractionState;
+    final enableAnimations =
+        !kIsWeb || defaultTargetPlatform == TargetPlatform.android;
     final duration = enableAnimations ? _kCardAnimationDuration : Duration.zero;
+    const interactionCurve = Curves.easeOutBack;
 
     final shadowColor = _pressed
-        ? const Color(0x14000000)
+        ? const Color(0x17000000)
         : _hovered
-            ? const Color(0x1A000000)
+            ? const Color(0x1D000000)
             : const Color(0x12000000);
 
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      onEnter: trackInteractionState ? (_) => _setHovered(true) : null,
-      onExit: trackInteractionState
-          ? (_) {
-              _setHovered(false);
-              _setPressed(false);
-            }
-          : null,
+      onEnter: (_) => _setHovered(true),
+      onExit: (_) {
+        _setHovered(false);
+        _setPressed(false);
+      },
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
-        onTapDown: trackInteractionState ? (_) => _setPressed(true) : null,
-        onTapUp: trackInteractionState ? (_) => _setPressed(false) : null,
-        onTapCancel: trackInteractionState ? () => _setPressed(false) : null,
+        onTapDown: (_) => _setPressed(true),
+        onTapUp: (_) => _setPressed(false),
+        onTapCancel: () => _setPressed(false),
         child: AnimatedScale(
-          scale: enableAnimations && _pressed ? 0.98 : 1,
+          scale: enableAnimations
+              ? (_pressed ? 0.978 : (_hovered ? 1.004 : 1))
+              : 1,
           duration: enableAnimations
-              ? AppTheme.microInteractionDuration
+              ? const Duration(milliseconds: 180)
               : Duration.zero,
-          curve: AppTheme.emphasizedCurve,
-          child: AnimatedContainer(
+          curve: interactionCurve,
+          child: AnimatedSlide(
             duration: duration,
             curve: AppTheme.emphasizedCurve,
-            decoration: BoxDecoration(
-              borderRadius: _kRestaurantCardRadius,
-              boxShadow: [
-                BoxShadow(
-                  color: shadowColor,
-                  blurRadius: enableAnimations
-                      ? (_hovered ? 20 : (_pressed ? 10 : 16))
-                      : 14,
-                  offset: enableAnimations
-                      ? Offset(0, _hovered ? 12 : (_pressed ? 5 : 9))
-                      : const Offset(0, 8),
-                ),
-              ],
-            ),
-            child: Material(
-              color: Colors.white,
-              borderRadius: _kRestaurantCardRadius,
-              clipBehavior: Clip.antiAlias,
-              child: widget.child,
+            offset: enableAnimations
+                ? (_pressed
+                    ? const Offset(0, 0.008)
+                    : (_hovered ? const Offset(0, -0.004) : Offset.zero))
+                : Offset.zero,
+            child: AnimatedContainer(
+              duration: duration,
+              curve: interactionCurve,
+              decoration: BoxDecoration(
+                borderRadius: _kRestaurantCardRadius,
+                boxShadow: [
+                  BoxShadow(
+                    color: shadowColor,
+                    blurRadius: enableAnimations
+                        ? (_hovered ? 22 : (_pressed ? 11 : 16))
+                        : 14,
+                    offset: enableAnimations
+                        ? Offset(0, _hovered ? 13 : (_pressed ? 5 : 9))
+                        : const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Material(
+                color: Colors.white,
+                borderRadius: _kRestaurantCardRadius,
+                clipBehavior: Clip.antiAlias,
+                child: widget.child,
+              ),
             ),
           ),
         ),

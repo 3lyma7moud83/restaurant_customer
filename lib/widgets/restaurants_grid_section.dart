@@ -59,6 +59,10 @@ class RestaurantsGridSection extends StatelessWidget {
           constraints: constraints,
           crossAxisCount: crossAxisCount,
         );
+        final childAspectRatio = RestaurantFeedUtils.cardAspectRatioFor(
+          crossAxisCount: crossAxisCount,
+          maxWidth: constraints.maxWidth,
+        );
         final Widget content;
         if (loading) {
           content = RestaurantGridSkeleton(
@@ -66,6 +70,7 @@ class RestaurantsGridSection extends StatelessWidget {
             crossAxisCount: crossAxisCount,
             mainAxisSpacing: gridMetrics.mainAxisSpacing,
             crossAxisSpacing: gridMetrics.crossAxisSpacing,
+            childAspectRatio: childAspectRatio,
             padding: EdgeInsets.only(bottom: gridMetrics.bottomPadding),
           );
         } else if (hasError) {
@@ -82,6 +87,7 @@ class RestaurantsGridSection extends StatelessWidget {
             searchQueryListenable: searchQueryListenable,
             onRefresh: onRefresh,
             gridMetrics: gridMetrics,
+            childAspectRatio: childAspectRatio,
             customerLat: customerLat,
             customerLng: customerLng,
             emptyKey: emptyKey,
@@ -115,6 +121,7 @@ class _SearchFilteredRestaurants extends StatelessWidget {
     required this.searchQueryListenable,
     required this.onRefresh,
     required this.gridMetrics,
+    required this.childAspectRatio,
     required this.customerLat,
     required this.customerLng,
     required this.emptyKey,
@@ -129,6 +136,7 @@ class _SearchFilteredRestaurants extends StatelessWidget {
   final ValueListenable<String> searchQueryListenable;
   final Future<void> Function() onRefresh;
   final _RestaurantGridMetrics gridMetrics;
+  final double childAspectRatio;
   final double? customerLat;
   final double? customerLng;
   final String emptyKey;
@@ -158,6 +166,7 @@ class _SearchFilteredRestaurants extends StatelessWidget {
             constraints: constraints,
             crossAxisCount: crossAxisCount,
             gridMetrics: gridMetrics,
+            childAspectRatio: childAspectRatio,
             customerLat: customerLat,
             customerLng: customerLng,
             restaurants: filtered,
@@ -175,6 +184,7 @@ class _RestaurantGrid extends StatelessWidget {
     required this.constraints,
     required this.crossAxisCount,
     required this.gridMetrics,
+    required this.childAspectRatio,
     required this.customerLat,
     required this.customerLng,
     required this.restaurants,
@@ -185,6 +195,7 @@ class _RestaurantGrid extends StatelessWidget {
   final BoxConstraints constraints;
   final int crossAxisCount;
   final _RestaurantGridMetrics gridMetrics;
+  final double childAspectRatio;
   final double? customerLat;
   final double? customerLng;
   final List<Map<String, dynamic>> restaurants;
@@ -193,39 +204,21 @@ class _RestaurantGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final childAspectRatio = RestaurantFeedUtils.cardAspectRatioFor(
-      crossAxisCount,
-    );
-
-    final needsScroll = RestaurantFeedUtils.gridNeedsScroll(
-      maxWidth: constraints.maxWidth,
-      maxHeight: constraints.maxHeight,
-      crossAxisCount: crossAxisCount,
-      itemCount: restaurants.length,
-      crossAxisSpacing: gridMetrics.crossAxisSpacing,
-      mainAxisSpacing: gridMetrics.mainAxisSpacing,
-      childAspectRatio: childAspectRatio,
-    );
-
-    final physics = AppTheme.conditionalScrollPhysics(canScroll: needsScroll);
+    final physics = AppTheme.bouncingScrollPhysics;
     final cacheExtent = constraints.maxHeight.clamp(520.0, 1200.0).toDouble();
-    final delegate = SliverGridDelegateWithFixedCrossAxisCount(
-      crossAxisCount: crossAxisCount,
-      mainAxisSpacing: gridMetrics.mainAxisSpacing,
-      crossAxisSpacing: gridMetrics.crossAxisSpacing,
-      childAspectRatio: childAspectRatio,
-    );
 
     return GridView.builder(
-      primary: false,
       physics: physics,
       padding: EdgeInsets.only(bottom: gridMetrics.bottomPadding),
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       cacheExtent: cacheExtent,
-      addAutomaticKeepAlives: false,
-      addRepaintBoundaries: false,
       itemCount: restaurants.length,
-      gridDelegate: delegate,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: crossAxisCount,
+        childAspectRatio: childAspectRatio,
+        crossAxisSpacing: gridMetrics.crossAxisSpacing,
+        mainAxisSpacing: gridMetrics.mainAxisSpacing,
+      ),
       itemBuilder: (context, index) {
         final restaurant = restaurants[index];
         final restaurantId = RestaurantsService.restaurantIdOf(restaurant);
@@ -236,14 +229,13 @@ class _RestaurantGrid extends StatelessWidget {
           customerLng: customerLng,
         );
 
-        return RepaintBoundary(
+        final card = RepaintBoundary(
           key: ValueKey(
             restaurantId.isEmpty ? 'restaurant-index-$index' : restaurantId,
           ),
           child: RestaurantListCard(
             name: RestaurantsService.cardNameOf(restaurant),
             imageUrl: RestaurantsService.cardImageOf(restaurant),
-            rating: presentation.rating,
             deliveryMinutes: presentation.deliveryMinutes,
             categoryLabel: presentation.categoryLabel,
             distanceLabel: presentation.distanceLabel,
@@ -254,6 +246,25 @@ class _RestaurantGrid extends StatelessWidget {
                 : () => onInfoTap!(context, restaurant),
             onTap: () => onTap(context, restaurant),
           ),
+        );
+
+        final animationDuration = Duration(
+          milliseconds: 220 + (index.clamp(0, 8) * 24),
+        );
+        return TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0, end: 1),
+          duration: kIsWeb ? Duration.zero : animationDuration,
+          curve: Curves.easeOutBack,
+          child: card,
+          builder: (context, value, child) {
+            return Opacity(
+              opacity: value.clamp(0, 1).toDouble(),
+              child: Transform.translate(
+                offset: Offset(0, (1 - value) * 14),
+                child: child,
+              ),
+            );
+          },
         );
       },
     );
@@ -273,13 +284,16 @@ class _RestaurantGridMetrics {
   }) {
     final width = constraints.maxWidth;
     final compact = width < 420;
-    final spacing = crossAxisCount == 1
-        ? (compact ? 10.0 : 12.0)
-        : (width * 0.016).clamp(10.0, 16.0).toDouble();
+    final spacing = switch (crossAxisCount) {
+      1 => compact ? 10.0 : 12.0,
+      2 => 14.0,
+      3 => 15.0,
+      _ => 16.0,
+    };
     return _RestaurantGridMetrics(
       crossAxisSpacing: spacing,
       mainAxisSpacing: spacing,
-      bottomPadding: (spacing + 8).clamp(14.0, 24.0).toDouble(),
+      bottomPadding: (spacing + 10).clamp(16.0, 30.0).toDouble(),
     );
   }
 
@@ -290,7 +304,6 @@ class _RestaurantGridMetrics {
 
 class _RestaurantCardPresentation {
   const _RestaurantCardPresentation({
-    required this.rating,
     required this.deliveryMinutes,
     required this.categoryLabel,
     required this.distanceLabel,
@@ -304,23 +317,27 @@ class _RestaurantCardPresentation {
     required double? customerLat,
     required double? customerLng,
   }) {
-    final rating = RestaurantsService.cardRatingOf(restaurant);
-    final deliveryMinutes =
-        RestaurantsService.cardDeliveryMinutesOf(restaurant);
-    final categoryLabel = _categoryLabelOf(
-      context: context,
-      restaurant: restaurant,
-    );
-    final distanceLabel = _distanceLabelOf(
-      context: context,
+    final distanceKm = RestaurantsService.distanceKmToCustomer(
       restaurant: restaurant,
       customerLat: customerLat,
       customerLng: customerLng,
     );
+    final deliveryMinutes = RestaurantsService.cardDeliveryMinutesOf(
+      restaurant,
+      customerLat: customerLat,
+      customerLng: customerLng,
+      distanceKm: distanceKm,
+    );
+    final categoryLabel = _categoryLabelOf(
+      restaurant: restaurant,
+    );
+    final distanceLabel = _distanceLabelOf(
+      context: context,
+      distanceKm: distanceKm,
+    );
     final status = _openStatusOf(context, restaurant);
 
     return _RestaurantCardPresentation(
-      rating: rating,
       deliveryMinutes: deliveryMinutes,
       categoryLabel: categoryLabel,
       distanceLabel: distanceLabel,
@@ -329,57 +346,26 @@ class _RestaurantCardPresentation {
     );
   }
 
-  final double rating;
-  final int deliveryMinutes;
-  final String categoryLabel;
-  final String distanceLabel;
+  final int? deliveryMinutes;
+  final String? categoryLabel;
+  final String? distanceLabel;
   final String statusLabel;
   final bool statusPositive;
 
-  static String _categoryLabelOf({
-    required BuildContext context,
+  static String? _categoryLabelOf({
     required Map<String, dynamic> restaurant,
   }) {
-    final possible = [
-      restaurant['category'],
-      restaurant['cuisine'],
-      restaurant['restaurant_type'],
-      restaurant['type'],
-      restaurant['main_category'],
-    ];
-    for (final value in possible) {
-      final label = value?.toString().trim();
-      if (label != null && label.isNotEmpty && label != 'null') {
-        return label;
-      }
-    }
-    return context.tr('common.restaurant');
+    final label = RestaurantsService.cardTypeOf(restaurant);
+    return label?.trim().isNotEmpty == true ? label!.trim() : null;
   }
 
-  static String _distanceLabelOf({
+  static String? _distanceLabelOf({
     required BuildContext context,
-    required Map<String, dynamic> restaurant,
-    required double? customerLat,
-    required double? customerLng,
+    required double? distanceKm,
   }) {
-    if (customerLat == null || customerLng == null) {
-      return context.tr('common.distance_unknown');
-    }
-    final lat = RestaurantsService.restaurantLatOf(restaurant);
-    final lng = RestaurantsService.restaurantLngOf(restaurant);
-    if (lat == null || lng == null) {
-      return context.tr('common.distance_unknown');
-    }
-
-    final km = RestaurantsService.haversineDistanceMeters(
-          fromLat: customerLat,
-          fromLng: customerLng,
-          toLat: lat,
-          toLng: lng,
-        ) /
-        1000;
-    if (!km.isFinite || km < 0) {
-      return context.tr('common.distance_unknown');
+    final km = distanceKm;
+    if (km == null || !km.isFinite || km < 0) {
+      return null;
     }
 
     final precision = km >= 10 ? 0 : 1;

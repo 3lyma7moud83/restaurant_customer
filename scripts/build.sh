@@ -48,7 +48,18 @@ write_runtime_env_asset() {
 
   mkdir -p "assets/env"
 
-  local required_vars=("SUPABASE_URL" "SUPABASE_ANON_KEY" "MAPBOX_TOKEN")
+  local required_vars=(
+    "SUPABASE_URL"
+    "SUPABASE_ANON_KEY"
+    "MAPBOX_TOKEN"
+    "FIREBASE_API_KEY"
+    "FIREBASE_PROJECT_ID"
+    "FIREBASE_MESSAGING_SENDER_ID"
+    "FIREBASE_ANDROID_APP_ID"
+    "FIREBASE_WEB_APP_ID"
+    "FIREBASE_AUTH_DOMAIN"
+    "FIREBASE_WEB_VAPID_KEY"
+  )
   local missing=()
   local key
   for key in "${required_vars[@]}"; do
