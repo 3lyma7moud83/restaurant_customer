@@ -27,7 +27,7 @@ class AppLogo extends StatelessWidget {
 
         // النص
         const Text(
-          "Delivery",
+          "Delivery Mat3mk",
           style: TextStyle(
             fontSize: 28,
             fontWeight: FontWeight.bold,

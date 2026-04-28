@@ -672,7 +672,6 @@ class _HomeAppBarTitle extends StatelessWidget {
     this.compact = false,
   });
 
-  static const String _fixedAppName = 'delivery-mat3mk';
   final bool compact;
 
   @override
@@ -688,6 +687,7 @@ class _HomeAppBarTitle extends StatelessWidget {
         : compact
             ? 15.2
             : 16.8;
+    final appName = context.tr('app.name');
 
     return Padding(
       padding: EdgeInsets.symmetric(
@@ -706,7 +706,7 @@ class _HomeAppBarTitle extends StatelessWidget {
             ),
             SizedBox(width: compact ? 5 : 7),
             Text(
-              _fixedAppName,
+              appName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(

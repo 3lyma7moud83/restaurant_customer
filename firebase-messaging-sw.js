@@ -160,15 +160,19 @@ function buildNotificationPresentation(payload) {
 
   const data = buildBackgroundNotificationData(payload);
   const title =
-    payload?.notification?.title ||
-    payload?.webpush?.notification?.title ||
-    data.title ||
-    'New notification';
+    normalizeBrandingText(
+      payload?.notification?.title ||
+        payload?.webpush?.notification?.title ||
+        data.title ||
+        'Delivery Mat3mk',
+    );
   const body =
-    payload?.notification?.body ||
-    payload?.webpush?.notification?.body ||
-    data.body ||
-    '';
+    normalizeBrandingText(
+      payload?.notification?.body ||
+        payload?.webpush?.notification?.body ||
+        data.body ||
+        '',
+    );
   const clickAction = resolveTargetPath(data);
   if (!data.click_action && clickAction) {
     data.click_action = clickAction;
@@ -467,6 +471,18 @@ function stripWrappingQuotes(value) {
     return value.slice(1, -1).trim();
   }
   return value;
+}
+
+function normalizeBrandingText(value) {
+  if (typeof value !== 'string' || value.length === 0) {
+    return value || '';
+  }
+
+  return value
+    .replace(/support@delivery-mat3mk\.com/gi, 'support@deliverymat3mk.com')
+    .replace(/delivery-mat3mk/gi, 'Delivery Mat3mk')
+    .replace(/restaurant_(customer|driver|admin)/gi, 'Delivery Mat3mk')
+    .replace(/mat3amak/gi, 'Delivery Mat3mk');
 }
 
 function resolveTargetPath(data) {

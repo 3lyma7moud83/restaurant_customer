@@ -28,7 +28,7 @@ const AndroidNotificationChannel _ordersNotificationChannel =
   playSound: true,
   enableVibration: true,
 );
-const String _androidNotificationIcon = '@drawable/ic_stat_notification';
+const String _androidNotificationIcon = 'ic_stat_notification';
 
 const String _notificationTokensTable = 'notification_tokens';
 const String _notificationTokenColumn = 'fcm_token';
@@ -602,11 +602,14 @@ class AppNotificationService {
       return;
     }
 
-    final title = message.notification?.title ??
-        message.data['title']?.toString() ??
-        'إشعار جديد';
-    final body =
-        message.notification?.body ?? message.data['body']?.toString() ?? '';
+    final title = _normalizeBrandingText(
+      message.notification?.title ??
+          message.data['title']?.toString() ??
+          'Delivery Mat3mk',
+    );
+    final body = _normalizeBrandingText(
+      message.notification?.body ?? message.data['body']?.toString() ?? '',
+    );
     final data = _normalizeStringData(message.data);
 
     if (kIsWeb) {
@@ -1306,6 +1309,31 @@ class AppNotificationService {
       return token;
     }
     return '${token.substring(0, 6)}...${token.substring(token.length - 6)}';
+  }
+
+  String _normalizeBrandingText(String value) {
+    if (value.isEmpty) {
+      return value;
+    }
+
+    var normalized = value;
+    normalized = normalized.replaceAllMapped(
+      RegExp(r'support@delivery-mat3mk\.com', caseSensitive: false),
+      (_) => 'support@deliverymat3mk.com',
+    );
+    normalized = normalized.replaceAllMapped(
+      RegExp(r'delivery-mat3mk', caseSensitive: false),
+      (_) => 'Delivery Mat3mk',
+    );
+    normalized = normalized.replaceAllMapped(
+      RegExp(r'restaurant_(customer|driver|admin)', caseSensitive: false),
+      (_) => 'Delivery Mat3mk',
+    );
+    normalized = normalized.replaceAllMapped(
+      RegExp(r'mat3amak', caseSensitive: false),
+      (_) => 'Delivery Mat3mk',
+    );
+    return normalized;
   }
 }
 

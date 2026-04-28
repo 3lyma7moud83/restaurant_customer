@@ -50,14 +50,43 @@ class AppContentEntry {
     return AppContentEntry(
       id: (row['id'] ?? '').toString(),
       section: section,
-      title: (row['title'] ?? '').toString().trim(),
-      content: (row['content'] ?? '').toString().trim(),
+      title: _normalizeBrandingForDisplay(
+        (row['title'] ?? '').toString().trim(),
+      ),
+      content: _normalizeBrandingForDisplay(
+        (row['content'] ?? '').toString().trim(),
+      ),
       language: (row['language'] ?? '').toString().trim().toLowerCase(),
       isActive: row['is_active'] == true,
       createdAt: createdAt,
       updatedAt: updatedAt,
     );
   }
+}
+
+String _normalizeBrandingForDisplay(String value) {
+  if (value.isEmpty) {
+    return value;
+  }
+
+  var normalized = value;
+  normalized = normalized.replaceAllMapped(
+    RegExp(r'support@delivery-mat3mk\.com', caseSensitive: false),
+    (_) => 'support@deliverymat3mk.com',
+  );
+  normalized = normalized.replaceAllMapped(
+    RegExp(r'delivery-mat3mk', caseSensitive: false),
+    (_) => 'Delivery Mat3mk',
+  );
+  normalized = normalized.replaceAllMapped(
+    RegExp(r'restaurant_(customer|driver|admin)', caseSensitive: false),
+    (_) => 'Delivery Mat3mk',
+  );
+  normalized = normalized.replaceAllMapped(
+    RegExp(r'mat3amak', caseSensitive: false),
+    (_) => 'Delivery Mat3mk',
+  );
+  return normalized;
 }
 
 class AppContentService {
@@ -173,13 +202,13 @@ class AppContentService {
       titleEn: 'Technical Support',
       contentAr:
           'للمساعدة الفنية المتعلقة بالتطبيق أو الطلبات، تواصل مع فريق الدعم عبر:\n'
-          'البريد: support@delivery-mat3mk.com\n'
+          'البريد: support@deliverymat3mk.com\n'
           'الهاتف: +20 100 000 0000\n'
           'ساعات الدعم: يوميًا من 10:00 صباحًا حتى 10:00 مساءً.\n'
           'يرجى إرفاق رقم الطلب ووصف واضح للمشكلة لتسريع المعالجة.',
       contentEn:
           'For technical assistance related to the app or orders, contact support:\n'
-          'Email: support@delivery-mat3mk.com\n'
+          'Email: support@deliverymat3mk.com\n'
           'Phone: +20 100 000 0000\n'
           'Support hours: Daily from 10:00 AM to 10:00 PM.\n'
           'Please include your order number and a clear issue description.',

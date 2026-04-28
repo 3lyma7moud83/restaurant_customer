@@ -48,7 +48,7 @@ class AppLocalizations {
 
   static const Map<String, Map<String, String>> _localizedValues = {
     'ar': {
-      'app.name': 'delivery-mat3mk',
+      'app.name': 'Delivery Mat3mk',
       'app.bootstrap_failed_title': 'تعذر تشغيل التطبيق',
       'app.bootstrap_env_error':
           'فشل تحميل إعدادات البيئة. تأكد من APP_ENV وملف assets/env/app.env.',
@@ -239,7 +239,7 @@ class AppLocalizations {
       'lang.current_en': 'EN',
     },
     'en': {
-      'app.name': 'delivery-mat3mk',
+      'app.name': 'Delivery Mat3mk',
       'app.bootstrap_failed_title': 'Unable to start the app',
       'app.bootstrap_env_error':
           'Failed to load environment settings. Check APP_ENV and assets/env/app.env.',

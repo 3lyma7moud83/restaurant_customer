@@ -70,7 +70,7 @@ class _CustomerAppState extends State<CustomerApp> {
               navigatorKey: SessionManager.navigatorKey,
               scaffoldMessengerKey: ErrorLogger.scaffoldMessengerKey,
               debugShowCheckedModeBanner: false,
-              title: 'delivery-mat3mk',
+              title: 'Delivery Mat3mk',
               theme: AppTheme.light(),
               scrollBehavior: const _AppScrollBehavior(),
               locale: _localeController.locale,
