@@ -9,7 +9,7 @@ import '../cart/cart_provider.dart';
 import '../core/auth/auth_navigation_guard.dart';
 import '../core/localization/app_localizations.dart';
 import '../core/localization/locale_controller.dart';
-import '../core/location/location_helper.dart';
+import '../core/location/location_access_controller.dart';
 import '../core/realtime/realtime_channel_controller.dart';
 import '../core/services/error_logger.dart';
 import '../core/theme/app_theme.dart';
@@ -24,6 +24,7 @@ import '../services/profile_service.dart';
 import '../services/restaurant_feed_utils.dart';
 import '../services/restaurants_service.dart';
 import '../services/session_manager.dart';
+import '../widgets/location_permission_state_view.dart';
 import '../widgets/restaurant_info_sheet.dart';
 import '../widgets/restaurant_card_components.dart';
 import '../widgets/restaurants_grid_section.dart';
@@ -38,11 +39,13 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final SupabaseClient _client = Supabase.instance.client;
   late final RealtimeChannelController _restaurantsChannelController;
   late final ValueNotifier<_HomeUiState> _uiState =
       ValueNotifier<_HomeUiState>(const _HomeUiState.initial());
+  late final ValueNotifier<_LocationUiState> _locationUiState =
+      ValueNotifier<_LocationUiState>(const _LocationUiState.initial());
 
   final TextEditingController _searchController = TextEditingController();
   final ValueNotifier<String> _searchQuery = ValueNotifier<String>('');
@@ -53,10 +56,12 @@ class _HomePageState extends State<HomePage> {
   int _restaurantsLoadRequestId = 0;
 
   _HomeUiState get _state => _uiState.value;
+  _LocationUiState get _locationState => _locationUiState.value;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
 
     _restaurantsChannelController = RealtimeChannelController(
       client: _client,
@@ -68,95 +73,78 @@ class _HomePageState extends State<HomePage> {
       },
     );
 
-    _init();
+    unawaited(_init());
     _listenToRestaurants();
     _searchController.addListener(_handleSearchChanged);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _searchController.removeListener(_handleSearchChanged);
     _searchController.dispose();
     _searchQuery.dispose();
     _uiState.dispose();
+    _locationUiState.dispose();
     _restaurantsRefreshDebounce?.cancel();
     unawaited(_restaurantsChannelController.dispose());
     super.dispose();
   }
 
-  Future<void> _init() async {
-    await _getUserLocationIfNeeded();
-
-    if (_state.locationDenied && mounted) {
-      await _showLocationSheet();
-    }
-
-    await _loadRestaurants(showLoader: true);
-  }
-
-  Future<void> _getUserLocationIfNeeded() async {
-    try {
-      final location = await LocationHelper.requestAndGetLocation();
-      if (!mounted) {
-        return;
-      }
-
-      if (location == null) {
-        userLat = null;
-        userLng = null;
-        _updateUiState(
-          _state.copyWith(
-            locationDenied: true,
-          ),
-        );
-        return;
-      }
-
-      userLat = location.lat;
-      userLng = location.lng;
-      _updateUiState(
-        _state.copyWith(
-          locationDenied: false,
-        ),
-      );
-    } catch (error, stack) {
-      await ErrorLogger.logError(
-        module: 'home_page.get_user_location',
-        error: error,
-        stack: stack,
-      );
-      if (!mounted) {
-        return;
-      }
-      userLat = null;
-      userLng = null;
-      _updateUiState(
-        _state.copyWith(
-          locationDenied: true,
-        ),
-      );
-    }
-  }
-
-  Future<void> _retryLocation() async {
-    if (!mounted) {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed || !mounted) {
       return;
     }
-    _updateUiState(
-      _state.copyWith(
-        loading: true,
-        hasError: false,
-        locationDenied: false,
-      ),
-    );
 
-    await _getUserLocationIfNeeded();
-
-    if (_state.locationDenied && mounted) {
-      await _showLocationSheet();
+    if (_locationState.status == LocationAccessStatus.granted) {
+      return;
     }
 
-    await _loadRestaurants(showLoader: true, forceRefresh: true);
+    unawaited(
+      _loadRestaurants(
+        forceRefresh: true,
+        requestIfNeeded: false,
+      ),
+    );
+  }
+
+  Future<void> _init() async {
+    await _loadRestaurants(
+      showLoader: true,
+      requestIfNeeded: true,
+    );
+  }
+
+  Future<void> _retryLocationPermission() async {
+    _updateLocationUiState(_locationState.copyWith(actionLoading: true));
+    try {
+      await _loadRestaurants(
+        showLoader: true,
+        forceRefresh: true,
+        requestIfNeeded: true,
+      );
+    } finally {
+      _updateLocationUiState(_locationState.copyWith(actionLoading: false));
+    }
+  }
+
+  Future<void> _openLocationPermissionSettings() async {
+    _updateLocationUiState(_locationState.copyWith(actionLoading: true));
+    try {
+      await LocationAccessController.openAppSettings();
+    } finally {
+      _updateLocationUiState(_locationState.copyWith(actionLoading: false));
+    }
+  }
+
+  Future<void> _openGpsSettings() async {
+    _updateLocationUiState(_locationState.copyWith(actionLoading: true));
+    try {
+      await LocationAccessController.openLocationSettings();
+    } finally {
+      _updateLocationUiState(_locationState.copyWith(actionLoading: false));
+    }
   }
 
   void _listenToRestaurants() {
@@ -231,6 +219,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _scheduleRestaurantsRefresh() {
+    if (_locationState.status != LocationAccessStatus.granted) {
+      return;
+    }
+
     _restaurantsRefreshDebounce?.cancel();
     final debounceDuration = kIsWeb
         ? const Duration(milliseconds: 420)
@@ -249,6 +241,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _loadRestaurants({
     bool showLoader = false,
     bool forceRefresh = false,
+    bool requestIfNeeded = false,
   }) async {
     final requestId = ++_restaurantsLoadRequestId;
 
@@ -261,14 +254,55 @@ class _HomePageState extends State<HomePage> {
       );
     }
 
+    final shouldShowChecking =
+        _locationState.status != LocationAccessStatus.granted ||
+            requestIfNeeded;
+    if (shouldShowChecking) {
+      _updateLocationUiState(
+        _locationState.copyWith(
+          status: LocationAccessStatus.checking,
+        ),
+      );
+    }
+
     try {
-      final restaurants = userLat == null || userLng == null
-          ? await RestaurantsService.getAllActive(forceRefresh: forceRefresh)
-          : await RestaurantsService.getNearby(
-              latitude: userLat!,
-              longitude: userLng!,
-              forceRefresh: forceRefresh,
-            );
+      final locationSnapshot = await LocationAccessController.resolve(
+        requestIfNeeded: requestIfNeeded,
+        forceRefresh: forceRefresh,
+      );
+
+      if (!mounted || requestId != _restaurantsLoadRequestId) {
+        return;
+      }
+
+      _updateLocationUiState(
+        _locationState.copyWith(
+          status: locationSnapshot.status,
+        ),
+      );
+
+      if (!locationSnapshot.isGranted) {
+        userLat = null;
+        userLng = null;
+        final hasLoadError =
+            locationSnapshot.status == LocationAccessStatus.unavailable;
+        _applyRestaurantsSnapshot(
+          const [],
+          isLoading: false,
+          hasLoadError: hasLoadError,
+        );
+        return;
+      }
+
+      final location = locationSnapshot.location!;
+      userLat = location.lat;
+      userLng = location.lng;
+
+      final restaurants = await RestaurantsService.getNearby(
+        latitude: userLat!,
+        longitude: userLng!,
+        forceRefresh: forceRefresh,
+      );
 
       if (!mounted || requestId != _restaurantsLoadRequestId) {
         return;
@@ -358,7 +392,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _refreshRestaurants() {
-    return _loadRestaurants(forceRefresh: true);
+    return _loadRestaurants(
+      forceRefresh: true,
+      requestIfNeeded: true,
+    );
   }
 
   void _dismissActiveInput() {
@@ -435,68 +472,11 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Future<void> _showLocationSheet() async {
-    await InputFocusGuard.prepareForUiTransition(context: context);
-    if (!mounted) {
-      return;
-    }
-
-    await showModalBottomSheet(
-      context: context,
-      isDismissible: false,
-      enableDrag: false,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (_) {
-        return Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.location_on, size: 44),
-              const SizedBox(height: 12),
-              Text(
-                context.tr('home.location_needed_title'),
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                context.tr('home.location_needed_subtitle'),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  onPressed: () async {
-                    final navigator = Navigator.of(context);
-                    await InputFocusGuard.prepareForUiTransition(
-                      context: context,
-                    );
-                    if (!mounted || !navigator.mounted) {
-                      return;
-                    }
-                    navigator.pop();
-                    unawaited(_retryLocation());
-                  },
-                  child: Text(context.tr('common.enable_location')),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
   void _updateUiState(_HomeUiState nextState) {
     final current = _uiState.value;
     if (identical(current, nextState) ||
         (current.loading == nextState.loading &&
             current.hasError == nextState.hasError &&
-            current.locationDenied == nextState.locationDenied &&
             RestaurantFeedUtils.sameIdentityList(
               current.shops,
               nextState.shops,
@@ -504,6 +484,16 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     _uiState.value = nextState;
+  }
+
+  void _updateLocationUiState(_LocationUiState nextState) {
+    final current = _locationUiState.value;
+    if (identical(current, nextState) ||
+        (current.status == nextState.status &&
+            current.actionLoading == nextState.actionLoading)) {
+      return;
+    }
+    _locationUiState.value = nextState;
   }
 
   @override
@@ -561,75 +551,132 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
       drawer: _MainDrawer(client: _client),
-      body: ValueListenableBuilder<_HomeUiState>(
-        valueListenable: _uiState,
-        builder: (context, state, _) {
-          final locationDenied = state.locationDenied;
-          return GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTap: _dismissActiveInput,
-            child: AppConstrainedContent(
-              maxWidth:
-                  kIsWeb ? _HomeHeaderMetrics.contentMaxWidthFor(width) : null,
-              padding: _HomeHeaderMetrics.contentPaddingFor(width),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Align(
-                    alignment: Alignment.center,
-                    child: Text(
-                      context.tr('home.nearby_restaurants'),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: headingFontSize,
-                        fontWeight: FontWeight.w900,
-                        height: 1.12,
+      body: ValueListenableBuilder<_LocationUiState>(
+        valueListenable: _locationUiState,
+        builder: (context, locationState, _) {
+          final blocker = _buildLocationBlocker(locationState);
+          if (blocker != null) {
+            return blocker;
+          }
+
+          return ValueListenableBuilder<_HomeUiState>(
+            valueListenable: _uiState,
+            builder: (context, state, __) {
+              return GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: _dismissActiveInput,
+                child: AppConstrainedContent(
+                  maxWidth: kIsWeb
+                      ? _HomeHeaderMetrics.contentMaxWidthFor(width)
+                      : null,
+                  padding: _HomeHeaderMetrics.contentPaddingFor(width),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Align(
+                        alignment: Alignment.center,
+                        child: Text(
+                          context.tr('home.nearby_restaurants'),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: headingFontSize,
+                            fontWeight: FontWeight.w900,
+                            height: 1.12,
+                          ),
+                        ),
                       ),
-                    ),
+                      SizedBox(height: searchGap),
+                      _SearchBar(controller: _searchController),
+                      SizedBox(height: listGap),
+                      Expanded(
+                        child: RestaurantsGridSection(
+                          loading: state.loading,
+                          hasError: state.hasError,
+                          restaurants: state.shops,
+                          searchQueryListenable: _searchQuery,
+                          onRefresh: _refreshRestaurants,
+                          customerLat: userLat,
+                          customerLng: userLng,
+                          loadingSkeletonKey: 'home-loading',
+                          errorKey: 'home-error',
+                          emptyKey: 'home-empty',
+                          gridKey: 'home-grid',
+                          emptyStateBuilder: (_) => _EmptyState(
+                            onRetry: _refreshRestaurants,
+                          ),
+                          errorStateBuilder: (_) => _HomeErrorState(
+                            onRetry: _refreshRestaurants,
+                          ),
+                          onRestaurantInfoTap: (context, restaurant) {
+                            showRestaurantInfoSheet(
+                              context,
+                              restaurant: restaurant,
+                            );
+                          },
+                          onRestaurantTap: (context, restaurant) => unawaited(
+                            _openRestaurantMenu(context, restaurant),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  SizedBox(height: searchGap),
-                  _SearchBar(controller: _searchController),
-                  SizedBox(height: listGap),
-                  Expanded(
-                    child: RestaurantsGridSection(
-                      loading: state.loading,
-                      hasError: state.hasError,
-                      restaurants: state.shops,
-                      searchQueryListenable: _searchQuery,
-                      onRefresh: _refreshRestaurants,
-                      customerLat: userLat,
-                      customerLng: userLng,
-                      loadingSkeletonKey: 'home-loading',
-                      errorKey: 'home-error',
-                      emptyKey: 'home-empty',
-                      gridKey: 'home-grid',
-                      emptyStateBuilder: (_) => _EmptyState(
-                        locationDenied: locationDenied,
-                        onRetry: _refreshRestaurants,
-                        onRetryLocation: locationDenied ? _retryLocation : null,
-                      ),
-                      errorStateBuilder: (_) => _HomeErrorState(
-                        onRetry: _refreshRestaurants,
-                        onRetryLocation: locationDenied ? _retryLocation : null,
-                      ),
-                      onRestaurantInfoTap: (context, restaurant) {
-                        showRestaurantInfoSheet(
-                          context,
-                          restaurant: restaurant,
-                        );
-                      },
-                      onRestaurantTap: (context, restaurant) => unawaited(
-                        _openRestaurantMenu(context, restaurant),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+                ),
+              );
+            },
           );
         },
       ),
     );
+  }
+
+  Widget? _buildLocationBlocker(_LocationUiState state) {
+    if (state.status == LocationAccessStatus.granted) {
+      return null;
+    }
+
+    if (state.status == LocationAccessStatus.checking) {
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
+    }
+
+    switch (state.status) {
+      case LocationAccessStatus.denied:
+        return LocationPermissionStateView(
+          icon: Icons.location_off_rounded,
+          message: context.tr('location.permission_required_message'),
+          buttonLabel: context.tr('common.enable_location'),
+          onPressed: () => unawaited(_retryLocationPermission()),
+          loading: state.actionLoading,
+        );
+      case LocationAccessStatus.deniedForever:
+        return LocationPermissionStateView(
+          icon: Icons.location_off_rounded,
+          message: context.tr('location.permission_required_message'),
+          buttonLabel: context.tr('location.open_app_settings'),
+          onPressed: () => unawaited(_openLocationPermissionSettings()),
+          loading: state.actionLoading,
+        );
+      case LocationAccessStatus.serviceDisabled:
+        return LocationPermissionStateView(
+          icon: Icons.gps_off_rounded,
+          message: context.tr('location.service_disabled_message'),
+          buttonLabel: context.tr('location.open_location_settings'),
+          onPressed: () => unawaited(_openGpsSettings()),
+          loading: state.actionLoading,
+        );
+      case LocationAccessStatus.unavailable:
+        return LocationPermissionStateView(
+          icon: Icons.location_off_rounded,
+          message: context.tr('location.unavailable_message'),
+          buttonLabel: context.tr('common.retry'),
+          onPressed: () => unawaited(_retryLocationPermission()),
+          loading: state.actionLoading,
+        );
+      case LocationAccessStatus.checking:
+      case LocationAccessStatus.granted:
+        return null;
+    }
   }
 }
 
@@ -637,32 +684,51 @@ class _HomeUiState {
   const _HomeUiState({
     required this.loading,
     required this.hasError,
-    required this.locationDenied,
     required this.shops,
   });
 
   const _HomeUiState.initial()
       : loading = true,
         hasError = false,
-        locationDenied = false,
         shops = const [];
 
   final bool loading;
   final bool hasError;
-  final bool locationDenied;
   final List<Map<String, dynamic>> shops;
 
   _HomeUiState copyWith({
     bool? loading,
     bool? hasError,
-    bool? locationDenied,
     List<Map<String, dynamic>>? shops,
   }) {
     return _HomeUiState(
       loading: loading ?? this.loading,
       hasError: hasError ?? this.hasError,
-      locationDenied: locationDenied ?? this.locationDenied,
       shops: shops ?? this.shops,
+    );
+  }
+}
+
+class _LocationUiState {
+  const _LocationUiState({
+    required this.status,
+    required this.actionLoading,
+  });
+
+  const _LocationUiState.initial()
+      : status = LocationAccessStatus.checking,
+        actionLoading = false;
+
+  final LocationAccessStatus status;
+  final bool actionLoading;
+
+  _LocationUiState copyWith({
+    LocationAccessStatus? status,
+    bool? actionLoading,
+  }) {
+    return _LocationUiState(
+      status: status ?? this.status,
+      actionLoading: actionLoading ?? this.actionLoading,
     );
   }
 }
@@ -1334,21 +1400,13 @@ class _LanguageSegment extends StatelessWidget {
 
 class _EmptyState extends StatelessWidget {
   const _EmptyState({
-    this.locationDenied = false,
     this.onRetry,
-    this.onRetryLocation,
   });
 
-  final bool locationDenied;
   final Future<void> Function()? onRetry;
-  final Future<void> Function()? onRetryLocation;
 
   @override
   Widget build(BuildContext context) {
-    final subtitle = locationDenied
-        ? context.tr('home.empty_location_disabled_subtitle')
-        : context.tr('home.empty_general_subtitle');
-
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -1368,18 +1426,11 @@ class _EmptyState extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              subtitle,
+              context.tr('home.empty_general_subtitle'),
               style: const TextStyle(color: Colors.black54),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
-            if (locationDenied && onRetryLocation != null) ...[
-              OutlinedButton(
-                onPressed: () => unawaited(onRetryLocation!()),
-                child: Text(context.tr('home.enable_location_again')),
-              ),
-              const SizedBox(height: 8),
-            ],
             if (onRetry != null)
               TextButton(
                 onPressed: () => unawaited(onRetry!()),
@@ -1395,11 +1446,9 @@ class _EmptyState extends StatelessWidget {
 class _HomeErrorState extends StatelessWidget {
   const _HomeErrorState({
     required this.onRetry,
-    this.onRetryLocation,
   });
 
   final Future<void> Function() onRetry;
-  final Future<void> Function()? onRetryLocation;
 
   @override
   Widget build(BuildContext context) {
@@ -1433,13 +1482,6 @@ class _HomeErrorState extends StatelessWidget {
               onPressed: () => unawaited(onRetry()),
               child: Text(context.tr('common.retry')),
             ),
-            if (onRetryLocation != null) ...[
-              const SizedBox(height: 8),
-              OutlinedButton(
-                onPressed: () => unawaited(onRetryLocation!()),
-                child: Text(context.tr('common.enable_location')),
-              ),
-            ],
           ],
         ),
       ),

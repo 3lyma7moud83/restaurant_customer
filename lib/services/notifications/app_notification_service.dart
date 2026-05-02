@@ -195,6 +195,7 @@ class AppNotificationService {
       _tokenRefreshSubscription = _messagingInstance.onTokenRefresh.listen(
         (token) {
           debugPrint('[FCM] token refreshed: ${_maskToken(token)}');
+          _logWebTokenDebug(token, reason: 'token_refresh');
           unawaited(_safeSyncToken(token, reason: 'token_refresh'));
         },
         onError: (error, stack) async {
@@ -240,6 +241,7 @@ class AppNotificationService {
 
       final token = await _loadCurrentToken();
       debugPrint('[FCM] startup token: ${_maskToken(token)}');
+      _logWebTokenDebug(token, reason: 'startup');
       await _safeSyncToken(token, reason: 'startup');
     } catch (error, stack) {
       await ErrorLogger.logError(
@@ -322,6 +324,10 @@ class AppNotificationService {
         final token = await _messagingInstance.getToken(vapidKey: vapidKey);
         final normalized = token?.trim();
         if (normalized != null && normalized.isNotEmpty) {
+          _logWebTokenDebug(
+            normalized,
+            reason: 'get_token_attempt_${attempt + 1}',
+          );
           return normalized;
         }
       } catch (error, stack) {
@@ -339,6 +345,7 @@ class AppNotificationService {
       );
     }
 
+    _logWebTokenDebug(null, reason: 'get_token_failed_after_retries');
     return null;
   }
 
@@ -528,6 +535,13 @@ class AppNotificationService {
               refreshedToken,
               reason: 'web_permission_granted',
             );
+          } else if (webPermission == 'denied') {
+            debugPrint(
+              '[FCM][web] browser permission is denied. Enable notifications '
+              'from browser site settings for this origin, then tap once '
+              'inside the app to retry token sync.',
+            );
+            _scheduleWebPermissionPromptOnFirstGesture(allowDenied: true);
           }
         }
       } catch (error, stack) {
@@ -540,11 +554,17 @@ class AppNotificationService {
     }
   }
 
-  void _scheduleWebPermissionPromptOnFirstGesture() {
+  void _scheduleWebPermissionPromptOnFirstGesture({
+    bool allowDenied = false,
+  }) {
     if (!kIsWeb || _webPermissionPromptAttached) {
       return;
     }
-    if (currentWebNotificationPermission() != 'default') {
+
+    final permission = currentWebNotificationPermission();
+    final shouldAttach =
+        permission == 'default' || (allowDenied && permission == 'denied');
+    if (!shouldAttach) {
       return;
     }
 
@@ -583,6 +603,9 @@ class AppNotificationService {
         );
       } else if (permission == 'default') {
         _scheduleWebPermissionPromptOnFirstGesture();
+      } else if (permission == 'denied') {
+        debugPrint('[FCM][web] browser permission still denied after gesture.');
+        _scheduleWebPermissionPromptOnFirstGesture(allowDenied: true);
       }
     } catch (error, stack) {
       await ErrorLogger.logError(
@@ -1309,6 +1332,19 @@ class AppNotificationService {
       return token;
     }
     return '${token.substring(0, 6)}...${token.substring(token.length - 6)}';
+  }
+
+  void _logWebTokenDebug(String? token, {required String reason}) {
+    if (!kIsWeb || !kDebugMode) {
+      return;
+    }
+
+    final normalized = token?.trim();
+    if (normalized == null || normalized.isEmpty) {
+      debugPrint('[FCM][web][debug][$reason] token=<empty>');
+      return;
+    }
+    debugPrint('[FCM][web][debug][$reason] token(full)=$normalized');
   }
 
   String _normalizeBrandingText(String value) {

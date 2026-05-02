@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../services/error_logger.dart';
@@ -16,133 +15,63 @@ class LocationHelper {
     String? mapboxToken,
     bool forceRefresh = false,
   }) async {
-    final now = DateTime.now();
-    if (!forceRefresh) {
-      final cached = _cachedLocation;
-      final cachedAt = _cachedAt;
-      final isFresh = cached != null &&
-          cachedAt != null &&
-          now.difference(cachedAt) <= _cacheTtl;
-      if (isFresh) {
-        if (mapboxToken == null) {
-          return cached;
-        }
-        if ((cached.address ?? '').trim().isNotEmpty) {
-          return cached;
-        }
-        String? address;
-        try {
-          address = await LocationService.getAddress(
-            lat: cached.lat,
-            lng: cached.lng,
-            token: mapboxToken,
-          );
-        } catch (error, stack) {
-          await ErrorLogger.logError(
-            module: 'location_helper.cache.enrich_address',
-            error: error,
-            stack: stack,
-          );
-        }
-        final enriched = LocationResult(
-          lat: cached.lat,
-          lng: cached.lng,
-          address: address,
-        );
-        _cachedLocation = enriched;
-        _cachedAt = now;
-        return enriched;
-      }
-    }
-
-    // ================= WEB =================
-    if (kIsWeb) {
-      try {
-        final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-        if (!serviceEnabled) {
-          return null;
-        }
-
-        var permission = await Geolocator.checkPermission();
-        if (permission == LocationPermission.denied) {
-          permission = await Geolocator.requestPermission();
-        }
-        if (permission == LocationPermission.denied ||
-            permission == LocationPermission.deniedForever) {
-          return null;
-        }
-
-        final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high,
-          timeLimit: const Duration(seconds: 10),
-        );
-
-        final location = LocationResult(
-          lat: pos.latitude,
-          lng: pos.longitude,
-          address: null,
-        );
-        _cachedLocation = location;
-        _cachedAt = now;
-        return location;
-      } catch (error, stack) {
-        if (_isLocationUnavailableError(error)) {
-          return null;
-        }
-        await ErrorLogger.logError(
-          module: 'location_helper.requestAndGetLocation.web',
-          error: error,
-          stack: stack,
-        );
-        return null;
-      }
-    }
-
     try {
-      // ================= MOBILE =================
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-
       if (!serviceEnabled) {
         return null;
       }
 
-      LocationPermission permission = await Geolocator.checkPermission();
-
-      if (permission == LocationPermission.denied) {
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.unableToDetermine) {
         permission = await Geolocator.requestPermission();
       }
 
-      if (permission == LocationPermission.deniedForever) {
+      if (_isDeniedPermission(permission)) {
         return null;
       }
 
-      if (permission == LocationPermission.denied) {
+      return getLocationWithGrantedPermission(
+        mapboxToken: mapboxToken,
+        forceRefresh: forceRefresh,
+      );
+    } catch (error, stack) {
+      if (_isLocationUnavailableError(error)) {
         return null;
       }
+      await ErrorLogger.logError(
+        module: 'location_helper.requestAndGetLocation',
+        error: error,
+        stack: stack,
+      );
+      return null;
+    }
+  }
 
+  static Future<LocationResult?> getLocationWithGrantedPermission({
+    String? mapboxToken,
+    bool forceRefresh = false,
+  }) async {
+    final now = DateTime.now();
+    final cached = _getCachedLocationIfFresh(
+      now: now,
+      mapboxToken: mapboxToken,
+      forceRefresh: forceRefresh,
+    );
+    if (cached != null) {
+      return cached;
+    }
+
+    try {
       final pos = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
         timeLimit: const Duration(seconds: 10),
       );
-
-      String? address;
-
-      if (mapboxToken != null) {
-        try {
-          address = await LocationService.getAddress(
-            lat: pos.latitude,
-            lng: pos.longitude,
-            token: mapboxToken,
-          );
-        } catch (error, stack) {
-          await ErrorLogger.logError(
-            module: 'location_helper.requestAndGetLocation.address',
-            error: error,
-            stack: stack,
-          );
-        }
-      }
-
+      final address = await _resolveAddress(
+        lat: pos.latitude,
+        lng: pos.longitude,
+        mapboxToken: mapboxToken,
+      );
       final location = LocationResult(
         lat: pos.latitude,
         lng: pos.longitude,
@@ -156,12 +85,113 @@ class LocationHelper {
         return null;
       }
       await ErrorLogger.logError(
-        module: 'location_helper.requestAndGetLocation',
+        module: 'location_helper.getLocationWithGrantedPermission',
         error: error,
         stack: stack,
       );
       return null;
     }
+  }
+
+  static LocationResult? _getCachedLocationIfFresh({
+    required DateTime now,
+    required String? mapboxToken,
+    required bool forceRefresh,
+  }) {
+    if (forceRefresh) {
+      return null;
+    }
+
+    final cached = _cachedLocation;
+    final cachedAt = _cachedAt;
+    final isFresh = cached != null &&
+        cachedAt != null &&
+        now.difference(cachedAt) <= _cacheTtl;
+    if (!isFresh) {
+      return null;
+    }
+
+    if (mapboxToken == null || (cached.address ?? '').trim().isNotEmpty) {
+      return cached;
+    }
+
+    return _enrichCachedAddress(
+      cached: cached,
+      now: now,
+      mapboxToken: mapboxToken,
+    );
+  }
+
+  static LocationResult _enrichCachedAddress({
+    required LocationResult cached,
+    required DateTime now,
+    required String mapboxToken,
+  }) {
+    unawaited(() async {
+      try {
+        final address = await LocationService.getAddress(
+          lat: cached.lat,
+          lng: cached.lng,
+          token: mapboxToken,
+        );
+        if (address == null || address.trim().isEmpty) {
+          return;
+        }
+
+        final latestCached = _cachedLocation;
+        if (latestCached == null ||
+            latestCached.lat != cached.lat ||
+            latestCached.lng != cached.lng) {
+          return;
+        }
+
+        _cachedLocation = LocationResult(
+          lat: cached.lat,
+          lng: cached.lng,
+          address: address,
+        );
+        _cachedAt = now;
+      } catch (error, stack) {
+        await ErrorLogger.logError(
+          module: 'location_helper.cache.enrich_address',
+          error: error,
+          stack: stack,
+        );
+      }
+    }());
+
+    return cached;
+  }
+
+  static Future<String?> _resolveAddress({
+    required double lat,
+    required double lng,
+    required String? mapboxToken,
+  }) async {
+    if (mapboxToken == null) {
+      return null;
+    }
+
+    try {
+      return await LocationService.getAddress(
+        lat: lat,
+        lng: lng,
+        token: mapboxToken,
+      );
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'location_helper.requestAndGetLocation.address',
+        error: error,
+        stack: stack,
+      );
+      return null;
+    }
+  }
+
+  static bool _isDeniedPermission(LocationPermission permission) {
+    return permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever ||
+        permission == LocationPermission.unableToDetermine;
   }
 
   static bool _isLocationUnavailableError(Object error) {

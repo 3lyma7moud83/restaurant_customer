@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/localization/app_localizations.dart';
-import '../core/location/location_helper.dart';
+import '../core/location/location_access_controller.dart';
 import '../core/realtime/realtime_channel_controller.dart';
 import '../core/services/error_logger.dart';
 import '../core/theme/app_theme.dart';
@@ -14,6 +14,7 @@ import '../core/ui/input_focus_guard.dart';
 import '../core/ui/responsive.dart';
 import '../services/restaurant_feed_utils.dart';
 import '../services/restaurants_service.dart';
+import '../widgets/location_permission_state_view.dart';
 import '../widgets/restaurant_info_sheet.dart';
 import '../widgets/restaurants_grid_section.dart';
 import 'restaurant_menu_page.dart';
@@ -25,11 +26,14 @@ class RestaurantsPage extends StatefulWidget {
   State<RestaurantsPage> createState() => _RestaurantsPageState();
 }
 
-class _RestaurantsPageState extends State<RestaurantsPage> {
+class _RestaurantsPageState extends State<RestaurantsPage>
+    with WidgetsBindingObserver {
   final _supabase = Supabase.instance.client;
   late final RealtimeChannelController _restaurantsChannelController;
   late final ValueNotifier<_RestaurantsUiState> _uiState =
       ValueNotifier<_RestaurantsUiState>(const _RestaurantsUiState.initial());
+  late final ValueNotifier<_LocationUiState> _locationUiState =
+      ValueNotifier<_LocationUiState>(const _LocationUiState.initial());
   double? _userLat;
   double? _userLng;
 
@@ -39,10 +43,12 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
   int _loadRequestId = 0;
 
   _RestaurantsUiState get _state => _uiState.value;
+  _LocationUiState get _locationState => _locationUiState.value;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _restaurantsChannelController = RealtimeChannelController(
       client: _supabase,
       topicPrefix: 'restaurants-page-${identityHashCode(this)}',
@@ -52,20 +58,45 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
         }
       },
     );
-    _load(showLoader: true);
+    unawaited(
+      _load(
+        showLoader: true,
+        requestIfNeeded: true,
+      ),
+    );
     _listenToRestaurants();
     _searchController.addListener(_handleSearchChanged);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _searchController.removeListener(_handleSearchChanged);
     _searchController.dispose();
     _searchQuery.dispose();
     _uiState.dispose();
+    _locationUiState.dispose();
     _restaurantsRefreshDebounce?.cancel();
     unawaited(_restaurantsChannelController.dispose());
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed || !mounted) {
+      return;
+    }
+
+    if (_locationState.status == LocationAccessStatus.granted) {
+      return;
+    }
+
+    unawaited(
+      _load(
+        forceRefresh: true,
+        requestIfNeeded: false,
+      ),
+    );
   }
 
   void _listenToRestaurants() {
@@ -140,6 +171,10 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
   }
 
   void _scheduleRestaurantsRefresh() {
+    if (_locationState.status != LocationAccessStatus.granted) {
+      return;
+    }
+
     _restaurantsRefreshDebounce?.cancel();
     final debounceDuration = kIsWeb
         ? const Duration(milliseconds: 420)
@@ -158,6 +193,7 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
   Future<void> _load({
     bool showLoader = false,
     bool forceRefresh = false,
+    bool requestIfNeeded = false,
   }) async {
     final requestId = ++_loadRequestId;
     if (showLoader && mounted) {
@@ -169,25 +205,58 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
       );
     }
 
-    try {
-      final location = await LocationHelper.requestAndGetLocation();
-      final userLat = location?.lat;
-      final userLng = location?.lng;
+    final shouldShowChecking =
+        _locationState.status != LocationAccessStatus.granted ||
+            requestIfNeeded;
+    if (shouldShowChecking) {
+      _updateLocationUiState(
+        _locationState.copyWith(
+          status: LocationAccessStatus.checking,
+        ),
+      );
+    }
 
-      final fetchedRestaurants = location == null
-          ? await RestaurantsService.getAllActive(forceRefresh: forceRefresh)
-          : await RestaurantsService.getNearby(
-              latitude: location.lat,
-              longitude: location.lng,
-              forceRefresh: forceRefresh,
-            );
+    try {
+      final locationSnapshot = await LocationAccessController.resolve(
+        requestIfNeeded: requestIfNeeded,
+        forceRefresh: forceRefresh,
+      );
+      if (!mounted || requestId != _loadRequestId) {
+        return;
+      }
+
+      _updateLocationUiState(
+        _locationState.copyWith(
+          status: locationSnapshot.status,
+        ),
+      );
+
+      if (!locationSnapshot.isGranted) {
+        _userLat = null;
+        _userLng = null;
+        final hasLoadError =
+            locationSnapshot.status == LocationAccessStatus.unavailable;
+        _applyRestaurantsSnapshot(
+          const [],
+          isLoading: false,
+          hasLoadError: hasLoadError,
+        );
+        return;
+      }
+
+      final location = locationSnapshot.location!;
+      final fetchedRestaurants = await RestaurantsService.getNearby(
+        latitude: location.lat,
+        longitude: location.lng,
+        forceRefresh: forceRefresh,
+      );
 
       if (!mounted || requestId != _loadRequestId) {
         return;
       }
 
-      _userLat = userLat;
-      _userLng = userLng;
+      _userLat = location.lat;
+      _userLng = location.lng;
 
       final ranged = RestaurantFeedUtils.filterByRange(
         source: fetchedRestaurants,
@@ -274,7 +343,40 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
   }
 
   Future<void> _refreshRestaurants() {
-    return _load(forceRefresh: true);
+    return _load(
+      forceRefresh: true,
+      requestIfNeeded: true,
+    );
+  }
+
+  Future<void> _retryLocationPermission() async {
+    _updateLocationUiState(_locationState.copyWith(actionLoading: true));
+    try {
+      await _load(
+        forceRefresh: true,
+        requestIfNeeded: true,
+      );
+    } finally {
+      _updateLocationUiState(_locationState.copyWith(actionLoading: false));
+    }
+  }
+
+  Future<void> _openLocationPermissionSettings() async {
+    _updateLocationUiState(_locationState.copyWith(actionLoading: true));
+    try {
+      await LocationAccessController.openAppSettings();
+    } finally {
+      _updateLocationUiState(_locationState.copyWith(actionLoading: false));
+    }
+  }
+
+  Future<void> _openGpsSettings() async {
+    _updateLocationUiState(_locationState.copyWith(actionLoading: true));
+    try {
+      await LocationAccessController.openLocationSettings();
+    } finally {
+      _updateLocationUiState(_locationState.copyWith(actionLoading: false));
+    }
   }
 
   void _dismissActiveInput() {
@@ -329,6 +431,16 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
     _uiState.value = nextState;
   }
 
+  void _updateLocationUiState(_LocationUiState nextState) {
+    final current = _locationUiState.value;
+    if (identical(current, nextState) ||
+        (current.status == nextState.status &&
+            current.actionLoading == nextState.actionLoading)) {
+      return;
+    }
+    _locationUiState.value = nextState;
+  }
+
   @override
   Widget build(BuildContext context) {
     final viewportWidth = MediaQuery.sizeOf(context).width;
@@ -344,65 +456,124 @@ class _RestaurantsPageState extends State<RestaurantsPage> {
       resizeToAvoidBottomInset: true,
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
-        child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onTap: _dismissActiveInput,
-          child: AppConstrainedContent(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  context.tr('restaurants.all'),
-                  style: TextStyle(
-                    fontSize: titleFontSize,
-                    fontWeight: FontWeight.w900,
-                    height: 1.12,
-                  ),
-                ),
-                SizedBox(height: searchGap),
-                _RestaurantsSearchField(controller: _searchController),
-                SizedBox(height: listGap),
-                Expanded(
-                  child: ValueListenableBuilder<_RestaurantsUiState>(
-                    valueListenable: _uiState,
-                    builder: (context, state, _) {
-                      return RestaurantsGridSection(
-                        loading: state.loading,
-                        hasError: state.hasError,
-                        restaurants: state.restaurants,
-                        searchQueryListenable: _searchQuery,
-                        onRefresh: _refreshRestaurants,
-                        customerLat: _userLat,
-                        customerLng: _userLng,
-                        loadingSkeletonKey: 'restaurants-loading',
-                        errorKey: 'restaurants-error',
-                        emptyKey: 'restaurants-empty',
-                        gridKey: 'restaurants-grid',
-                        emptyStateBuilder: (_) => _RestaurantsEmptyState(
-                          onRetry: _refreshRestaurants,
-                        ),
-                        errorStateBuilder: (_) => _RestaurantsErrorState(
-                          onRetry: _refreshRestaurants,
-                        ),
-                        onRestaurantInfoTap: (context, restaurant) {
-                          showRestaurantInfoSheet(
-                            context,
-                            restaurant: restaurant,
+        child: ValueListenableBuilder<_LocationUiState>(
+          valueListenable: _locationUiState,
+          builder: (context, locationState, _) {
+            final blocker = _buildLocationBlocker(locationState);
+            if (blocker != null) {
+              return blocker;
+            }
+            return GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: _dismissActiveInput,
+              child: AppConstrainedContent(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      context.tr('restaurants.all'),
+                      style: TextStyle(
+                        fontSize: titleFontSize,
+                        fontWeight: FontWeight.w900,
+                        height: 1.12,
+                      ),
+                    ),
+                    SizedBox(height: searchGap),
+                    _RestaurantsSearchField(controller: _searchController),
+                    SizedBox(height: listGap),
+                    Expanded(
+                      child: ValueListenableBuilder<_RestaurantsUiState>(
+                        valueListenable: _uiState,
+                        builder: (context, state, _) {
+                          return RestaurantsGridSection(
+                            loading: state.loading,
+                            hasError: state.hasError,
+                            restaurants: state.restaurants,
+                            searchQueryListenable: _searchQuery,
+                            onRefresh: _refreshRestaurants,
+                            customerLat: _userLat,
+                            customerLng: _userLng,
+                            loadingSkeletonKey: 'restaurants-loading',
+                            errorKey: 'restaurants-error',
+                            emptyKey: 'restaurants-empty',
+                            gridKey: 'restaurants-grid',
+                            emptyStateBuilder: (_) => _RestaurantsEmptyState(
+                              onRetry: _refreshRestaurants,
+                            ),
+                            errorStateBuilder: (_) => _RestaurantsErrorState(
+                              onRetry: _refreshRestaurants,
+                            ),
+                            onRestaurantInfoTap: (context, restaurant) {
+                              showRestaurantInfoSheet(
+                                context,
+                                restaurant: restaurant,
+                              );
+                            },
+                            onRestaurantTap: (context, restaurant) => unawaited(
+                              _openRestaurantMenu(context, restaurant),
+                            ),
                           );
                         },
-                        onRestaurantTap: (context, restaurant) => unawaited(
-                          _openRestaurantMenu(context, restaurant),
-                        ),
-                      );
-                    },
-                  ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         ),
       ),
     );
+  }
+
+  Widget? _buildLocationBlocker(_LocationUiState state) {
+    if (state.status == LocationAccessStatus.granted) {
+      return null;
+    }
+
+    if (state.status == LocationAccessStatus.checking) {
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
+    }
+
+    switch (state.status) {
+      case LocationAccessStatus.denied:
+        return LocationPermissionStateView(
+          icon: Icons.location_off_rounded,
+          message: context.tr('location.permission_required_message'),
+          buttonLabel: context.tr('common.enable_location'),
+          onPressed: () => unawaited(_retryLocationPermission()),
+          loading: state.actionLoading,
+        );
+      case LocationAccessStatus.deniedForever:
+        return LocationPermissionStateView(
+          icon: Icons.location_off_rounded,
+          message: context.tr('location.permission_required_message'),
+          buttonLabel: context.tr('location.open_app_settings'),
+          onPressed: () => unawaited(_openLocationPermissionSettings()),
+          loading: state.actionLoading,
+        );
+      case LocationAccessStatus.serviceDisabled:
+        return LocationPermissionStateView(
+          icon: Icons.gps_off_rounded,
+          message: context.tr('location.service_disabled_message'),
+          buttonLabel: context.tr('location.open_location_settings'),
+          onPressed: () => unawaited(_openGpsSettings()),
+          loading: state.actionLoading,
+        );
+      case LocationAccessStatus.unavailable:
+        return LocationPermissionStateView(
+          icon: Icons.location_off_rounded,
+          message: context.tr('location.unavailable_message'),
+          buttonLabel: context.tr('common.retry'),
+          onPressed: () => unawaited(_retryLocationPermission()),
+          loading: state.actionLoading,
+        );
+      case LocationAccessStatus.checking:
+      case LocationAccessStatus.granted:
+        return null;
+    }
   }
 }
 
@@ -431,6 +602,30 @@ class _RestaurantsUiState {
       loading: loading ?? this.loading,
       hasError: hasError ?? this.hasError,
       restaurants: restaurants ?? this.restaurants,
+    );
+  }
+}
+
+class _LocationUiState {
+  const _LocationUiState({
+    required this.status,
+    required this.actionLoading,
+  });
+
+  const _LocationUiState.initial()
+      : status = LocationAccessStatus.checking,
+        actionLoading = false;
+
+  final LocationAccessStatus status;
+  final bool actionLoading;
+
+  _LocationUiState copyWith({
+    LocationAccessStatus? status,
+    bool? actionLoading,
+  }) {
+    return _LocationUiState(
+      status: status ?? this.status,
+      actionLoading: actionLoading ?? this.actionLoading,
     );
   }
 }

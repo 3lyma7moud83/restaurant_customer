@@ -58,6 +58,13 @@ class AppLocalizations {
           'فشل تهيئة الجلسة. حاول تشغيل التطبيق مرة أخرى.',
       'common.retry': 'إعادة المحاولة',
       'common.enable_location': 'تفعيل الموقع',
+      'location.permission_required_message':
+          'لازم تفعل الموقع علشان نعرضلك المطاعم القريبة منك',
+      'location.service_disabled_message': 'شغل الـ GPS الأول',
+      'location.open_app_settings': 'افتح الإعدادات',
+      'location.open_location_settings': 'فتح إعدادات الموقع',
+      'location.unavailable_message':
+          'مش قادرين نحدد موقعك دلوقتي. جرّب تاني بعد لحظات.',
       'common.search_restaurant_hint': 'ابحث عن مطعم...',
       'common.view_menu': 'عرض القائمة',
       'common.restaurant': 'مطعم',
@@ -249,6 +256,13 @@ class AppLocalizations {
           'Failed to initialize session. Please restart the app.',
       'common.retry': 'Retry',
       'common.enable_location': 'Enable Location',
+      'location.permission_required_message':
+          'Enable location so we can show nearby restaurants.',
+      'location.service_disabled_message': 'Turn on GPS first.',
+      'location.open_app_settings': 'Open Settings',
+      'location.open_location_settings': 'Open Location Settings',
+      'location.unavailable_message':
+          'We could not detect your location right now. Please try again.',
       'common.search_restaurant_hint': 'Search for a restaurant...',
       'common.view_menu': 'View menu',
       'common.restaurant': 'Restaurant',
