@@ -18,6 +18,10 @@ bool isWebDocumentVisible() {
   return true;
 }
 
+String? currentWebUserAgent() {
+  return null;
+}
+
 Future<void> initializeWebNotificationBridge({
   required WebNotificationTapHandler onNotificationTap,
 }) async {}

@@ -1,6 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import '../core/stability/offline_order_queue_service.dart';
+import '../core/stability/rpc_security_service.dart';
+import '../core/stability/stability_logger.dart';
+import '../core/stability/stability_metrics_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/services/error_logger.dart';
@@ -19,31 +24,67 @@ class OrderLimitExceededException implements Exception {
   String toString() => message;
 }
 
+class DuplicateOrderBlockedException implements Exception {
+  const DuplicateOrderBlockedException([
+    this.message =
+        'يوجد طلب قيد المعالجة بالفعل. انتظر قليلًا قبل إعادة المحاولة.',
+  ]);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+class OrderQueuedOfflineException implements Exception {
+  const OrderQueuedOfflineException({
+    required this.orderRequestToken,
+    required this.checkoutSessionId,
+    this.message = 'تم حفظ الطلب محليًا وسيتم إرساله عند عودة الاتصال.',
+  });
+
+  final String message;
+  final String? orderRequestToken;
+  final String? checkoutSessionId;
+
+  @override
+  String toString() => message;
+}
+
 class CreateOrderItemInput {
   const CreateOrderItemInput({
     required this.name,
     required this.price,
     required this.quantity,
+    this.note = '',
   });
 
   final String name;
   final double price;
   final int quantity;
+  final String note;
 
   Map<String, dynamic> toRpcJson() {
+    final normalizedNote = note.trim();
     return {
       'item_name': name,
       'price': price,
       'qty': quantity,
+      'quantity': quantity,
+      if (normalizedNote.isNotEmpty) 'note': normalizedNote,
+      if (normalizedNote.isNotEmpty) 'notes': normalizedNote,
     };
   }
 
   Map<String, dynamic> toOrderItemInsert(String orderId) {
+    final normalizedNote = note.trim();
     return {
       'order_id': orderId,
       'item_name': name,
       'price': price,
       'qty': quantity,
+      'quantity': quantity,
+      if (normalizedNote.isNotEmpty) 'notes': normalizedNote,
     };
   }
 }
@@ -59,7 +100,17 @@ class CreateOrderInput {
     required this.customerLng,
     required this.totalPrice,
     required this.deliveryCost,
+    this.buildingNumber = '',
+    this.apartmentNumber = '',
+    this.floorNumber = '',
+    this.landmark = '',
+    this.notes = '',
     this.paymentMethod,
+    this.orderRequestToken,
+    this.checkoutSessionId,
+    this.paymentReferenceId,
+    this.reconciliationStatus,
+    this.verificationAttempts,
     required this.items,
   });
 
@@ -72,9 +123,109 @@ class CreateOrderInput {
   final double customerLng;
   final double totalPrice;
   final double deliveryCost;
+  final String buildingNumber;
+  final String apartmentNumber;
+  final String floorNumber;
+  final String landmark;
+  final String notes;
   // Reserved for upcoming online payment integrations (e.g. Stripe).
   final String? paymentMethod;
+  final String? orderRequestToken;
+  final String? checkoutSessionId;
+  final String? paymentReferenceId;
+  final String? reconciliationStatus;
+  final int? verificationAttempts;
   final List<CreateOrderItemInput> items;
+
+  Map<String, dynamic> toQueuePayload() {
+    return {
+      'user_id': userId,
+      'restaurant_id': restaurantId,
+      'customer_name': customerName,
+      'customer_phone': customerPhone,
+      'address': address,
+      'building_number': buildingNumber,
+      'apartment_number': apartmentNumber,
+      'floor_number': floorNumber,
+      'landmark': landmark,
+      'notes': notes,
+      'customer_lat': customerLat,
+      'customer_lng': customerLng,
+      'latitude': customerLat,
+      'longitude': customerLng,
+      'total_price': totalPrice,
+      'delivery_cost': deliveryCost,
+      'payment_method': paymentMethod,
+      'order_request_token': orderRequestToken,
+      'checkout_session_id': checkoutSessionId,
+      'payment_reference_id': paymentReferenceId,
+      'reconciliation_status': reconciliationStatus,
+      'verification_attempts': verificationAttempts,
+      'items': items.map((item) => item.toRpcJson()).toList(growable: false),
+    };
+  }
+
+  static CreateOrderInput fromQueuePayload(Map<String, dynamic> payload) {
+    final itemMaps = (payload['items'] as List? ?? const <dynamic>[])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+
+    return CreateOrderInput(
+      userId: _stringValue(payload['user_id']) ?? '',
+      restaurantId: _stringValue(payload['restaurant_id']) ?? '',
+      customerName: _stringValue(payload['customer_name']) ?? '',
+      customerPhone: _stringValue(payload['customer_phone']) ?? '',
+      address: _stringValue(payload['address']) ?? '',
+      buildingNumber: _stringValue(payload['building_number']) ?? '',
+      apartmentNumber: _stringValue(payload['apartment_number']) ?? '',
+      floorNumber: _stringValue(payload['floor_number']) ?? '',
+      landmark: _stringValue(payload['landmark']) ?? '',
+      notes: _stringValue(payload['notes']) ?? '',
+      customerLat:
+          _toDouble(payload['customer_lat'] ?? payload['latitude']) ?? 0,
+      customerLng:
+          _toDouble(payload['customer_lng'] ?? payload['longitude']) ?? 0,
+      totalPrice: _toDouble(payload['total_price']) ?? 0,
+      deliveryCost: _toDouble(payload['delivery_cost']) ?? 0,
+      paymentMethod: _stringValue(payload['payment_method']),
+      orderRequestToken: _stringValue(payload['order_request_token']),
+      checkoutSessionId: _stringValue(payload['checkout_session_id']),
+      paymentReferenceId: _stringValue(payload['payment_reference_id']),
+      reconciliationStatus: _stringValue(payload['reconciliation_status']),
+      verificationAttempts:
+          (_toDouble(payload['verification_attempts']) ?? 0).round(),
+      items: itemMaps
+          .map(
+            (item) => CreateOrderItemInput(
+              name: _stringValue(item['item_name']) ?? '',
+              price: _toDouble(item['price']) ?? 0,
+              quantity:
+                  (_toDouble(item['qty'] ?? item['quantity']) ?? 1).round(),
+              note: _stringValue(item['notes'] ?? item['note']) ?? '',
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  static String? _stringValue(dynamic value) {
+    final text = value?.toString().trim();
+    if (text == null || text.isEmpty || text == 'null') {
+      return null;
+    }
+    return text;
+  }
+
+  static double? _toDouble(dynamic value) {
+    if (value is num) {
+      return value.toDouble();
+    }
+    if (value is String) {
+      return double.tryParse(value);
+    }
+    return null;
+  }
 }
 
 class OrdersService {
@@ -88,6 +239,10 @@ class OrdersService {
       {};
   static final Map<String, _OrderCacheEntry<List<Map<String, dynamic>>>>
       _orderItemsCache = {};
+  static final Set<String> _inFlightOrderRequestTokens = <String>{};
+  static final Map<String, DateTime> _lastCheckoutAttemptAtByUser =
+      <String, DateTime>{};
+  static bool _offlineQueueInitialized = false;
 
   static const List<String> activeStatuses = [
     'pending',
@@ -242,35 +397,456 @@ class OrdersService {
     return rows?.length ?? 0;
   }
 
-  static Future<String> createOrder(CreateOrderInput input) async {
+  static Future<String> createOrder(
+    CreateOrderInput input, {
+    bool allowOfflineQueue = true,
+  }) async {
+    await _ensureOfflineQueueInitialized();
+
+    final userId = input.userId.trim();
+    final requestToken = _resolvedRequestToken(input);
+    final inFlightKey = '$userId::$requestToken';
+    if (_inFlightOrderRequestTokens.contains(inFlightKey)) {
+      StabilityMetricsService.instance.increment(
+        'duplicate_order_attempts',
+        module: 'orders_service',
+      );
+      throw const DuplicateOrderBlockedException();
+    }
+
+    final now = DateTime.now();
+    final lastAttemptAt = _lastCheckoutAttemptAtByUser[userId];
+    if (lastAttemptAt != null &&
+        now.difference(lastAttemptAt) < const Duration(milliseconds: 900)) {
+      StabilityMetricsService.instance.increment(
+        'duplicate_order_attempts',
+        module: 'orders_service',
+      );
+      throw const DuplicateOrderBlockedException();
+    }
+    _lastCheckoutAttemptAtByUser[userId] = now;
+    _inFlightOrderRequestTokens.add(inFlightKey);
+
     try {
+      final existingOrderId = await _resolveCompletedOrderFromRequestToken(
+        userId: userId,
+        orderRequestToken: requestToken,
+      );
+      if (existingOrderId != null) {
+        StabilityLogger.checkout(
+          'Idempotent checkout hit user=$userId token=$requestToken order=$existingOrderId',
+        );
+        return existingOrderId;
+      }
+
+      await _reserveOrderRequestToken(input, requestToken);
+
       final activeCount = await getActiveOrdersCount(input.userId);
       if (activeCount >= 2) {
+        await _markOrderRequestTokenFailed(
+          userId: userId,
+          orderRequestToken: requestToken,
+          reason: 'active_order_limit',
+        );
         throw const OrderLimitExceededException();
       }
 
+      final effectiveInput = input.orderRequestToken == requestToken
+          ? input
+          : CreateOrderInput(
+              userId: input.userId,
+              restaurantId: input.restaurantId,
+              customerName: input.customerName,
+              customerPhone: input.customerPhone,
+              address: input.address,
+              customerLat: input.customerLat,
+              customerLng: input.customerLng,
+              totalPrice: input.totalPrice,
+              deliveryCost: input.deliveryCost,
+              buildingNumber: input.buildingNumber,
+              apartmentNumber: input.apartmentNumber,
+              floorNumber: input.floorNumber,
+              landmark: input.landmark,
+              notes: input.notes,
+              paymentMethod: input.paymentMethod,
+              orderRequestToken: requestToken,
+              checkoutSessionId: input.checkoutSessionId,
+              paymentReferenceId: input.paymentReferenceId,
+              reconciliationStatus: input.reconciliationStatus,
+              verificationAttempts: input.verificationAttempts,
+              items: input.items,
+            );
+
       try {
-        final orderId = await _createOrderViaRpc(input);
+        final orderId = await _createOrderViaRpc(effectiveInput);
         _customerOrdersCache.remove(input.userId.trim());
+        await _markOrderRequestTokenCompleted(
+          userId: userId,
+          orderRequestToken: requestToken,
+          orderId: orderId,
+        );
         return orderId;
       } on PostgrestException catch (error) {
         if (_looksLikeMissingRpc(error)) {
-          final orderId = await _createOrderDirect(input);
+          final orderId = await _createOrderDirect(effectiveInput);
           _customerOrdersCache.remove(input.userId.trim());
+          await _markOrderRequestTokenCompleted(
+            userId: userId,
+            orderRequestToken: requestToken,
+            orderId: orderId,
+          );
           return orderId;
         }
         rethrow;
       }
     } on OrderLimitExceededException {
       rethrow;
+    } on DuplicateOrderBlockedException {
+      rethrow;
     } catch (error, stack) {
+      final isTransient = _isTransientOrderSubmissionError(error);
+      if (allowOfflineQueue && isTransient) {
+        await _markOrderRequestTokenQueued(
+          userId: userId,
+          orderRequestToken: requestToken,
+        );
+        await OfflineOrderQueueService.instance.enqueue({
+          ...input.toQueuePayload(),
+          'user_id': input.userId,
+          'order_request_token': requestToken,
+          'checkout_session_id': input.checkoutSessionId,
+          'payment_reference_id': input.paymentReferenceId,
+          'attempts': 0,
+        });
+        StabilityMetricsService.instance.increment(
+          'offline_queue_enqueued',
+          module: 'orders_service',
+        );
+        throw OrderQueuedOfflineException(
+          orderRequestToken: requestToken,
+          checkoutSessionId: input.checkoutSessionId,
+        );
+      }
+
+      await _markOrderRequestTokenFailed(
+        userId: userId,
+        orderRequestToken: requestToken,
+        reason: error.toString(),
+      );
       await ErrorLogger.logError(
         module: 'orders_service.createOrder',
         error: error,
         stack: stack,
       );
       throw Exception(ErrorLogger.userMessage);
+    } finally {
+      _inFlightOrderRequestTokens.remove(inFlightKey);
     }
+  }
+
+  static Future<void> _ensureOfflineQueueInitialized() async {
+    if (_offlineQueueInitialized) {
+      return;
+    }
+    _offlineQueueInitialized = true;
+    try {
+      await OfflineOrderQueueService.instance.initialize(
+        submitter: (payload) async {
+          final queuedInput = CreateOrderInput.fromQueuePayload(payload);
+          return createOrder(
+            queuedInput,
+            allowOfflineQueue: false,
+          );
+        },
+      );
+      StabilityLogger.offlineQueue('Offline order queue initialized.');
+    } catch (error, stack) {
+      _offlineQueueInitialized = false;
+      await ErrorLogger.logError(
+        module: 'orders_service.ensureOfflineQueueInitialized',
+        error: error,
+        stack: stack,
+      );
+      rethrow;
+    }
+  }
+
+  static String _resolvedRequestToken(CreateOrderInput input) {
+    final existing = input.orderRequestToken?.trim();
+    if (existing != null && existing.isNotEmpty) {
+      return existing;
+    }
+    final random = Random.secure();
+    final epoch = DateTime.now().toUtc().microsecondsSinceEpoch;
+    final noise = random.nextInt(1 << 30).toRadixString(16);
+    return 'ord-$epoch-$noise';
+  }
+
+  static Future<String?> _resolveCompletedOrderFromRequestToken({
+    required String userId,
+    required String orderRequestToken,
+  }) async {
+    final token = orderRequestToken.trim();
+    if (token.isEmpty) {
+      return null;
+    }
+
+    try {
+      final row = await SessionManager.instance
+          .runWithValidSession<Map<String, dynamic>?>(
+        () async {
+          final result = await _client
+              .from('order_request_tokens')
+              .select('status, order_id')
+              .eq('user_id', userId)
+              .eq('order_request_token', token)
+              .limit(1)
+              .maybeSingle();
+          if (result == null) {
+            return null;
+          }
+          return Map<String, dynamic>.from(result);
+        },
+        requireSession: true,
+      );
+
+      final status = row?['status']?.toString().trim().toLowerCase() ?? '';
+      final orderId = row?['order_id']?.toString().trim();
+      if (orderId != null &&
+          orderId.isNotEmpty &&
+          (status == 'completed' ||
+              status == 'confirmed' ||
+              status == 'processing')) {
+        return orderId;
+      }
+    } on PostgrestException catch (error) {
+      if (!_isSchemaMismatchError(error)) {
+        rethrow;
+      }
+    }
+
+    return _resolveOrderIdFromOrdersTableByToken(
+      userId: userId,
+      orderRequestToken: token,
+    );
+  }
+
+  static Future<void> _reserveOrderRequestToken(
+    CreateOrderInput input,
+    String orderRequestToken,
+  ) async {
+    try {
+      final existing = await SessionManager.instance
+          .runWithValidSession<Map<String, dynamic>?>(
+        () async {
+          final row = await _client
+              .from('order_request_tokens')
+              .select('status, order_id, attempts, updated_at')
+              .eq('user_id', input.userId)
+              .eq('order_request_token', orderRequestToken)
+              .limit(1)
+              .maybeSingle();
+          if (row == null) {
+            return null;
+          }
+          return Map<String, dynamic>.from(row);
+        },
+        requireSession: true,
+      );
+
+      final now = DateTime.now().toUtc();
+      final currentStatus =
+          existing?['status']?.toString().trim().toLowerCase() ?? '';
+      final currentOrderId = existing?['order_id']?.toString().trim() ?? '';
+      final updatedAt = DateTime.tryParse(
+        existing?['updated_at']?.toString() ?? '',
+      )?.toUtc();
+
+      if ((currentStatus == 'pending' || currentStatus == 'processing') &&
+          currentOrderId.isEmpty &&
+          updatedAt != null &&
+          now.difference(updatedAt) < const Duration(seconds: 25)) {
+        StabilityMetricsService.instance.increment(
+          'duplicate_order_attempts',
+          module: 'orders_service',
+          payload: {'guard': 'pending_order_token'},
+        );
+        throw const DuplicateOrderBlockedException();
+      }
+
+      final attempts =
+          int.tryParse(existing?['attempts']?.toString() ?? '') ?? 0;
+      final payload = <String, dynamic>{
+        'user_id': input.userId,
+        'order_request_token': orderRequestToken,
+        'status': 'processing',
+        'attempts': attempts + 1,
+        'restaurant_id': input.restaurantId,
+        'total_amount': input.totalPrice,
+        'payment_method': input.paymentMethod,
+        'checkout_session_id': input.checkoutSessionId,
+        'payment_reference_id': input.paymentReferenceId,
+        'reconciliation_status': input.reconciliationStatus ?? 'pending',
+        'verification_attempts': input.verificationAttempts ?? 0,
+        'last_error': null,
+        'order_id': currentOrderId.isEmpty ? null : currentOrderId,
+        'expires_at':
+            now.add(const Duration(hours: 2)).toUtc().toIso8601String(),
+      };
+
+      await SessionManager.instance.runWithValidSession<void>(
+        () async {
+          await _client.from('order_request_tokens').upsert(
+                payload,
+                onConflict: 'user_id,order_request_token',
+              );
+        },
+        requireSession: true,
+      );
+    } on PostgrestException catch (error) {
+      if (_isSchemaMismatchError(error)) {
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  static Future<void> _markOrderRequestTokenCompleted({
+    required String userId,
+    required String orderRequestToken,
+    required String orderId,
+  }) async {
+    await _updateOrderRequestTokenStatus(
+      userId: userId,
+      orderRequestToken: orderRequestToken,
+      payload: {
+        'status': 'completed',
+        'order_id': orderId,
+        'last_error': null,
+      },
+    );
+  }
+
+  static Future<void> _markOrderRequestTokenQueued({
+    required String userId,
+    required String orderRequestToken,
+  }) async {
+    await _updateOrderRequestTokenStatus(
+      userId: userId,
+      orderRequestToken: orderRequestToken,
+      payload: {
+        'status': 'queued_offline',
+      },
+    );
+  }
+
+  static Future<void> _markOrderRequestTokenFailed({
+    required String userId,
+    required String orderRequestToken,
+    required String reason,
+  }) async {
+    await _updateOrderRequestTokenStatus(
+      userId: userId,
+      orderRequestToken: orderRequestToken,
+      payload: {
+        'status': 'failed',
+        'last_error': reason,
+      },
+    );
+  }
+
+  static Future<void> _updateOrderRequestTokenStatus({
+    required String userId,
+    required String orderRequestToken,
+    required Map<String, dynamic> payload,
+  }) async {
+    try {
+      await SessionManager.instance.runWithValidSession<void>(
+        () async {
+          await _client
+              .from('order_request_tokens')
+              .update({
+                ...payload,
+                'updated_at': DateTime.now().toUtc().toIso8601String(),
+              })
+              .eq('user_id', userId)
+              .eq('order_request_token', orderRequestToken);
+        },
+        requireSession: true,
+      );
+    } on PostgrestException catch (error) {
+      if (_isSchemaMismatchError(error)) {
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  static bool _isTransientOrderSubmissionError(Object error) {
+    if (error is TimeoutException) {
+      return true;
+    }
+    if (error is PostgrestException) {
+      final message = error.message.toLowerCase();
+      if (message.contains('timed out') ||
+          message.contains('timeout') ||
+          message.contains('connection') ||
+          message.contains('failed host lookup') ||
+          message.contains('temporarily unavailable') ||
+          message.contains('status code 429') ||
+          message.contains('status code 500') ||
+          message.contains('status code 502') ||
+          message.contains('status code 503') ||
+          message.contains('status code 504')) {
+        return true;
+      }
+    }
+    final normalized = error.toString().toLowerCase();
+    return normalized.contains('network') ||
+        normalized.contains('socket') ||
+        normalized.contains('connection') ||
+        normalized.contains('timed out') ||
+        normalized.contains('timeout') ||
+        normalized.contains('failed host lookup') ||
+        normalized.contains('temporarily unavailable');
+  }
+
+  static Future<String?> _resolveOrderIdFromOrdersTableByToken({
+    required String userId,
+    required String orderRequestToken,
+  }) async {
+    for (final ownerColumn in _orderOwnerColumns) {
+      try {
+        final row = await SessionManager.instance
+            .runWithValidSession<Map<String, dynamic>?>(
+          () async {
+            final data = await _client
+                .from('orders')
+                .select('id')
+                .eq('order_request_token', orderRequestToken)
+                .eq(ownerColumn, userId)
+                .order('created_at', ascending: false)
+                .limit(1)
+                .maybeSingle();
+            if (data == null) {
+              return null;
+            }
+            return Map<String, dynamic>.from(data);
+          },
+          requireSession: true,
+        );
+        final resolved = _stringValue(row?['id']);
+        if (resolved != null && resolved.isNotEmpty) {
+          return resolved;
+        }
+      } on PostgrestException catch (error) {
+        if (_isSchemaMismatchError(error)) {
+          continue;
+        }
+        rethrow;
+      }
+    }
+    return null;
   }
 
   static String idOf(Map<String, dynamic> order) {
@@ -333,13 +909,30 @@ class OrdersService {
   static String composeDeliveryAddress({
     required String address,
     String? houseNumber,
+    String? buildingNumber,
+    String? apartmentNumber,
+    String? floorNumber,
+    String? landmark,
   }) {
     final normalizedAddress = address.trim();
-    final normalizedHouseNumber = houseNumber?.trim() ?? '';
-    if (normalizedHouseNumber.isEmpty) {
+    final resolvedBuilding = (buildingNumber?.trim().isNotEmpty == true
+            ? buildingNumber
+            : houseNumber)
+        ?.trim();
+    final details = <String>[
+      if (resolvedBuilding != null && resolvedBuilding.isNotEmpty)
+        'رقم العمارة: $resolvedBuilding',
+      if ((apartmentNumber ?? '').trim().isNotEmpty)
+        'رقم الشقة: ${apartmentNumber!.trim()}',
+      if ((floorNumber ?? '').trim().isNotEmpty)
+        'الدور: ${floorNumber!.trim()}',
+      if ((landmark ?? '').trim().isNotEmpty)
+        'علامة مميزة: ${landmark!.trim()}',
+    ];
+    if (details.isEmpty) {
       return normalizedAddress;
     }
-    return '$normalizedAddress - رقم البيت: $normalizedHouseNumber';
+    return '$normalizedAddress - ${details.join(' - ')}';
   }
 
   static String customerNameOf(Map<String, dynamic> order) {
@@ -392,6 +985,7 @@ class OrdersService {
 
   static double? customerLatOf(Map<String, dynamic> order) {
     return toDouble(order['customer_lat']) ??
+        toDouble(order['latitude']) ??
         toDouble(order['delivery_lat']) ??
         toDouble(order['destination_lat']) ??
         toDouble(order['lat']) ??
@@ -403,6 +997,7 @@ class OrdersService {
 
   static double? customerLngOf(Map<String, dynamic> order) {
     return toDouble(order['customer_lng']) ??
+        toDouble(order['longitude']) ??
         toDouble(order['delivery_lng']) ??
         toDouble(order['destination_lng']) ??
         toDouble(order['lng']) ??
@@ -554,7 +1149,7 @@ class OrdersService {
   }
 
   static int quantityOfItem(Map<String, dynamic> item) {
-    final value = toDouble(item['qty']) ?? 0;
+    final value = toDouble(item['qty']) ?? toDouble(item['quantity']) ?? 0;
     return value.round();
   }
 
@@ -672,6 +1267,19 @@ class OrdersService {
   }
 
   static Future<String> _createOrderViaRpc(CreateOrderInput input) async {
+    final replayKey =
+        'create_order_with_items:${input.userId}:${input.orderRequestToken ?? input.checkoutSessionId ?? '-'}';
+    if (!RpcSecurityService.instance.allowLocalAction(
+      replayKey,
+      window: const Duration(seconds: 3),
+    )) {
+      StabilityMetricsService.instance.increment(
+        'replay_rejection_count',
+        module: 'orders_service',
+        payload: {'rpc': 'create_order_with_items'},
+      );
+      throw const DuplicateOrderBlockedException();
+    }
     final response = await SessionManager.instance.runWithValidSession<dynamic>(
       () => _client.rpc(
         'create_order_with_items',
@@ -696,9 +1304,11 @@ class OrdersService {
 
     await _synchronizeCreatedOrder(
       orderId: orderId,
-      userId: input.userId,
-      totalPrice: input.totalPrice,
-      deliveryCost: input.deliveryCost,
+      input: input,
+    );
+    await _synchronizeCreatedOrderItems(
+      orderId: orderId,
+      input: input,
     );
 
     return orderId;
@@ -718,35 +1328,164 @@ class OrdersService {
       throw const PostgrestException(message: 'تعذر إنشاء الطلب.');
     }
 
-    if (input.items.isNotEmpty) {
-      await SessionManager.instance.runWithValidSession<void>(
-        () async {
-          await _client.from('order_items').insert(
-                input.items
-                    .map((item) => item.toOrderItemInsert(orderId))
-                    .toList(growable: false),
-              );
-        },
-        requireSession: true,
-      );
-    }
+    await _insertOrderItemsWithFallback(
+      orderId: orderId,
+      items: input.items,
+    );
+
+    await _synchronizeCreatedOrder(
+      orderId: orderId,
+      input: input,
+    );
 
     return orderId;
   }
 
+  static Future<void> _insertOrderItemsWithFallback({
+    required String orderId,
+    required List<CreateOrderItemInput> items,
+  }) async {
+    if (items.isEmpty) {
+      return;
+    }
+
+    final fullPayloads = items
+        .map((item) => item.toOrderItemInsert(orderId))
+        .toList(growable: false);
+    final variants = [
+      fullPayloads,
+      _orderItemPayloadsWithout(fullPayloads, const {'quantity'}),
+      _orderItemPayloadsWithout(fullPayloads, const {'notes'}),
+      _orderItemPayloadsWithout(fullPayloads, const {'quantity', 'notes'}),
+    ];
+
+    PostgrestException? lastSchemaError;
+    for (final payloads in variants) {
+      try {
+        await SessionManager.instance.runWithValidSession<void>(
+          () async {
+            await _client.from('order_items').insert(payloads);
+          },
+          requireSession: true,
+        );
+        return;
+      } on PostgrestException catch (error) {
+        if (_isSchemaMismatchError(error)) {
+          lastSchemaError = error;
+          continue;
+        }
+        rethrow;
+      }
+    }
+
+    if (lastSchemaError != null) {
+      throw lastSchemaError;
+    }
+  }
+
+  static List<Map<String, dynamic>> _orderItemPayloadsWithout(
+    List<Map<String, dynamic>> payloads,
+    Set<String> columns,
+  ) {
+    return payloads
+        .map(
+          (payload) => Map<String, dynamic>.from(payload)
+            ..removeWhere((key, _) => columns.contains(key)),
+        )
+        .toList(growable: false);
+  }
+
+  static Future<void> _synchronizeCreatedOrderItems({
+    required String orderId,
+    required CreateOrderInput input,
+  }) async {
+    if (input.items.isEmpty) {
+      return;
+    }
+
+    try {
+      final rows =
+          await SessionManager.instance.runWithValidSession<List<dynamic>>(
+        () => _client.from('order_items').select('*').eq('order_id', orderId),
+        requireSession: true,
+      );
+      final existingRows = _mapRows(rows).toList(growable: true);
+      if (existingRows.isEmpty) {
+        return;
+      }
+
+      for (final item in input.items) {
+        if (existingRows.isEmpty) {
+          return;
+        }
+        final matchedIndex = existingRows.indexWhere(
+          (row) =>
+              itemNameOf(row) == item.name &&
+              (itemPriceOf(row) - item.price).abs() < 0.01 &&
+              quantityOfItem(row) == item.quantity,
+        );
+        final fallbackIndex = matchedIndex >= 0 ? matchedIndex : 0;
+        final row = existingRows.removeAt(fallbackIndex);
+        final itemId = itemIdOf(row);
+        if (itemId.isEmpty) {
+          continue;
+        }
+
+        await _updateOrderItemRowWithFallback(
+          itemId: itemId,
+          item: item,
+        );
+      }
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'orders_service.synchronizeCreatedOrderItems',
+        error: error,
+        stack: stack,
+      );
+    }
+  }
+
+  static Future<void> _updateOrderItemRowWithFallback({
+    required String itemId,
+    required CreateOrderItemInput item,
+  }) async {
+    final note = item.note.trim();
+    final variants = [
+      {
+        'quantity': item.quantity,
+        if (note.isNotEmpty) 'notes': note,
+      },
+      if (note.isNotEmpty) {'notes': note},
+      {'quantity': item.quantity},
+    ].where((payload) => payload.isNotEmpty).toList(growable: false);
+
+    for (final payload in variants) {
+      try {
+        await SessionManager.instance.runWithValidSession<void>(
+          () async {
+            await _client.from('order_items').update(payload).eq('id', itemId);
+          },
+          requireSession: true,
+        );
+        return;
+      } on PostgrestException catch (error) {
+        if (_isSchemaMismatchError(error)) {
+          continue;
+        }
+        rethrow;
+      }
+    }
+  }
+
   static Future<void> _synchronizeCreatedOrder({
     required String orderId,
-    required String userId,
-    required double totalPrice,
-    required double deliveryCost,
+    required CreateOrderInput input,
   }) async {
     try {
       await _updateOrderRowWithFallback(
         orderId: orderId,
         payloads: _buildOrderSynchronizationPayloads(
-          userId: userId,
-          totalPrice: totalPrice,
-          deliveryCost: deliveryCost,
+          input: input,
         ),
       );
     } catch (error, stack) {
@@ -876,43 +1615,54 @@ class OrdersService {
       'customer_name': input.customerName,
       'customer_phone': input.customerPhone,
     };
+    final detailPayload = _orderAddressColumnPayload(input);
+
+    final normalizedPayloads = [
+      {
+        ...basePayload,
+        'customer_id': input.userId,
+        'total_price': input.totalPrice,
+        'customer_lat': input.customerLat,
+        'customer_lng': input.customerLng,
+      },
+      {
+        ...basePayload,
+        'customer_id': input.userId,
+        'total_price': input.totalPrice,
+        'lat': input.customerLat,
+        'lng': input.customerLng,
+      },
+      {
+        ...basePayload,
+        'customer_id': input.userId,
+        'total': input.totalPrice,
+        'lat': input.customerLat,
+        'lng': input.customerLng,
+      },
+      {
+        ...basePayload,
+        'user_id': input.userId,
+        'total': input.totalPrice,
+        'lat': input.customerLat,
+        'lng': input.customerLng,
+      },
+      {
+        ...basePayload,
+        'user_id': input.userId,
+        'total_price': input.totalPrice,
+        'customer_lat': input.customerLat,
+        'customer_lng': input.customerLng,
+      },
+    ];
 
     return [
-      {
-        ...basePayload,
-        'customer_id': input.userId,
-        'total_price': input.totalPrice,
-        'customer_lat': input.customerLat,
-        'customer_lng': input.customerLng,
-      },
-      {
-        ...basePayload,
-        'customer_id': input.userId,
-        'total_price': input.totalPrice,
-        'lat': input.customerLat,
-        'lng': input.customerLng,
-      },
-      {
-        ...basePayload,
-        'customer_id': input.userId,
-        'total': input.totalPrice,
-        'lat': input.customerLat,
-        'lng': input.customerLng,
-      },
-      {
-        ...basePayload,
-        'user_id': input.userId,
-        'total': input.totalPrice,
-        'lat': input.customerLat,
-        'lng': input.customerLng,
-      },
-      {
-        ...basePayload,
-        'user_id': input.userId,
-        'total_price': input.totalPrice,
-        'customer_lat': input.customerLat,
-        'customer_lng': input.customerLng,
-      },
+      ...normalizedPayloads.map(
+        (payload) => {
+          ...payload,
+          ...detailPayload,
+        },
+      ),
+      ...normalizedPayloads,
     ];
   }
 
@@ -951,32 +1701,100 @@ class OrdersService {
   }
 
   static List<Map<String, dynamic>> _buildOrderSynchronizationPayloads({
-    required String userId,
-    required double totalPrice,
-    required double deliveryCost,
+    required CreateOrderInput input,
   }) {
-    return [
+    final detailPayload = _orderAddressColumnPayload(input);
+    final metadataPayload = <String, dynamic>{
+      if (input.orderRequestToken != null &&
+          input.orderRequestToken!.trim().isNotEmpty)
+        'order_request_token': input.orderRequestToken!.trim(),
+      if (input.checkoutSessionId != null &&
+          input.checkoutSessionId!.trim().isNotEmpty)
+        'checkout_session_id': input.checkoutSessionId!.trim(),
+      if (input.paymentReferenceId != null &&
+          input.paymentReferenceId!.trim().isNotEmpty)
+        'payment_reference_id': input.paymentReferenceId!.trim(),
+      if (input.reconciliationStatus != null &&
+          input.reconciliationStatus!.trim().isNotEmpty)
+        'reconciliation_status': input.reconciliationStatus!.trim(),
+      if (input.verificationAttempts != null)
+        'verification_attempts': input.verificationAttempts,
+      if (input.paymentMethod != null && input.paymentMethod!.trim().isNotEmpty)
+        'payment_method': input.paymentMethod!.trim(),
+    };
+
+    final normalizedPayloads = [
       {
-        'customer_id': userId,
-        'total_price': totalPrice,
-        'delivery_cost': deliveryCost,
+        'customer_id': input.userId,
+        'total_price': input.totalPrice,
+        'delivery_cost': input.deliveryCost,
       },
       {
-        'customer_id': userId,
-        'total': totalPrice,
-        'delivery_cost': deliveryCost,
+        'customer_id': input.userId,
+        'total': input.totalPrice,
+        'delivery_cost': input.deliveryCost,
       },
       {
-        'user_id': userId,
-        'total_price': totalPrice,
-        'delivery_cost': deliveryCost,
+        'user_id': input.userId,
+        'total_price': input.totalPrice,
+        'delivery_cost': input.deliveryCost,
       },
       {
-        'user_id': userId,
-        'total': totalPrice,
-        'delivery_cost': deliveryCost,
+        'user_id': input.userId,
+        'total': input.totalPrice,
+        'delivery_cost': input.deliveryCost,
       },
     ];
+
+    return [
+      ...normalizedPayloads.map(
+        (base) => {
+          ...base,
+          ...detailPayload,
+          ...metadataPayload,
+        },
+      ),
+      ...normalizedPayloads.map(
+        (base) => {
+          ...base,
+          ...detailPayload,
+        },
+      ),
+      ...normalizedPayloads,
+    ];
+  }
+
+  static Map<String, dynamic> _orderAddressColumnPayload(
+    CreateOrderInput input,
+  ) {
+    final buildingNumber = input.buildingNumber.trim();
+    final apartmentNumber = input.apartmentNumber.trim();
+    final floorNumber = input.floorNumber.trim();
+    final landmark = input.landmark.trim();
+    final notes = input.notes.trim();
+
+    return {
+      'address': input.address,
+      'customer_name': input.customerName,
+      'customer_phone': input.customerPhone,
+      'building_number': buildingNumber,
+      'apartment_number': apartmentNumber,
+      'floor_number': floorNumber,
+      'landmark': landmark,
+      'notes': notes,
+      'latitude': input.customerLat,
+      'longitude': input.customerLng,
+      'address_details': {
+        'address': input.address,
+        'building_number': buildingNumber,
+        'apartment_number': apartmentNumber,
+        'floor_number': floorNumber,
+        'landmark': landmark,
+        'notes': notes,
+        'latitude': input.customerLat,
+        'longitude': input.customerLng,
+      },
+    };
   }
 
   static Future<void> _updateOrderRowWithFallback({
@@ -1175,12 +1993,17 @@ class OrdersService {
       details.add('رقم المبنى/الشقة: $house');
     }
 
-    final floor = _firstStringValue(source, const ['floor', 'level']);
+    final floor = _firstStringValue(source, const [
+      'floor_number',
+      'floor',
+      'level',
+    ]);
     if (floor != null) {
       details.add('الدور: $floor');
     }
 
     final apartment = _firstStringValue(source, const [
+      'apartment_number',
       'apartment',
       'flat',
       'unit',

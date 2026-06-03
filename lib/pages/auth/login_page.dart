@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/localization/app_localizations.dart';
-import '../../core/services/error_logger.dart';
+import '../../core/errors/error_handler.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/ui/app_components.dart';
 import '../../core/ui/input_focus_guard.dart';
@@ -245,19 +245,25 @@ class _LoginPageState extends State<LoginPage>
     try {
       await actionHandler();
     } on AuthException catch (error, stack) {
-      await ErrorLogger.logError(
+      final appError = await ErrorHandler.handle(
+        error: error,
+        stackTrace: stack,
         module: 'login_page.auth_exception',
-        error: error,
-        stack: stack,
+        screen: 'login_page',
+        action: action.name,
+        showToUser: false,
       );
-      _setFeedback(error: error.message);
+      _setFeedback(error: appError.userMessage);
     } catch (error, stack) {
-      await ErrorLogger.logError(
-        module: 'login_page.auth_action',
+      final appError = await ErrorHandler.handle(
         error: error,
-        stack: stack,
+        stackTrace: stack,
+        module: 'login_page.auth_action',
+        screen: 'login_page',
+        action: action.name,
+        showToUser: false,
       );
-      _setFeedback(error: error.toString().replaceFirst('Exception: ', ''));
+      _setFeedback(error: appError.userMessage);
     } finally {
       if (mounted && !_navigated) {
         setState(() {

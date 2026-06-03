@@ -6,8 +6,20 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'core/config/mapbox_setup.dart';
+import 'core/errors/global_error_handler.dart';
 import 'core/localization/app_localizations.dart';
 import 'core/localization/locale_controller.dart';
+import 'core/stability/analytics_integrity_service.dart';
+import 'core/stability/checkout_guard_service.dart';
+import 'core/stability/notification_dedupe_service.dart';
+import 'core/stability/offline_order_queue_service.dart';
+import 'core/stability/payment_reconciliation_service.dart';
+import 'core/stability/realtime_presence_service.dart';
+import 'core/stability/rpc_security_service.dart';
+import 'core/stability/security_event_service.dart';
+import 'core/stability/security_observability_service.dart';
+import 'core/stability/session_security_service.dart';
+import 'core/stability/stability_metrics_service.dart';
 import 'core/config/env.dart';
 import 'core/services/error_logger.dart';
 import 'core/theme/app_theme.dart';
@@ -17,18 +29,20 @@ import 'services/notifications/app_notification_service.dart';
 import 'services/session_manager.dart';
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  _bootstrapLog('Widgets binding initialized.');
-  _configureGlobalErrorHandling();
-  _bootstrapLog('Global error handling configured.');
-
-  final bootstrapResult = await _bootstrap();
-  _bootstrapLog(
-    'Bootstrap completed. ok=${bootstrapResult.ok}, '
-    'message=${bootstrapResult.message ?? 'none'}.',
+  await GlobalErrorHandler.run(
+    appName: ErrorLogger.appName,
+    appRunner: () async {
+      WidgetsFlutterBinding.ensureInitialized();
+      _bootstrapLog('Widgets binding initialized.');
+      final bootstrapResult = await _bootstrap();
+      _bootstrapLog(
+        'Bootstrap completed. ok=${bootstrapResult.ok}, '
+        'message=${bootstrapResult.message ?? 'none'}.',
+      );
+      runApp(CustomerApp(bootstrapResult: bootstrapResult));
+      _bootstrapLog('runApp executed.');
+    },
   );
-  runApp(CustomerApp(bootstrapResult: bootstrapResult));
-  _bootstrapLog('runApp executed.');
 }
 
 class CustomerApp extends StatefulWidget {
@@ -45,17 +59,43 @@ class CustomerApp extends StatefulWidget {
 
 class _CustomerAppState extends State<CustomerApp> {
   late final LocaleController _localeController = LocaleController();
+  late final WidgetsBindingObserver _lifecycleObserver;
 
   @override
   void initState() {
     super.initState();
+    _lifecycleObserver = _AppLifecycleObserver(
+      onResumed: () {
+        unawaited(_runStabilityRecoveryCycle());
+      },
+    );
+    WidgetsBinding.instance.addObserver(_lifecycleObserver);
     unawaited(_localeController.initialize());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(_lifecycleObserver);
+    unawaited(PaymentReconciliationService.instance.dispose());
+    unawaited(OfflineOrderQueueService.instance.dispose());
+    unawaited(AnalyticsIntegrityService.instance.dispose());
+    unawaited(RealtimePresenceService.instance.dispose());
+    unawaited(SecurityObservabilityService.instance.dispose());
+    unawaited(StabilityMetricsService.instance.dispose());
     _localeController.dispose();
     super.dispose();
+  }
+
+  Future<void> _runStabilityRecoveryCycle() async {
+    await CheckoutGuardService.instance.clearStalePendingState();
+    await SessionManager.instance.ensureValidSession(requireSession: false);
+    await PaymentReconciliationService.instance.reconcilePendingPayments(
+      trigger: 'app_resumed',
+    );
+    await OfflineOrderQueueService.instance.flush();
+    await AnalyticsIntegrityService.instance.flush();
+    await SecurityEventService.instance.flush();
+    await SecurityObservabilityService.instance.refreshRemoteSnapshot();
   }
 
   @override
@@ -109,33 +149,8 @@ class BootstrapResult {
       : this._(ok: false, message: message);
 }
 
-void _configureGlobalErrorHandling() {
-  FlutterError.onError = (details) {
-    FlutterError.presentError(details);
-    unawaited(
-      ErrorLogger.logError(
-        module: 'main.flutter_error',
-        error: details.exception,
-        stack: details.stack,
-      ),
-    );
-    ErrorLogger.showUserMessage();
-  };
-
-  PlatformDispatcher.instance.onError = (error, stack) {
-    unawaited(
-      ErrorLogger.logError(
-        module: 'main.platform_dispatcher',
-        error: error,
-        stack: stack,
-      ),
-    );
-    ErrorLogger.showUserMessage();
-    return true;
-  };
-}
-
 Future<BootstrapResult> _bootstrap() async {
+  await ErrorLogger.initialize();
   _bootstrapLog('Loading environment assets...');
   try {
     await AppEnv.load();
@@ -199,6 +214,8 @@ Future<BootstrapResult> _bootstrap() async {
   try {
     await SessionManager.instance.initialize();
     _bootstrapLog('Session manager initialized.');
+    await SessionManager.instance.ensureValidSession(requireSession: false);
+    _bootstrapLog('Session recovery completed.');
   } catch (error, stack) {
     _bootstrapLog('Session manager initialization failed: $error');
     await ErrorLogger.logError(
@@ -207,6 +224,28 @@ Future<BootstrapResult> _bootstrap() async {
       stack: stack,
     );
     return const BootstrapResult.fail('app.bootstrap_session_error');
+  }
+
+  _bootstrapLog('Initializing stability layers...');
+  try {
+    await StabilityMetricsService.instance.initialize();
+    await CheckoutGuardService.instance.initialize();
+    await PaymentReconciliationService.instance.initialize();
+    await AnalyticsIntegrityService.instance.initialize();
+    await NotificationDedupeService.instance.initialize();
+    await SessionSecurityService.instance.initialize();
+    await RealtimePresenceService.instance.initialize();
+    await RpcSecurityService.instance.initialize();
+    await SecurityEventService.instance.initialize();
+    await SecurityObservabilityService.instance.initialize();
+    _bootstrapLog('Stability layers initialized.');
+  } catch (error, stack) {
+    _bootstrapLog('Stability layers initialization failed: $error');
+    await ErrorLogger.logError(
+      module: 'bootstrap.stability.initialize',
+      error: error,
+      stack: stack,
+    );
   }
 
   _bootstrapLog('Initializing notifications...');
@@ -300,5 +339,20 @@ class _AppScrollBehavior extends MaterialScrollBehavior {
     ScrollableDetails details,
   ) {
     return child;
+  }
+}
+
+class _AppLifecycleObserver extends WidgetsBindingObserver {
+  _AppLifecycleObserver({
+    required this.onResumed,
+  });
+
+  final VoidCallback onResumed;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      onResumed();
+    }
   }
 }

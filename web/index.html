@@ -75,8 +75,24 @@
         return;
       }
 
+      function resolveScopePath() {
+        var base = new URL(document.baseURI || window.location.href);
+        var path = base.pathname || '/';
+        if (!path.endsWith('/')) {
+          path = path.substring(0, path.lastIndexOf('/') + 1) || '/';
+        }
+        return path;
+      }
+
+      var scopePath = resolveScopePath();
+      var scriptUrl = new URL('firebase-messaging-sw.js', document.baseURI || window.location.href).toString();
+      window.__fcmServiceWorkerMeta = {
+        scriptUrl: scriptUrl,
+        scope: scopePath,
+      };
+
       var registrationPromise = navigator.serviceWorker
-        .register('firebase-messaging-sw.js')
+        .register(scriptUrl, { scope: scopePath })
         .then(function (registration) {
           console.log(
             '[FCM][web] firebase-messaging-sw.js registered:',

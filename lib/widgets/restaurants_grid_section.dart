@@ -378,79 +378,11 @@ class _RestaurantCardPresentation {
     BuildContext context,
     Map<String, dynamic> restaurant,
   ) {
-    final opening = _clockMinuteOf(
-      restaurant['opening_time'] ??
-          restaurant['open_time'] ??
-          restaurant['opens_at'] ??
-          restaurant['start_time'],
-    );
-    final closing = _clockMinuteOf(
-      restaurant['closing_time'] ??
-          restaurant['close_time'] ??
-          restaurant['closes_at'] ??
-          restaurant['end_time'],
-    );
-
-    if (opening == null || closing == null) {
-      return _OpenStatus(
-        isOpen: true,
-        label: context.tr('common.open_now'),
-      );
-    }
-
-    final now = DateTime.now();
-    final minuteNow = (now.hour * 60) + now.minute;
-    final isOpen = _isWithinOpenWindow(
-      currentMinute: minuteNow,
-      openingMinute: opening,
-      closingMinute: closing,
-    );
+    final isOpen = RestaurantsService.isWithinOperatingHours(restaurant);
     return _OpenStatus(
       isOpen: isOpen,
       label: context.tr(isOpen ? 'common.open_now' : 'common.closed_now'),
     );
-  }
-
-  static int? _clockMinuteOf(dynamic value) {
-    final raw = value?.toString().trim();
-    if (raw == null || raw.isEmpty || raw == 'null') {
-      return null;
-    }
-
-    final parsedDate = DateTime.tryParse(raw);
-    if (parsedDate != null) {
-      final local = parsedDate.toLocal();
-      return (local.hour * 60) + local.minute;
-    }
-
-    final normalized = raw.replaceAll('.', ':');
-    final match = RegExp(r'^(\d{1,2}):(\d{2})(?::\d{2})?$').firstMatch(
-      normalized,
-    );
-    if (match == null) {
-      return null;
-    }
-
-    final hour = int.tryParse(match.group(1) ?? '');
-    final minute = int.tryParse(match.group(2) ?? '');
-    if (hour == null || minute == null || hour < 0 || minute < 0) {
-      return null;
-    }
-    return (hour % 24 * 60) + (minute % 60);
-  }
-
-  static bool _isWithinOpenWindow({
-    required int currentMinute,
-    required int openingMinute,
-    required int closingMinute,
-  }) {
-    if (openingMinute == closingMinute) {
-      return true;
-    }
-    if (openingMinute < closingMinute) {
-      return currentMinute >= openingMinute && currentMinute < closingMinute;
-    }
-    return currentMinute >= openingMinute || currentMinute < closingMinute;
   }
 }
 

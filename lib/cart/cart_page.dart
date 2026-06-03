@@ -47,6 +47,10 @@ class _CartPageState extends State<CartPage> {
   final phoneCtrl = TextEditingController();
   final addressCtrl = TextEditingController();
   final houseNumberCtrl = TextEditingController();
+  final apartmentNumberCtrl = TextEditingController();
+  final floorNumberCtrl = TextEditingController();
+  final landmarkCtrl = TextEditingController();
+  final notesCtrl = TextEditingController();
   final discountCodeCtrl = TextEditingController();
 
   bool _contentVisible = kIsWeb;
@@ -56,10 +60,14 @@ class _CartPageState extends State<CartPage> {
   bool _applyingDiscount = false;
   bool _didSyncAddress = false;
   bool _didSyncHouseNumber = false;
+  bool _didSyncApartmentNumber = false;
+  bool _didSyncFloorNumber = false;
+  bool _didSyncLandmark = false;
+  bool _didSyncNotes = false;
+  bool _saveAddressAsDefault = false;
   String? _loadedActiveOrderId;
   Map<String, dynamic>? _activeOrder;
   AppliedDiscountCode? _appliedDiscountCode;
-  CustomerAddress? _primaryAddress;
   String? _discountFeedback;
   bool _discountFeedbackIsError = false;
 
@@ -68,6 +76,10 @@ class _CartPageState extends State<CartPage> {
     super.initState();
     addressCtrl.addListener(_handleAddressChanged);
     houseNumberCtrl.addListener(_handleHouseNumberChanged);
+    apartmentNumberCtrl.addListener(_handleApartmentNumberChanged);
+    floorNumberCtrl.addListener(_handleFloorNumberChanged);
+    landmarkCtrl.addListener(_handleLandmarkChanged);
+    notesCtrl.addListener(_handleNotesChanged);
     unawaited(_loadProfile());
   }
 
@@ -87,6 +99,27 @@ class _CartPageState extends State<CartPage> {
       _setControllerValue(houseNumberCtrl, cart.houseNumber);
     }
 
+    if (!_didSyncApartmentNumber ||
+        apartmentNumberCtrl.text != cart.apartmentNumber) {
+      _didSyncApartmentNumber = true;
+      _setControllerValue(apartmentNumberCtrl, cart.apartmentNumber);
+    }
+
+    if (!_didSyncFloorNumber || floorNumberCtrl.text != cart.floorNumber) {
+      _didSyncFloorNumber = true;
+      _setControllerValue(floorNumberCtrl, cart.floorNumber);
+    }
+
+    if (!_didSyncLandmark || landmarkCtrl.text != cart.landmark) {
+      _didSyncLandmark = true;
+      _setControllerValue(landmarkCtrl, cart.landmark);
+    }
+
+    if (!_didSyncNotes || notesCtrl.text != cart.checkoutNotes) {
+      _didSyncNotes = true;
+      _setControllerValue(notesCtrl, cart.checkoutNotes);
+    }
+
     final activeOrderId = cart.activeOrderId;
     if (_loadedActiveOrderId != activeOrderId) {
       _loadedActiveOrderId = activeOrderId;
@@ -102,6 +135,10 @@ class _CartPageState extends State<CartPage> {
     phoneCtrl.dispose();
     addressCtrl.dispose();
     houseNumberCtrl.dispose();
+    apartmentNumberCtrl.dispose();
+    floorNumberCtrl.dispose();
+    landmarkCtrl.dispose();
+    notesCtrl.dispose();
     discountCodeCtrl.dispose();
     super.dispose();
   }
@@ -270,7 +307,6 @@ class _CartPageState extends State<CartPage> {
 
       _setControllerValue(nameCtrl, (profile['name'] ?? '').toString());
       _setControllerValue(phoneCtrl, (profile['phone'] ?? '').toString());
-      _primaryAddress = savedPrimaryAddress;
 
       if (savedPrimaryAddress != null) {
         final currentAddress = addressCtrl.text.trim();
@@ -281,6 +317,30 @@ class _CartPageState extends State<CartPage> {
           _setControllerValue(
             houseNumberCtrl,
             savedPrimaryAddress.houseApartmentNo,
+          );
+        }
+        if (apartmentNumberCtrl.text.trim().isEmpty) {
+          _setControllerValue(
+            apartmentNumberCtrl,
+            savedPrimaryAddress.apartmentNumber,
+          );
+        }
+        if (floorNumberCtrl.text.trim().isEmpty) {
+          _setControllerValue(
+            floorNumberCtrl,
+            savedPrimaryAddress.floorNumber,
+          );
+        }
+        if (landmarkCtrl.text.trim().isEmpty) {
+          _setControllerValue(
+            landmarkCtrl,
+            savedPrimaryAddress.landmark,
+          );
+        }
+        if (notesCtrl.text.trim().isEmpty) {
+          _setControllerValue(
+            notesCtrl,
+            savedPrimaryAddress.additionalNotes,
           );
         }
 
@@ -297,10 +357,18 @@ class _CartPageState extends State<CartPage> {
               lat: savedPrimaryAddress.lat!,
               lng: savedPrimaryAddress.lng!,
               houseNumber: savedPrimaryAddress.houseApartmentNo,
+              apartmentNumber: savedPrimaryAddress.apartmentNumber,
+              floorNumber: savedPrimaryAddress.floorNumber,
+              landmark: savedPrimaryAddress.landmark,
+              notes: savedPrimaryAddress.additionalNotes,
             );
           } else {
             cart.setDeliveryAddress(savedPrimaryAddress.primaryAddress);
             cart.setHouseNumber(savedPrimaryAddress.houseApartmentNo);
+            cart.setApartmentNumber(savedPrimaryAddress.apartmentNumber);
+            cart.setFloorNumber(savedPrimaryAddress.floorNumber);
+            cart.setLandmark(savedPrimaryAddress.landmark);
+            cart.setCheckoutNotes(savedPrimaryAddress.additionalNotes);
           }
         }
       }
@@ -357,13 +425,61 @@ class _CartPageState extends State<CartPage> {
 
   void _handleHouseNumberChanged() {
     final cart = CartProvider.maybeOf(context);
-    if (cart == null) {
+    if (cart == null || cart.isLocked) {
       return;
     }
 
     final currentValue = houseNumberCtrl.text.trim();
     if (currentValue != cart.houseNumber) {
       cart.setHouseNumber(currentValue);
+    }
+  }
+
+  void _handleApartmentNumberChanged() {
+    final cart = CartProvider.maybeOf(context);
+    if (cart == null || cart.isLocked) {
+      return;
+    }
+
+    final currentValue = apartmentNumberCtrl.text.trim();
+    if (currentValue != cart.apartmentNumber) {
+      cart.setApartmentNumber(currentValue);
+    }
+  }
+
+  void _handleFloorNumberChanged() {
+    final cart = CartProvider.maybeOf(context);
+    if (cart == null || cart.isLocked) {
+      return;
+    }
+
+    final currentValue = floorNumberCtrl.text.trim();
+    if (currentValue != cart.floorNumber) {
+      cart.setFloorNumber(currentValue);
+    }
+  }
+
+  void _handleLandmarkChanged() {
+    final cart = CartProvider.maybeOf(context);
+    if (cart == null || cart.isLocked) {
+      return;
+    }
+
+    final currentValue = landmarkCtrl.text.trim();
+    if (currentValue != cart.landmark) {
+      cart.setLandmark(currentValue);
+    }
+  }
+
+  void _handleNotesChanged() {
+    final cart = CartProvider.maybeOf(context);
+    if (cart == null || cart.isLocked) {
+      return;
+    }
+
+    final currentValue = notesCtrl.text.trim();
+    if (currentValue != cart.checkoutNotes) {
+      cart.setCheckoutNotes(currentValue);
     }
   }
 
@@ -432,6 +548,10 @@ class _CartPageState extends State<CartPage> {
       lat: lat,
       lng: lng,
       houseNumber: houseNumber,
+      apartmentNumber: apartmentNumberCtrl.text.trim(),
+      floorNumber: floorNumberCtrl.text.trim(),
+      landmark: landmarkCtrl.text.trim(),
+      notes: notesCtrl.text.trim(),
     );
     if (customerName.isNotEmpty) {
       _setControllerValue(nameCtrl, customerName);
@@ -496,6 +616,10 @@ class _CartPageState extends State<CartPage> {
       return;
     }
 
+    if (!_validateCheckoutFields()) {
+      return;
+    }
+
     if (!cart.hasLocation ||
         cart.deliveryAddress == null ||
         cart.deliveryAddress!.trim().isEmpty) {
@@ -508,15 +632,8 @@ class _CartPageState extends State<CartPage> {
       return;
     }
 
-    final hasCustomerIdentity = await _ensureCustomerIdentity();
-    if (!hasCustomerIdentity) {
-      return;
-    }
-
-    final hasPrimaryAddress = await _ensurePrimaryAddressForCheckout(cart);
-    if (!hasPrimaryAddress) {
-      return;
-    }
+    await _saveCustomerProfileForCheckout();
+    await _saveDefaultAddressIfRequested(cart);
 
     final session = await SessionManager.instance.ensureValidSession(
       requireSession: true,
@@ -528,7 +645,10 @@ class _CartPageState extends State<CartPage> {
 
     final fullAddress = OrdersService.composeDeliveryAddress(
       address: cart.deliveryAddress!,
-      houseNumber: houseNumberCtrl.text,
+      buildingNumber: houseNumberCtrl.text,
+      apartmentNumber: apartmentNumberCtrl.text,
+      floorNumber: floorNumberCtrl.text,
+      landmark: landmarkCtrl.text,
     );
     final pricing = _pricingFor(cart);
 
@@ -542,6 +662,11 @@ class _CartPageState extends State<CartPage> {
           customerName: nameCtrl.text.trim(),
           customerPhone: phoneCtrl.text.trim(),
           address: fullAddress,
+          buildingNumber: houseNumberCtrl.text.trim(),
+          apartmentNumber: apartmentNumberCtrl.text.trim(),
+          floorNumber: floorNumberCtrl.text.trim(),
+          landmark: landmarkCtrl.text.trim(),
+          notes: notesCtrl.text.trim(),
           customerLat: cart.deliveryLat!,
           customerLng: cart.deliveryLng!,
           totalPrice: pricing.finalTotal,
@@ -553,10 +678,12 @@ class _CartPageState extends State<CartPage> {
                   name: item.name,
                   price: item.price,
                   quantity: item.qty,
+                  note: item.note,
                 ),
               )
               .toList(growable: false),
         ),
+        allowOfflineQueue: false,
       );
 
       await cart.markOrderPlaced(orderId);
@@ -578,6 +705,8 @@ class _CartPageState extends State<CartPage> {
       );
     } on OrderLimitExceededException catch (error) {
       _showSnack(error.message);
+    } on DuplicateOrderBlockedException catch (error) {
+      _showSnack(error.message);
     } catch (_) {
       _showSnack(ErrorLogger.userMessage);
     } finally {
@@ -587,120 +716,92 @@ class _CartPageState extends State<CartPage> {
     }
   }
 
-  Future<bool> _ensureCustomerIdentity() async {
-    final currentName = nameCtrl.text.trim();
-    final currentPhone = phoneCtrl.text.trim();
-    if (currentName.isNotEmpty && currentPhone.length >= 8) {
-      return true;
+  bool _validateCheckoutFields() {
+    if (nameCtrl.text.trim().isEmpty) {
+      _showSnack(context.tr('cart.write_name'));
+      return false;
     }
-
-    await InputFocusGuard.prepareForUiTransition(context: context);
-    if (!mounted) {
+    if (phoneCtrl.text.trim().length < 8) {
+      _showSnack(context.tr('cart.invalid_phone'));
       return false;
     }
 
-    final result = await showModalBottomSheet<_CustomerInfoResult>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      showDragHandle: true,
-      builder: (_) => _CustomerInfoSheet(
-        initialName: currentName,
-        initialPhone: currentPhone,
-      ),
-    );
-
-    if (result == null) {
-      return false;
-    }
-
-    try {
-      await _profileService.updateProfile(
-        name: result.name,
-        phone: result.phone,
-      );
-
-      if (!mounted) {
+    final requiredFields = <TextEditingController, String>{
+      addressCtrl: 'اكتب عنوان التوصيل.',
+      houseNumberCtrl: 'اكتب رقم العمارة.',
+      apartmentNumberCtrl: 'اكتب رقم الشقة.',
+      floorNumberCtrl: 'اكتب الدور.',
+      landmarkCtrl: 'اكتب علامة مميزة للمكان.',
+      notesCtrl: 'اكتب الملاحظات الإضافية أو اكتب "لا يوجد".',
+    };
+    for (final entry in requiredFields.entries) {
+      if (entry.key.text.trim().isEmpty) {
+        _showSnack(entry.value);
         return false;
       }
+    }
+    return true;
+  }
 
-      _setControllerValue(nameCtrl, result.name);
-      _setControllerValue(phoneCtrl, result.phone);
-      return true;
-    } catch (_) {
+  Future<void> _saveCustomerProfileForCheckout() async {
+    try {
+      await _profileService.updateProfile(
+        name: nameCtrl.text.trim(),
+        phone: phoneCtrl.text.trim(),
+      );
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'cart_page.saveCustomerProfileForCheckout',
+        error: error,
+        stack: stack,
+      );
       if (mounted) {
-        _showSnack(context.tr('cart.profile_save_error'));
+        _showSnack('سيتم استخدام بيانات العميل لهذا الطلب فقط.');
       }
-      return false;
     }
   }
 
-  Future<bool> _ensurePrimaryAddressForCheckout(CartController cart) async {
-    final cachedAddress = _primaryAddress;
-    if (cachedAddress != null && cachedAddress.isComplete) {
-      return true;
-    }
-
-    await InputFocusGuard.prepareForUiTransition(context: context);
-    if (!mounted) {
-      return false;
-    }
-
-    final result = await showModalBottomSheet<_PrimaryAddressResult>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      showDragHandle: true,
-      builder: (_) => _PrimaryAddressSheet(
-        initialAddress: addressCtrl.text.trim(),
-        initialHouseApartmentNo: houseNumberCtrl.text.trim(),
-        initialLat: cart.deliveryLat ?? cachedAddress?.lat,
-        initialLng: cart.deliveryLng ?? cachedAddress?.lng,
-        initialCustomerName: nameCtrl.text.trim(),
-        initialCustomerPhone: phoneCtrl.text.trim(),
-      ),
-    );
-
-    if (result == null) {
-      return false;
+  Future<void> _saveDefaultAddressIfRequested(CartController cart) async {
+    if (!_saveAddressAsDefault) {
+      return;
     }
 
     try {
       final saved = await CustomerAddressService.savePrimaryAddress(
-        primaryAddress: result.primaryAddress,
-        houseApartmentNo: result.houseApartmentNo,
+        primaryAddress: addressCtrl.text.trim(),
+        houseApartmentNo: houseNumberCtrl.text.trim(),
+        apartmentNumber: apartmentNumberCtrl.text.trim(),
+        floorNumber: floorNumberCtrl.text.trim(),
+        landmark: landmarkCtrl.text.trim(),
         area: '',
-        additionalNotes: '',
-        lat: result.lat,
-        lng: result.lng,
+        additionalNotes: notesCtrl.text.trim(),
+        lat: cart.deliveryLat,
+        lng: cart.deliveryLng,
       );
 
-      if (!mounted) {
-        return false;
-      }
-
-      setState(() => _primaryAddress = saved);
-
-      _setControllerValue(addressCtrl, saved.primaryAddress);
-      _setControllerValue(houseNumberCtrl, saved.houseApartmentNo);
-
-      if (!cart.isLocked) {
-        final lat = saved.lat ?? result.lat;
-        final lng = saved.lng ?? result.lng;
+      if (!cart.isLocked && saved.lat != null && saved.lng != null) {
         cart.setDeliveryLocation(
           address: saved.primaryAddress,
-          lat: lat,
-          lng: lng,
+          lat: saved.lat!,
+          lng: saved.lng!,
           houseNumber: saved.houseApartmentNo,
+          apartmentNumber: saved.apartmentNumber,
+          floorNumber: saved.floorNumber,
+          landmark: saved.landmark,
+          notes: saved.additionalNotes,
         );
       }
-
-      return true;
-    } catch (_) {
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'cart_page.saveDefaultAddressIfRequested',
+        error: error,
+        stack: stack,
+      );
       if (mounted) {
-        _showSnack(context.tr('cart.profile_save_error'));
+        _showSnack(
+          'تعذر حفظ العنوان الافتراضي، وسيتم استخدامه لهذا الطلب فقط.',
+        );
       }
-      return false;
     }
   }
 
@@ -778,6 +879,63 @@ class _CartPageState extends State<CartPage> {
     );
   }
 
+  Future<void> _incrementCartItem(CartController cart, CartItem item) async {
+    if (creatingOrder || cart.isLocked) {
+      return;
+    }
+    cart.incrementItem(item.id);
+  }
+
+  Future<void> _decrementCartItem(CartController cart, CartItem item) async {
+    if (creatingOrder || cart.isLocked) {
+      return;
+    }
+    if (item.qty > 1) {
+      cart.decrementItem(item.id);
+      return;
+    }
+
+    final confirmed = await _confirmDeleteCartItem(item);
+    if (confirmed && mounted) {
+      cart.deleteItem(item.id);
+    }
+  }
+
+  Future<void> _deleteCartItem(CartController cart, CartItem item) async {
+    if (creatingOrder || cart.isLocked) {
+      return;
+    }
+    final confirmed = await _confirmDeleteCartItem(item);
+    if (confirmed && mounted) {
+      cart.deleteItem(item.id);
+    }
+  }
+
+  Future<bool> _confirmDeleteCartItem(CartItem item) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('حذف الصنف من السلة؟'),
+        content: Text(
+          'سيتم حذف "${item.name}" بالكامل من السلة.',
+          textAlign: TextAlign.right,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.delete_outline_rounded),
+            label: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
   @override
   Widget build(BuildContext context) {
     final cart = CartProvider.of(context);
@@ -824,7 +982,18 @@ class _CartPageState extends State<CartPage> {
                                     (item) => Padding(
                                       padding:
                                           const EdgeInsets.only(bottom: 12),
-                                      child: _CartLineItem(item: item),
+                                      child: _CartLineItem(
+                                        item: item,
+                                        locked: cart.isLocked || creatingOrder,
+                                        onIncrement: () =>
+                                            _incrementCartItem(cart, item),
+                                        onDecrement: () =>
+                                            _decrementCartItem(cart, item),
+                                        onDelete: () =>
+                                            _deleteCartItem(cart, item),
+                                        onNoteChanged: (value) =>
+                                            cart.updateItemNote(item.id, value),
+                                      ),
                                     ),
                                   )
                                   .toList(growable: false),
@@ -835,20 +1004,31 @@ class _CartPageState extends State<CartPage> {
                             title: context.tr('cart.customer_section'),
                             child: Column(
                               children: [
-                                _ReadOnlyField(
-                                  label: context.tr('cart.name'),
-                                  value: nameCtrl.text.trim().isEmpty
-                                      ? context
-                                          .tr('cart.ask_before_first_order')
-                                      : nameCtrl.text.trim(),
+                                TextField(
+                                  controller: nameCtrl,
+                                  enabled: !cart.isLocked && !creatingOrder,
+                                  onTapOutside: (_) =>
+                                      InputFocusGuard.dismiss(),
+                                  textAlign: TextAlign.right,
+                                  decoration: InputDecoration(
+                                    labelText: context.tr('cart.name'),
+                                    prefixIcon:
+                                        const Icon(Icons.person_outline),
+                                  ),
                                 ),
                                 const SizedBox(height: 12),
-                                _ReadOnlyField(
-                                  label: context.tr('cart.phone'),
-                                  value: phoneCtrl.text.trim().isEmpty
-                                      ? context
-                                          .tr('cart.ask_before_first_order')
-                                      : phoneCtrl.text.trim(),
+                                TextField(
+                                  controller: phoneCtrl,
+                                  enabled: !cart.isLocked && !creatingOrder,
+                                  onTapOutside: (_) =>
+                                      InputFocusGuard.dismiss(),
+                                  textAlign: TextAlign.right,
+                                  keyboardType: TextInputType.phone,
+                                  decoration: InputDecoration(
+                                    labelText: context.tr('cart.phone'),
+                                    prefixIcon:
+                                        const Icon(Icons.phone_outlined),
+                                  ),
                                 ),
                               ],
                             ),
@@ -859,24 +1039,20 @@ class _CartPageState extends State<CartPage> {
                             trailing: cart.isLocked
                                 ? null
                                 : TextButton.icon(
-                                    onPressed: () => _openLocationPicker(cart),
+                                    onPressed: creatingOrder
+                                        ? null
+                                        : () => _openLocationPicker(cart),
                                     icon: const Icon(Icons.map_outlined,
                                         size: 18),
-                                    label: Text(
-                                      context.tr('cart.select_location'),
+                                    label: const Text(
+                                      'تحديد الموقع من الخريطة',
                                     ),
                                   ),
                             child: Column(
                               children: [
                                 TextField(
                                   controller: addressCtrl,
-                                  enabled: !cart.isLocked,
-                                  readOnly: true,
-                                  onTap: cart.isLocked
-                                      ? null
-                                      : () => unawaited(
-                                            _openLocationPicker(cart),
-                                          ),
+                                  enabled: !cart.isLocked && !creatingOrder,
                                   onTapOutside: (_) =>
                                       InputFocusGuard.dismiss(),
                                   textAlign: TextAlign.right,
@@ -885,11 +1061,10 @@ class _CartPageState extends State<CartPage> {
                                   decoration: InputDecoration(
                                     labelText:
                                         context.tr('cart.delivery_address'),
-                                    hintText: context
-                                        .tr('cart.delivery_address_hint'),
+                                    hintText: 'اكتب العنوان أو حدده من الخريطة',
                                     prefixIcon:
                                         const Icon(Icons.location_on_outlined),
-                                    suffixIcon: cart.isLocked
+                                    suffixIcon: cart.isLocked || creatingOrder
                                         ? null
                                         : IconButton(
                                             onPressed: () =>
@@ -902,17 +1077,107 @@ class _CartPageState extends State<CartPage> {
                                 const SizedBox(height: 12),
                                 TextField(
                                   controller: houseNumberCtrl,
-                                  enabled: !cart.isLocked,
+                                  enabled: !cart.isLocked && !creatingOrder,
                                   onTapOutside: (_) =>
                                       InputFocusGuard.dismiss(),
                                   textAlign: TextAlign.right,
-                                  decoration: InputDecoration(
-                                    labelText: context.tr('cart.house_number'),
-                                    hintText:
-                                        context.tr('cart.house_number_hint'),
-                                    prefixIcon: const Icon(Icons.home_outlined),
+                                  decoration: const InputDecoration(
+                                    labelText: 'رقم العمارة',
+                                    hintText: 'مثال: 12',
+                                    prefixIcon: Icon(Icons.apartment_outlined),
                                   ),
                                 ),
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: apartmentNumberCtrl,
+                                  enabled: !cart.isLocked && !creatingOrder,
+                                  onTapOutside: (_) =>
+                                      InputFocusGuard.dismiss(),
+                                  textAlign: TextAlign.right,
+                                  decoration: const InputDecoration(
+                                    labelText: 'رقم الشقة',
+                                    hintText: 'مثال: 7',
+                                    prefixIcon:
+                                        Icon(Icons.meeting_room_outlined),
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: floorNumberCtrl,
+                                  enabled: !cart.isLocked && !creatingOrder,
+                                  onTapOutside: (_) =>
+                                      InputFocusGuard.dismiss(),
+                                  textAlign: TextAlign.right,
+                                  decoration: const InputDecoration(
+                                    labelText: 'الدور',
+                                    hintText: 'مثال: الثالث',
+                                    prefixIcon: Icon(Icons.stairs_outlined),
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: landmarkCtrl,
+                                  enabled: !cart.isLocked && !creatingOrder,
+                                  onTapOutside: (_) =>
+                                      InputFocusGuard.dismiss(),
+                                  textAlign: TextAlign.right,
+                                  decoration: const InputDecoration(
+                                    labelText: 'علامة مميزة للمكان',
+                                    hintText: 'مثال: بجوار الصيدلية',
+                                    prefixIcon: Icon(Icons.flag_outlined),
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: notesCtrl,
+                                  enabled: !cart.isLocked && !creatingOrder,
+                                  onTapOutside: (_) =>
+                                      InputFocusGuard.dismiss(),
+                                  textAlign: TextAlign.right,
+                                  minLines: 2,
+                                  maxLines: 4,
+                                  decoration: const InputDecoration(
+                                    labelText: 'ملاحظات إضافية',
+                                    hintText: 'تعليمات الوصول أو اكتب لا يوجد',
+                                    prefixIcon: Icon(Icons.notes_outlined),
+                                  ),
+                                ),
+                                if (!cart.isLocked) ...[
+                                  const SizedBox(height: 12),
+                                  CheckboxListTile(
+                                    value: _saveAddressAsDefault,
+                                    onChanged: creatingOrder
+                                        ? null
+                                        : (value) {
+                                            setState(
+                                              () => _saveAddressAsDefault =
+                                                  value ?? false,
+                                            );
+                                          },
+                                    controlAffinity:
+                                        ListTileControlAffinity.leading,
+                                    contentPadding: EdgeInsets.zero,
+                                    title: const Text(
+                                      'حفظ التعديلات كعنوان افتراضي للحساب',
+                                      textAlign: TextAlign.right,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    subtitle: const Text(
+                                      'اترك الخيار غير محدد لاستخدام العنوان لهذا الطلب فقط.',
+                                      textAlign: TextAlign.right,
+                                    ),
+                                  ),
+                                ],
+                                if (cart.hasLocation) ...[
+                                  const SizedBox(height: 12),
+                                  _LocationPreview(
+                                    address: cart.deliveryAddress ?? '',
+                                    lat: cart.deliveryLat!,
+                                    lng: cart.deliveryLng!,
+                                  ),
+                                ],
                               ],
                             ),
                           ),
@@ -928,7 +1193,7 @@ class _CartPageState extends State<CartPage> {
                                   icon: Icons.payments_outlined,
                                   selected: cart.selectedPaymentMethod ==
                                       CartPaymentMethod.cash,
-                                  enabled: !cart.isLocked,
+                                  enabled: !cart.isLocked && !creatingOrder,
                                   onTap: () => cart
                                       .setPaymentMethod(CartPaymentMethod.cash),
                                 ),
@@ -952,7 +1217,7 @@ class _CartPageState extends State<CartPage> {
                             child: _DiscountCodeSection(
                               codeController: discountCodeCtrl,
                               applying: _applyingDiscount,
-                              locked: cart.isLocked,
+                              locked: cart.isLocked || creatingOrder,
                               hasAppliedDiscount:
                                   pricing.appliedDiscount != null,
                               feedback: _discountFeedback,
@@ -1086,9 +1351,19 @@ class _CartPageState extends State<CartPage> {
 class _CartLineItem extends StatelessWidget {
   const _CartLineItem({
     required this.item,
+    required this.locked,
+    required this.onIncrement,
+    required this.onDecrement,
+    required this.onDelete,
+    required this.onNoteChanged,
   });
 
   final CartItem item;
+  final bool locked;
+  final VoidCallback onIncrement;
+  final VoidCallback onDecrement;
+  final VoidCallback onDelete;
+  final ValueChanged<String> onNoteChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -1098,50 +1373,220 @@ class _CartLineItem extends StatelessWidget {
         color: const Color(0xFFF9F6F2),
         borderRadius: BorderRadius.circular(18),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: AppTheme.primary.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: const Icon(
-              Icons.fastfood_rounded,
-              color: AppTheme.primary,
+          Row(
+            children: [
+              IconButton.filledTonal(
+                tooltip: 'حذف الصنف',
+                onPressed: locked ? null : onDelete,
+                icon: const Icon(Icons.delete_outline_rounded),
+              ),
+              const SizedBox(width: 8),
+              _QuantityStepper(
+                quantity: item.qty,
+                locked: locked,
+                onIncrement: onIncrement,
+                onDecrement: onDecrement,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      item.name,
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                        color: AppTheme.text,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${localizedCurrency(context, item.price)} للقطعة',
+                      style: const TextStyle(
+                        color: Color(0xFF667085),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: AppTheme.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.fastfood_rounded,
+                  color: AppTheme.primary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          TextFormField(
+            key: ValueKey('cart-item-note-${item.id}'),
+            initialValue: item.note,
+            enabled: !locked,
+            onChanged: onNoteChanged,
+            onTapOutside: (_) => InputFocusGuard.dismiss(),
+            textAlign: TextAlign.right,
+            minLines: 1,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              labelText: 'ملاحظات الصنف',
+              hintText: 'مثال: بدون صوص أو تغليف منفصل',
+              prefixIcon: Icon(Icons.edit_note_rounded),
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Text(
+                localizedCurrency(context, item.price * item.qty),
+                style: const TextStyle(
+                  color: AppTheme.primary,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${item.qty} × ${localizedCurrency(context, item.price)}',
+                style: const TextStyle(
+                  color: Color(0xFF667085),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuantityStepper extends StatelessWidget {
+  const _QuantityStepper({
+    required this.quantity,
+    required this.locked,
+    required this.onIncrement,
+    required this.onDecrement,
+  });
+
+  final int quantity;
+  final bool locked;
+  final VoidCallback onIncrement;
+  final VoidCallback onDecrement;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 40,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: 'تقليل الكمية',
+            onPressed: locked ? null : onDecrement,
+            icon: const Icon(Icons.remove_rounded),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 38, height: 38),
+            visualDensity: VisualDensity.compact,
+          ),
+          SizedBox(
+            width: 34,
+            child: Text(
+              quantity.toString(),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: AppTheme.text,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'زيادة الكمية',
+            onPressed: locked ? null : onIncrement,
+            icon: const Icon(Icons.add_rounded),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 38, height: 38),
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LocationPreview extends StatelessWidget {
+  const _LocationPreview({
+    required this.address,
+    required this.lat,
+    required this.lng,
+  });
+
+  final String address;
+  final double lat;
+  final double lng;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.primary.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.primary.withValues(alpha: 0.22)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.location_on_rounded, color: AppTheme.primary),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Text(
-                  item.name,
+                const Text(
+                  'معاينة الموقع المختار',
                   textAlign: TextAlign.right,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppTheme.text,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${item.qty} × ${localizedCurrency(context, item.price)}',
+                  address.trim().isEmpty ? 'لم يتم إدخال عنوان نصي.' : address,
+                  textAlign: TextAlign.right,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    color: Color(0xFF667085),
+                    color: Color(0xFF475467),
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+                const SizedBox(height: 4),
+                Text(
+                  '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}',
+                  textDirection: TextDirection.ltr,
+                  style: const TextStyle(
+                    color: Color(0xFF667085),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            localizedCurrency(context, item.price * item.qty),
-            style: const TextStyle(
-              color: AppTheme.primary,
-              fontWeight: FontWeight.w900,
             ),
           ),
         ],
@@ -1200,50 +1645,6 @@ class _SectionCard extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           child,
-        ],
-      ),
-    );
-  }
-}
-
-class _ReadOnlyField extends StatelessWidget {
-  const _ReadOnlyField({
-    required this.label,
-    required this.value,
-  });
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF9F6F2),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              color: Color(0xFF667085),
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            textAlign: TextAlign.right,
-            style: const TextStyle(
-              color: AppTheme.text,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
         ],
       ),
     );
@@ -1639,373 +2040,6 @@ class _CartEmptyState extends StatelessWidget {
               style: TextStyle(
                 color: Color(0xFF667085),
                 height: 1.5,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _CustomerInfoResult {
-  const _CustomerInfoResult({
-    required this.name,
-    required this.phone,
-  });
-
-  final String name;
-  final String phone;
-}
-
-class _CustomerInfoSheet extends StatefulWidget {
-  const _CustomerInfoSheet({
-    required this.initialName,
-    required this.initialPhone,
-  });
-
-  final String initialName;
-  final String initialPhone;
-
-  @override
-  State<_CustomerInfoSheet> createState() => _CustomerInfoSheetState();
-}
-
-class _CustomerInfoSheetState extends State<_CustomerInfoSheet> {
-  late final TextEditingController _nameCtrl =
-      TextEditingController(text: widget.initialName);
-  late final TextEditingController _phoneCtrl =
-      TextEditingController(text: widget.initialPhone);
-
-  @override
-  void dispose() {
-    _nameCtrl.dispose();
-    _phoneCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    final name = _nameCtrl.text.trim();
-    final phone = _phoneCtrl.text.trim();
-
-    if (name.isEmpty) {
-      _showSnack(context.tr('cart.write_name'));
-      return;
-    }
-
-    if (phone.length < 8) {
-      _showSnack(context.tr('cart.invalid_phone'));
-      return;
-    }
-
-    await InputFocusGuard.prepareForUiTransition(context: context);
-    if (!mounted) {
-      return;
-    }
-    Navigator.pop(
-      context,
-      _CustomerInfoResult(name: name, phone: phone),
-    );
-  }
-
-  void _showSnack(String message) {
-    AppSnackBar.show(context, message: message);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final viewInsets = MediaQuery.of(context).viewInsets;
-
-    return AnimatedPadding(
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOutCubic,
-      padding: EdgeInsets.only(bottom: viewInsets.bottom),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(
-              context.tr('cart.complete_order_data'),
-              style: TextStyle(
-                color: AppTheme.text,
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              context.tr('cart.complete_order_data_subtitle'),
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                color: Color(0xFF667085),
-                height: 1.5,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 18),
-            TextField(
-              controller: _nameCtrl,
-              onTapOutside: (_) => InputFocusGuard.dismiss(),
-              textAlign: TextAlign.right,
-              decoration: InputDecoration(
-                labelText: context.tr('cart.name'),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _phoneCtrl,
-              onTapOutside: (_) => InputFocusGuard.dismiss(),
-              textAlign: TextAlign.right,
-              keyboardType: TextInputType.phone,
-              decoration: InputDecoration(
-                labelText: context.tr('cart.phone'),
-              ),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _submit,
-                child: Text(context.tr('cart.save_and_continue')),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PrimaryAddressResult {
-  const _PrimaryAddressResult({
-    required this.primaryAddress,
-    required this.houseApartmentNo,
-    required this.lat,
-    required this.lng,
-  });
-
-  final String primaryAddress;
-  final String houseApartmentNo;
-  final double lat;
-  final double lng;
-}
-
-class _PrimaryAddressSheet extends StatefulWidget {
-  const _PrimaryAddressSheet({
-    required this.initialAddress,
-    required this.initialHouseApartmentNo,
-    this.initialLat,
-    this.initialLng,
-    this.initialCustomerName,
-    this.initialCustomerPhone,
-  });
-
-  final String initialAddress;
-  final String initialHouseApartmentNo;
-  final double? initialLat;
-  final double? initialLng;
-  final String? initialCustomerName;
-  final String? initialCustomerPhone;
-
-  @override
-  State<_PrimaryAddressSheet> createState() => _PrimaryAddressSheetState();
-}
-
-class _PrimaryAddressSheetState extends State<_PrimaryAddressSheet> {
-  late final TextEditingController _addressCtrl =
-      TextEditingController(text: widget.initialAddress);
-  late final TextEditingController _houseCtrl =
-      TextEditingController(text: widget.initialHouseApartmentNo);
-  double? _selectedLat;
-  double? _selectedLng;
-
-  @override
-  void initState() {
-    super.initState();
-    _selectedLat = widget.initialLat;
-    _selectedLng = widget.initialLng;
-  }
-
-  @override
-  void dispose() {
-    _addressCtrl.dispose();
-    _houseCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    final address = _addressCtrl.text.trim();
-    final house = _houseCtrl.text.trim();
-
-    if (address.isEmpty) {
-      _showSnack('اكتب العنوان الأساسي.');
-      return;
-    }
-    if (house.isEmpty) {
-      _showSnack('اكتب رقم البيت / الشقة.');
-      return;
-    }
-    if (_selectedLat == null || _selectedLng == null) {
-      _showSnack('حدد موقع العنوان من الخريطة أولاً.');
-      return;
-    }
-
-    await InputFocusGuard.prepareForUiTransition(context: context);
-    if (!mounted) {
-      return;
-    }
-    Navigator.pop(
-      context,
-      _PrimaryAddressResult(
-        primaryAddress: address,
-        houseApartmentNo: house,
-        lat: _selectedLat!,
-        lng: _selectedLng!,
-      ),
-    );
-  }
-
-  Future<void> _openAddressPicker() async {
-    await InputFocusGuard.prepareForUiTransition(context: context);
-    if (!mounted) {
-      return;
-    }
-
-    final result = await showModalBottomSheet<Map<String, dynamic>>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (_) => SelectAddressPage(
-        initialLat: _selectedLat,
-        initialLng: _selectedLng,
-        initialAddress: _addressCtrl.text.trim(),
-        initialHouseNumber: _houseCtrl.text.trim(),
-        initialCustomerName: widget.initialCustomerName,
-        initialCustomerPhone: widget.initialCustomerPhone,
-      ),
-    );
-
-    if (result == null || !mounted) {
-      return;
-    }
-
-    final lat = (result['lat'] as num?)?.toDouble();
-    final lng = (result['lng'] as num?)?.toDouble();
-    final fullAddress =
-        (result['address'] ?? result['fullAddress'] ?? '').toString().trim();
-    final houseNumber = (result['house_number'] ?? result['houseNumber'] ?? '')
-        .toString()
-        .trim();
-
-    if (lat == null || lng == null || fullAddress.isEmpty) {
-      _showSnack('تعذر اعتماد الموقع المحدد، حاول مرة أخرى.');
-      return;
-    }
-
-    _addressCtrl.value = _addressCtrl.value.copyWith(
-      text: fullAddress,
-      selection: TextSelection.collapsed(offset: fullAddress.length),
-      composing: TextRange.empty,
-    );
-    _houseCtrl.value = _houseCtrl.value.copyWith(
-      text: houseNumber,
-      selection: TextSelection.collapsed(offset: houseNumber.length),
-      composing: TextRange.empty,
-    );
-    setState(() {
-      _selectedLat = lat;
-      _selectedLng = lng;
-    });
-  }
-
-  void _showSnack(String message) {
-    AppSnackBar.show(context, message: message);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final viewInsets = MediaQuery.of(context).viewInsets;
-    return AnimatedPadding(
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOutCubic,
-      padding: EdgeInsets.only(bottom: viewInsets.bottom),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            const Text(
-              'أكمل عنوانك الأساسي',
-              style: TextStyle(
-                color: AppTheme.text,
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'لا يمكن تنفيذ أول طلب قبل حفظ العنوان الأساسي. بعد الحفظ يمكنك تعديله لاحقًا من الملف الشخصي.',
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                color: Color(0xFF667085),
-                height: 1.45,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _addressCtrl,
-              readOnly: true,
-              onTap: _openAddressPicker,
-              onTapOutside: (_) => InputFocusGuard.dismiss(),
-              textAlign: TextAlign.right,
-              minLines: 2,
-              maxLines: 3,
-              decoration: InputDecoration(
-                labelText: 'العنوان الأساسي',
-                hintText: 'اختر العنوان من الخريطة',
-                prefixIcon: Icon(Icons.location_on_outlined),
-                suffixIcon: IconButton(
-                  onPressed: _openAddressPicker,
-                  icon: const Icon(Icons.map_outlined),
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _houseCtrl,
-              onTapOutside: (_) => InputFocusGuard.dismiss(),
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(
-                labelText: 'رقم البيت / الشقة',
-                hintText: 'مثال: عمارة 12 - شقة 7',
-                prefixIcon: Icon(Icons.home_outlined),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Align(
-              alignment: Alignment.centerRight,
-              child: Text(
-                _selectedLat == null || _selectedLng == null
-                    ? 'لم يتم تحديد موقع الخريطة بعد.'
-                    : 'الموقع مضبوط (${_selectedLat!.toStringAsFixed(5)}, ${_selectedLng!.toStringAsFixed(5)})',
-                textAlign: TextAlign.right,
-                style: const TextStyle(
-                  color: Color(0xFF667085),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: _submit,
-                icon: const Icon(Icons.save_outlined),
-                label: const Text('حفظ ومتابعة'),
               ),
             ),
           ],

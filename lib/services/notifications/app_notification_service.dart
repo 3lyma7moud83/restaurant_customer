@@ -13,6 +13,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/config/app_firebase_options.dart';
 import '../../core/services/error_logger.dart';
+import '../../core/stability/notification_dedupe_service.dart';
+import '../../core/stability/rpc_security_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/ui/input_focus_guard.dart';
 import '../../pages/orders_page.dart';
@@ -21,7 +23,7 @@ import 'web_push_bridge.dart';
 
 const AndroidNotificationChannel _ordersNotificationChannel =
     AndroidNotificationChannel(
-  'orders-high-priority',
+  'high_importance_channel',
   'Order Updates',
   description: 'Notifications for order updates and customer alerts.',
   importance: Importance.max,
@@ -30,11 +32,11 @@ const AndroidNotificationChannel _ordersNotificationChannel =
 );
 const String _androidNotificationIcon = 'ic_stat_notification';
 
-const String _notificationTokensTable = 'notification_tokens';
+const String _notificationTokensTable = 'customer_device_tokens';
 const String _notificationTokenColumn = 'fcm_token';
 const String _notificationTokenConflictColumns = 'user_id,fcm_token';
-const String _registerTokenRpc = 'upsert_notification_token';
-const String _deactivateTokenRpc = 'deactivate_notification_token';
+const String _registerTokenRpc = 'upsert_customer_device_token';
+const String _deactivateTokenRpc = 'deactivate_customer_device_token';
 const String _installationIdStorageKey =
     'customer_notification_installation_id';
 const String _backgroundTapPayloadsStorageKey =
@@ -180,6 +182,7 @@ class AppNotificationService {
 
     try {
       await ensureFirebaseInitialized();
+      await NotificationDedupeService.instance.initialize();
       _messaging = FirebaseMessaging.instance;
       await _messagingInstance.setAutoInitEnabled(true);
       if (kIsWeb) {
@@ -196,6 +199,12 @@ class AppNotificationService {
         (token) {
           debugPrint('[FCM] token refreshed: ${_maskToken(token)}');
           _logWebTokenDebug(token, reason: 'token_refresh');
+          if (Supabase.instance.client.auth.currentUser == null) {
+            _lastKnownToken = token.trim().isEmpty ? _lastKnownToken : token;
+            debugPrint(
+                '[FCM] token refresh deferred until authenticated login.');
+            return;
+          }
           unawaited(_safeSyncToken(token, reason: 'token_refresh'));
         },
         onError: (error, stack) async {
@@ -237,12 +246,18 @@ class AppNotificationService {
       }
 
       _available = true;
-      _lastKnownUserId = Supabase.instance.client.auth.currentUser?.id;
-
-      final token = await _loadCurrentToken();
-      debugPrint('[FCM] startup token: ${_maskToken(token)}');
-      _logWebTokenDebug(token, reason: 'startup');
-      await _safeSyncToken(token, reason: 'startup');
+      final currentUser = Supabase.instance.client.auth.currentUser;
+      _lastKnownUserId = currentUser?.id;
+      if (currentUser == null) {
+        debugPrint(
+          '[FCM] startup token sync deferred until Supabase authentication is available.',
+        );
+      } else {
+        final token = await _loadCurrentToken();
+        debugPrint('[FCM] startup token: ${_maskToken(token)}');
+        _logWebTokenDebug(token, reason: 'startup');
+        await _safeSyncToken(token, reason: 'startup');
+      }
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'notification_service.initialize',
@@ -303,6 +318,10 @@ class AppNotificationService {
     final currentPermission = currentWebNotificationPermission();
     if (currentPermission != null && currentPermission != 'granted') {
       final permission = await ensureWebNotificationPermission();
+      _logWebPermissionState(
+        permission ?? currentPermission,
+        source: 'token_load_guard',
+      );
       if (permission != 'granted') {
         debugPrint('[FCM][web] notification permission is not granted.');
         return null;
@@ -324,6 +343,10 @@ class AppNotificationService {
         final token = await _messagingInstance.getToken(vapidKey: vapidKey);
         final normalized = token?.trim();
         if (normalized != null && normalized.isNotEmpty) {
+          debugPrint(
+            '[FCM][web] token generated (attempt ${attempt + 1}): '
+            '${_maskToken(normalized)}',
+          );
           _logWebTokenDebug(
             normalized,
             reason: 'get_token_attempt_${attempt + 1}',
@@ -346,6 +369,7 @@ class AppNotificationService {
     }
 
     _logWebTokenDebug(null, reason: 'get_token_failed_after_retries');
+    debugPrint('[FCM][web] token generation failed after retries.');
     return null;
   }
 
@@ -501,6 +525,12 @@ class AppNotificationService {
       debugPrint(
         '[FCM] permission status: ${settings.authorizationStatus.name}',
       );
+      if (kIsWeb) {
+        debugPrint(
+          '[FCM][web] firebase permission status: '
+          '${settings.authorizationStatus.name}',
+        );
+      }
     }
 
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
@@ -526,6 +556,7 @@ class AppNotificationService {
       try {
         final webPermission = await ensureWebNotificationPermission();
         if (webPermission != null) {
+          _logWebPermissionState(webPermission, source: 'request_permission');
           debugPrint('[FCM][web] browser permission: $webPermission');
           if (webPermission == 'default') {
             _scheduleWebPermissionPromptOnFirstGesture();
@@ -593,6 +624,7 @@ class AppNotificationService {
     try {
       final permission = await ensureWebNotificationPermission();
       if (permission != null) {
+        _logWebPermissionState(permission, source: 'after_gesture');
         debugPrint('[FCM][web] browser permission after gesture: $permission');
       }
       if (permission == 'granted') {
@@ -622,6 +654,18 @@ class AppNotificationService {
       debugPrint(
         '[FCM][foreground] duplicate message skipped: ${message.messageId}',
       );
+      return;
+    }
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    final fingerprint = _notificationTagForMessage(message);
+    final shouldProcess =
+        await NotificationDedupeService.instance.shouldProcess(
+      fingerprint: fingerprint,
+      source: 'foreground_push',
+      userId: userId,
+      dedupeWindow: _foregroundMessageDedupWindow,
+    );
+    if (!shouldProcess) {
       return;
     }
 
@@ -759,6 +803,20 @@ class AppNotificationService {
     _logIncomingMessage(message, source: source);
     final data = _normalizeStringData(message.data);
     if (data.isEmpty) {
+      return;
+    }
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    final interactionFingerprint = message.messageId?.trim().isNotEmpty == true
+        ? 'message_id:${message.messageId!.trim()}'
+        : '${_resolveScreenFromData(data) ?? 'unknown'}:${_stableDataSignature(data)}';
+    final shouldProcess =
+        await NotificationDedupeService.instance.shouldProcess(
+      fingerprint: interactionFingerprint,
+      source: 'interaction_$source',
+      userId: userId,
+      dedupeWindow: _interactionDedupWindow,
+    );
+    if (!shouldProcess) {
       return;
     }
 
@@ -1065,6 +1123,12 @@ class AppNotificationService {
 
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) {
+      if (kIsWeb) {
+        debugPrint(
+          '[FCM][web] token generated but upload deferred until '
+          'authenticated login.',
+        );
+      }
       debugPrint(
         '[FCM] token sync skipped because no authenticated Supabase user exists.',
       );
@@ -1079,6 +1143,16 @@ class AppNotificationService {
       installationId: installationId,
       platformName: platformName,
     );
+    if (!RpcSecurityService.instance.allowLocalAction(
+      'upsert_customer_device_token:${user.id}:$normalizedToken',
+      window: const Duration(seconds: 2),
+    )) {
+      debugPrint(
+        '[SECURITY][RPC_REPLAY][${DateTime.now().toUtc().toIso8601String()}] '
+        'Skipped duplicated token registration RPC.',
+      );
+      return;
+    }
 
     try {
       await Supabase.instance.client.rpc(
@@ -1086,6 +1160,7 @@ class AppNotificationService {
         params: {
           'p_fcm_token': normalizedToken,
           'p_platform': platformName,
+          'p_supports_http_v1': true,
           'p_device_info': deviceInfo,
         },
       );
@@ -1111,6 +1186,11 @@ class AppNotificationService {
       '[FCM][$reason] FCM token synced successfully: '
       '${_maskToken(normalizedToken)}',
     );
+    if (kIsWeb) {
+      debugPrint(
+        '[FCM][web] token upload success: ${_maskToken(normalizedToken)}',
+      );
+    }
 
     if (previousToken != null &&
         previousToken.isNotEmpty &&
@@ -1150,6 +1230,15 @@ class AppNotificationService {
     if (_tokenSyncRetryAttempt >= _maxTokenSyncRetries) {
       debugPrint(
         '[FCM] token sync retry limit reached; last reason=$reason.',
+      );
+      unawaited(
+        ErrorLogger.logError(
+          module: 'notification_service.token_sync_retry_limit',
+          action: reason,
+          error: Exception(
+            'Push token sync retry limit reached ($_maxTokenSyncRetries).',
+          ),
+        ),
       );
       return;
     }
@@ -1197,6 +1286,7 @@ class AppNotificationService {
         'user_id': userId,
         'fcm_token': token,
         'platform': platformName,
+        'supports_http_v1': true,
         'device_info': deviceInfo,
         'is_active': true,
         'last_error': null,
@@ -1238,6 +1328,16 @@ class AppNotificationService {
     }
 
     final nowIso = DateTime.now().toUtc().toIso8601String();
+    if (!RpcSecurityService.instance.allowLocalAction(
+      'deactivate_customer_device_token:$userId:$normalizedToken:$reason',
+      window: const Duration(seconds: 2),
+    )) {
+      debugPrint(
+        '[SECURITY][RPC_REPLAY][${DateTime.now().toUtc().toIso8601String()}] '
+        'Skipped duplicated token deactivation RPC.',
+      );
+      return;
+    }
     try {
       await Supabase.instance.client.rpc(
         _deactivateTokenRpc,
@@ -1300,13 +1400,33 @@ class AppNotificationService {
     required String platformName,
   }) {
     final locale = PlatformDispatcher.instance.locale.toLanguageTag();
+    final userAgent = currentWebUserAgent()?.trim();
+    final normalizedUserAgent = userAgent?.toLowerCase() ?? '';
+    final isSamsung = normalizedUserAgent.contains('samsung');
+    final androidMajor = _extractAndroidMajorFromUserAgent(normalizedUserAgent);
     return {
       'app': 'restaurant_customer',
       'installation_id': installationId,
       'platform': platformName,
       'locale': locale,
       'is_web': kIsWeb,
+      'supports_http_v1': true,
+      'is_samsung': isSamsung,
+      'android_major': androidMajor,
+      if (userAgent != null && userAgent.isNotEmpty) 'user_agent': userAgent,
     };
+  }
+
+  int? _extractAndroidMajorFromUserAgent(String userAgent) {
+    if (userAgent.isEmpty) {
+      return null;
+    }
+
+    final match = RegExp(r'android\s+([0-9]{1,2})').firstMatch(userAgent);
+    if (match == null) {
+      return null;
+    }
+    return int.tryParse(match.group(1) ?? '');
   }
 
   String get _platformName {
@@ -1332,6 +1452,25 @@ class AppNotificationService {
       return token;
     }
     return '${token.substring(0, 6)}...${token.substring(token.length - 6)}';
+  }
+
+  void _logWebPermissionState(
+    String? permission, {
+    required String source,
+  }) {
+    if (!kIsWeb) {
+      return;
+    }
+    final normalized = (permission ?? 'unknown').trim().toLowerCase();
+    if (normalized == 'granted') {
+      debugPrint('[FCM][web] permission granted ($source)');
+      return;
+    }
+    if (normalized == 'denied') {
+      debugPrint('[FCM][web] permission denied ($source)');
+      return;
+    }
+    debugPrint('[FCM][web] permission default ($source)');
   }
 
   void _logWebTokenDebug(String? token, {required String reason}) {

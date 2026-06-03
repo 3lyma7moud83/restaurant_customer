@@ -3,6 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../core/stability/security_event_service.dart';
+import '../core/stability/security_observability_service.dart';
+import '../core/stability/session_security_service.dart';
+import '../core/services/error_logger.dart';
 import '../core/theme/app_theme.dart';
 import '../core/ui/input_focus_guard.dart';
 import '../pages/auth/login_page.dart';
@@ -37,9 +41,16 @@ class SessionManager {
   Future<void> initialize() async {
     if (_initialized) return;
     _initialized = true;
+    await SessionSecurityService.instance.initialize();
     _hadAuthenticatedSession = _client.auth.currentSession != null;
 
     _authSubscription = _client.auth.onAuthStateChange.listen((data) {
+      unawaited(
+        SessionSecurityService.instance.recordAuthState(
+          event: data.event,
+          session: data.session,
+        ),
+      );
       if (data.event == AuthChangeEvent.signedOut) {
         _hadAuthenticatedSession = false;
         return;
@@ -71,13 +82,19 @@ class SessionManager {
     _hadAuthenticatedSession = true;
 
     if (!_shouldRefreshSession(session)) {
-      return session;
+      return _enforceSessionSecurity(
+        session,
+        requireSession: requireSession,
+      );
     }
 
     final refreshed = await _refreshSessionOrRedirect(
       requireSession: requireSession,
     );
-    return refreshed ?? _client.auth.currentSession;
+    return _enforceSessionSecurity(
+      refreshed ?? _client.auth.currentSession,
+      requireSession: requireSession,
+    );
   }
 
   Future<T?> runWithValidSession<T>(
@@ -94,9 +111,23 @@ class SessionManager {
       return await action();
     } on PostgrestException catch (error) {
       if (!_isJwtExpiredError(error)) {
+        unawaited(
+          ErrorLogger.logError(
+            module: 'session_manager.runWithValidSession.postgrest_exception',
+            action: 'rethrow_non_expired',
+            error: error,
+          ),
+        );
         rethrow;
       }
 
+      unawaited(
+        ErrorLogger.logError(
+          module: 'session_manager.runWithValidSession.postgrest_exception',
+          action: 'refresh_after_expired',
+          error: error,
+        ),
+      );
       final refreshedSession = await _refreshSessionOrRedirect(
         requireSession: requireSession,
       );
@@ -107,9 +138,23 @@ class SessionManager {
       return action();
     } on AuthException catch (error) {
       if (!_isSessionExpiredMessage(error.message)) {
+        unawaited(
+          ErrorLogger.logError(
+            module: 'session_manager.runWithValidSession.auth_exception',
+            action: 'rethrow_non_expired',
+            error: error,
+          ),
+        );
         rethrow;
       }
 
+      unawaited(
+        ErrorLogger.logError(
+          module: 'session_manager.runWithValidSession.auth_exception',
+          action: 'redirect_after_expired',
+          error: error,
+        ),
+      );
       await _handleInvalidSession(
         redirectToLoginPage: requireSession || _hadAuthenticatedSession,
       );
@@ -156,6 +201,41 @@ class SessionManager {
     return _refreshSessionOrRedirect(requireSession: true);
   }
 
+  Future<Session?> _enforceSessionSecurity(
+    Session? session, {
+    required bool requireSession,
+  }) async {
+    if (session == null) {
+      return null;
+    }
+
+    final verdict =
+        await SessionSecurityService.instance.validateCurrentSession(
+      session: session,
+    );
+    if (verdict.allowed) {
+      return session;
+    }
+
+    SecurityEventService.instance.record(
+      eventKey: 'auth_revalidation_failed',
+      severity: 'high',
+      payload: {'reason': verdict.reason},
+    );
+    SecurityObservabilityService.instance.incrementLocal(
+      'auth_channel_kills',
+      payload: {'reason': verdict.reason},
+    );
+
+    await SessionSecurityService.instance.forceLocalSignOut(
+      reason: verdict.reason,
+    );
+    await _handleInvalidSession(
+      redirectToLoginPage: requireSession || _hadAuthenticatedSession,
+    );
+    return null;
+  }
+
   Future<Session?> _refreshSessionOrRedirect({
     required bool requireSession,
   }) {
@@ -196,17 +276,45 @@ class SessionManager {
       return session;
     } on AuthException catch (error) {
       if (_isTransientAuthError(error.message)) {
+        unawaited(
+          ErrorLogger.logError(
+            module: 'session_manager.perform_refresh.auth_exception',
+            action: 'transient_auth_error_return_previous_session',
+            error: error,
+          ),
+        );
         return sessionBeforeRefresh;
       }
+      unawaited(
+        ErrorLogger.logError(
+          module: 'session_manager.perform_refresh.auth_exception',
+          action: 'invalid_session_redirect',
+          error: error,
+        ),
+      );
       await _handleInvalidSession(
         redirectToLoginPage: requireSession || _hadAuthenticatedSession,
       );
       return null;
     } on PostgrestException catch (error) {
       if (!_isJwtExpiredError(error)) {
+        unawaited(
+          ErrorLogger.logError(
+            module: 'session_manager.perform_refresh.postgrest_exception',
+            action: 'rethrow_non_expired',
+            error: error,
+          ),
+        );
         rethrow;
       }
 
+      unawaited(
+        ErrorLogger.logError(
+          module: 'session_manager.perform_refresh.postgrest_exception',
+          action: 'invalid_session_redirect',
+          error: error,
+        ),
+      );
       await _handleInvalidSession(
         redirectToLoginPage: requireSession || _hadAuthenticatedSession,
       );
@@ -218,6 +326,10 @@ class SessionManager {
     required bool redirectToLoginPage,
   }) async {
     _hadAuthenticatedSession = false;
+    SecurityObservabilityService.instance.incrementLocal(
+      'auth_channel_kills',
+      payload: {'redirect_to_login': redirectToLoginPage},
+    );
 
     if (redirectToLoginPage) {
       await redirectToLogin();

@@ -3,15 +3,16 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../core/realtime/realtime_channel_controller.dart';
 import '../core/services/error_logger.dart';
 import '../core/ui/app_snackbar.dart';
 import '../core/ui/input_focus_guard.dart';
 import '../services/session_manager.dart';
 
 class OrderChatPage extends StatefulWidget {
-  final String orderId;
-
   const OrderChatPage({super.key, required this.orderId});
+
+  final String orderId;
 
   @override
   State<OrderChatPage> createState() => _OrderChatPageState();
@@ -20,42 +21,47 @@ class OrderChatPage extends StatefulWidget {
 class _OrderChatPageState extends State<OrderChatPage> {
   final _controller = TextEditingController();
   final _supabase = Supabase.instance.client;
-
-  List<Map<String, dynamic>> messages = [];
   final Set<String> _messageIds = <String>{};
-  RealtimeChannel? _channel;
+
+  late final RealtimeChannelController _chatChannelController;
+  List<Map<String, dynamic>> messages = [];
 
   @override
   void initState() {
     super.initState();
+    _chatChannelController = RealtimeChannelController(
+      client: _supabase,
+      topicPrefix: 'order-chat-${widget.orderId}',
+      onSubscribed: (didReconnect) async {
+        if (didReconnect) {
+          await _load();
+        }
+      },
+    );
     _listenRealtime();
-    _load();
+    unawaited(_load());
   }
 
   @override
   void dispose() {
     _controller.dispose();
-    if (_channel != null) {
-      unawaited(_disposeChannel());
-    }
+    unawaited(_chatChannelController.dispose());
     super.dispose();
   }
 
-  //================================
-  // load old messages
-  //================================
   Future<void> _load() async {
     try {
-      final res =
-          await SessionManager.instance.runWithValidSession<List<dynamic>>(
+      final res = await SessionManager.instance.runWithValidSession<List<dynamic>>(
         () => _supabase
-            .from("order_messages")
+            .from('order_messages')
             .select('id, sender_id, message, created_at')
-            .eq("order_id", widget.orderId)
-            .order("created_at"),
+            .eq('order_id', widget.orderId)
+            .order('created_at'),
         requireSession: true,
       );
-      if (res == null || !mounted) return;
+      if (res == null || !mounted) {
+        return;
+      }
 
       final nextMessages = res
           .whereType<Map>()
@@ -83,51 +89,52 @@ class _OrderChatPageState extends State<OrderChatPage> {
     }
   }
 
-  //================================
-  // realtime
-  //================================
   void _listenRealtime() {
-    _channel = _supabase
-        .channel("chat-${widget.orderId}")
-        .onPostgresChanges(
-          event: PostgresChangeEvent.insert,
-          schema: 'public',
-          table: 'order_messages',
-          filter: PostgresChangeFilter(
-            type: PostgresChangeFilterType.eq,
-            column: 'order_id',
-            value: widget.orderId,
-          ),
-          callback: (payload) {
-            if (!mounted) return;
-            final newMsg = Map<String, dynamic>.from(payload.newRecord);
-            final id = newMsg['id']?.toString() ?? '';
-            if (id.isEmpty || _messageIds.contains(id)) return;
-            _messageIds.add(id);
-            setState(() {
-              messages.add(newMsg);
-            });
-          },
-        )
-        .subscribe();
+    _chatChannelController.subscribe((client, channelName) {
+      return client.channel(channelName).onPostgresChanges(
+            event: PostgresChangeEvent.insert,
+            schema: 'public',
+            table: 'order_messages',
+            filter: PostgresChangeFilter(
+              type: PostgresChangeFilterType.eq,
+              column: 'order_id',
+              value: widget.orderId,
+            ),
+            callback: (payload) {
+              if (!mounted) {
+                return;
+              }
+              final newMsg = Map<String, dynamic>.from(payload.newRecord);
+              final id = newMsg['id']?.toString() ?? '';
+              if (id.isEmpty || _messageIds.contains(id)) {
+                return;
+              }
+              _messageIds.add(id);
+              setState(() {
+                messages.add(newMsg);
+              });
+            },
+          );
+    });
   }
 
-  //================================
-  // send
-  //================================
   Future<void> _send() async {
     final text = _controller.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty) {
+      return;
+    }
     final userId = _supabase.auth.currentUser?.id;
-    if (userId == null) return;
+    if (userId == null) {
+      return;
+    }
 
     try {
       final sent = await SessionManager.instance.runWithValidSession<bool>(
         () async {
-          await _supabase.from("order_messages").insert({
-            "order_id": widget.orderId,
-            "sender_id": userId,
-            "message": text,
+          await _supabase.from('order_messages').insert({
+            'order_id': widget.orderId,
+            'sender_id': userId,
+            'message': text,
           });
           return true;
         },
@@ -150,29 +157,14 @@ class _OrderChatPageState extends State<OrderChatPage> {
     }
   }
 
-  Future<void> _disposeChannel() async {
-    try {
-      await _supabase.removeChannel(_channel!);
-    } catch (error, stack) {
-      await ErrorLogger.logError(
-        module: 'order_chat_page.disposeChannel',
-        error: error,
-        stack: stack,
-      );
-    }
-  }
-
   void _toast(String message) {
     AppSnackBar.show(context, message: message);
   }
 
-  //================================
-  // UI
-  //================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("الشات")),
+      appBar: AppBar(title: const Text('الشات')),
       body: Column(
         children: [
           Expanded(
@@ -182,7 +174,7 @@ class _OrderChatPageState extends State<OrderChatPage> {
                 final msg = messages[i];
 
                 final userId = _supabase.auth.currentUser?.id;
-                final mine = userId != null && msg["sender_id"] == userId;
+                final mine = userId != null && msg['sender_id'] == userId;
 
                 return Align(
                   alignment:
@@ -194,7 +186,7 @@ class _OrderChatPageState extends State<OrderChatPage> {
                       color: mine ? Colors.green : Colors.grey.shade300,
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: Text((msg["message"] ?? '').toString()),
+                    child: Text((msg['message'] ?? '').toString()),
                   ),
                 );
               },
@@ -219,7 +211,7 @@ class _OrderChatPageState extends State<OrderChatPage> {
                 ],
               ),
             ),
-          )
+          ),
         ],
       ),
     );

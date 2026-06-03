@@ -3,9 +3,12 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/orders/order_status_utils.dart';
 import '../core/services/error_logger.dart';
+import '../core/stability/offline_order_queue_service.dart';
+import '../core/stability/stability_logger.dart';
 import '../services/orders_service.dart';
 
 enum CartPaymentMethod {
@@ -34,6 +37,8 @@ class CartItem {
     required this.price,
     required this.image,
     this.qty = 1,
+    this.modifiers = const <String>[],
+    this.note = '',
   });
 
   final String id;
@@ -41,6 +46,8 @@ class CartItem {
   final double price;
   final String image;
   int qty;
+  final List<String> modifiers;
+  String note;
 
   Map<String, dynamic> toMap() {
     return {
@@ -49,16 +56,26 @@ class CartItem {
       'price': price,
       'image': image,
       'qty': qty,
+      'modifiers': modifiers,
+      'note': note,
     };
   }
 
   factory CartItem.fromMap(Map<String, dynamic> map) {
+    final parsedQty = (map['qty'] as num?)?.toInt() ??
+        int.tryParse(map['qty']?.toString() ?? '') ??
+        1;
     return CartItem(
       id: (map['id'] ?? '').toString(),
       name: (map['name'] ?? '').toString(),
       price: _toDouble(map['price']),
       image: (map['image'] ?? '').toString(),
-      qty: (map['qty'] as num?)?.toInt() ?? 1,
+      qty: parsedQty < 1 ? 1 : parsedQty,
+      modifiers: (map['modifiers'] as List? ?? const [])
+          .map((item) => item.toString().trim())
+          .where((item) => item.isNotEmpty)
+          .toList(growable: false),
+      note: (map['note'] ?? '').toString(),
     );
   }
 
@@ -129,26 +146,43 @@ class _CartProviderWrapperState extends State<CartProviderWrapper> {
 }
 
 class CartController extends ChangeNotifier {
-  static const String _storageKey = 'customer_cart_state_v2';
+  static const String _storageKey = 'customer_cart_state_v3';
+  static const String _backupStorageKey = 'customer_cart_state_v3_backup';
+  static const int _snapshotVersion = 4;
 
   final Map<String, CartItem> _items = {};
+  final SupabaseClient _supabase = Supabase.instance.client;
 
   SharedPreferences? _prefs;
   String? _restaurantId;
   String? _deliveryAddress;
   double? _deliveryLat;
   double? _deliveryLng;
-  String _houseNumber = '';
+  String _buildingNumber = '';
+  String _apartmentNumber = '';
+  String _floorNumber = '';
+  String _landmark = '';
+  String _checkoutNotes = '';
   double _deliveryCost = 0;
   String? _activeOrderId;
   CartPaymentMethod? _selectedPaymentMethod;
+  String? _appliedCouponCode;
+  String? _pendingOrderRequestToken;
+  String? _checkoutSessionId;
   bool _restored = false;
 
   Timer? _persistDebounce;
   bool _persistPending = false;
   bool _disposed = false;
+  StreamSubscription<OfflineOrderQueueResult>? _offlineSyncSubscription;
 
   CartController() {
+    _offlineSyncSubscription =
+        OfflineOrderQueueService.instance.onSynced.listen(
+      (result) {
+        unawaited(_handleOfflineOrderSynced(result));
+      },
+    );
     unawaited(_restoreState());
   }
 
@@ -157,13 +191,26 @@ class CartController extends ChangeNotifier {
   String? get deliveryAddress => _deliveryAddress;
   double? get deliveryLat => _deliveryLat;
   double? get deliveryLng => _deliveryLng;
-  String get houseNumber => _houseNumber;
+  String get houseNumber => _buildingNumber;
+  String get buildingNumber => _buildingNumber;
+  String get apartmentNumber => _apartmentNumber;
+  String get floorNumber => _floorNumber;
+  String get landmark => _landmark;
+  String get checkoutNotes => _checkoutNotes;
   double get deliveryCost => _deliveryCost;
   String? get activeOrderId => _activeOrderId;
+  String? get pendingOrderRequestToken => _pendingOrderRequestToken;
+  String? get checkoutSessionId => _checkoutSessionId;
   CartPaymentMethod? get selectedPaymentMethod => _selectedPaymentMethod;
+  String? get appliedCouponCode => _appliedCouponCode;
   bool get hasLocation =>
       _deliveryAddress != null && _deliveryLat != null && _deliveryLng != null;
-  bool get isLocked => _activeOrderId != null && _activeOrderId!.isNotEmpty;
+  bool get isCheckoutPending =>
+      _pendingOrderRequestToken != null &&
+      _pendingOrderRequestToken!.isNotEmpty;
+  bool get isLocked =>
+      (_activeOrderId != null && _activeOrderId!.isNotEmpty) ||
+      isCheckoutPending;
 
   int get totalCount => _items.values.fold(0, (sum, item) => sum + item.qty);
   double get totalPrice => _items.values.fold(
@@ -181,6 +228,8 @@ class CartController extends ChangeNotifier {
     required double price,
     required String image,
     String? restaurantId,
+    List<String> modifiers = const <String>[],
+    String note = '',
   }) {
     if (isLocked) {
       return;
@@ -201,6 +250,8 @@ class CartController extends ChangeNotifier {
         name: name,
         price: price,
         image: image,
+        modifiers: modifiers,
+        note: note,
       );
     }
 
@@ -227,6 +278,55 @@ class CartController extends ChangeNotifier {
     _schedulePersist();
   }
 
+  void incrementItem(String id) {
+    if (isLocked) {
+      return;
+    }
+
+    final item = _items[id];
+    if (item == null) {
+      return;
+    }
+
+    item.qty++;
+    _notify();
+    _schedulePersist();
+  }
+
+  void decrementItem(String id) {
+    if (isLocked) {
+      return;
+    }
+
+    final item = _items[id];
+    if (item == null || item.qty <= 1) {
+      return;
+    }
+
+    item.qty--;
+    _notify();
+    _schedulePersist();
+  }
+
+  void updateItemNote(String id, String note) {
+    if (isLocked) {
+      return;
+    }
+
+    final item = _items[id];
+    if (item == null) {
+      return;
+    }
+
+    final normalized = note.trim();
+    if (item.note == normalized) {
+      return;
+    }
+
+    item.note = normalized;
+    _schedulePersist();
+  }
+
   void deleteItem(String id) {
     if (isLocked) {
       return;
@@ -247,10 +347,17 @@ class CartController extends ChangeNotifier {
     _deliveryAddress = null;
     _deliveryLat = null;
     _deliveryLng = null;
-    _houseNumber = '';
+    _buildingNumber = '';
+    _apartmentNumber = '';
+    _floorNumber = '';
+    _landmark = '';
+    _checkoutNotes = '';
     _deliveryCost = 0;
     _activeOrderId = null;
     _selectedPaymentMethod = null;
+    _appliedCouponCode = null;
+    _pendingOrderRequestToken = null;
+    _checkoutSessionId = null;
     _notify();
     _schedulePersist();
   }
@@ -260,12 +367,30 @@ class CartController extends ChangeNotifier {
     required double lat,
     required double lng,
     String? houseNumber,
+    String? buildingNumber,
+    String? apartmentNumber,
+    String? floorNumber,
+    String? landmark,
+    String? notes,
   }) {
     _deliveryAddress = address.trim();
     _deliveryLat = lat;
     _deliveryLng = lng;
-    if (houseNumber != null) {
-      _houseNumber = houseNumber.trim();
+    final resolvedBuildingNumber = buildingNumber ?? houseNumber;
+    if (resolvedBuildingNumber != null) {
+      _buildingNumber = resolvedBuildingNumber.trim();
+    }
+    if (apartmentNumber != null) {
+      _apartmentNumber = apartmentNumber.trim();
+    }
+    if (floorNumber != null) {
+      _floorNumber = floorNumber.trim();
+    }
+    if (landmark != null) {
+      _landmark = landmark.trim();
+    }
+    if (notes != null) {
+      _checkoutNotes = notes.trim();
     }
     _notify();
     _schedulePersist();
@@ -285,12 +410,52 @@ class CartController extends ChangeNotifier {
 
   void setHouseNumber(String value) {
     final nextValue = value.trim();
-    if (_houseNumber == nextValue) {
+    if (_buildingNumber == nextValue) {
       return;
     }
 
-    _houseNumber = nextValue;
+    _buildingNumber = nextValue;
     // Avoid rebuild storms while typing in the house number field.
+    _schedulePersist();
+  }
+
+  void setApartmentNumber(String value) {
+    final nextValue = value.trim();
+    if (_apartmentNumber == nextValue) {
+      return;
+    }
+
+    _apartmentNumber = nextValue;
+    _schedulePersist();
+  }
+
+  void setFloorNumber(String value) {
+    final nextValue = value.trim();
+    if (_floorNumber == nextValue) {
+      return;
+    }
+
+    _floorNumber = nextValue;
+    _schedulePersist();
+  }
+
+  void setLandmark(String value) {
+    final nextValue = value.trim();
+    if (_landmark == nextValue) {
+      return;
+    }
+
+    _landmark = nextValue;
+    _schedulePersist();
+  }
+
+  void setCheckoutNotes(String value) {
+    final nextValue = value.trim();
+    if (_checkoutNotes == nextValue) {
+      return;
+    }
+
+    _checkoutNotes = nextValue;
     _schedulePersist();
   }
 
@@ -314,13 +479,52 @@ class CartController extends ChangeNotifier {
     _schedulePersist();
   }
 
+  void setAppliedCouponCode(String? code) {
+    final normalized = code?.trim();
+    final next = (normalized == null || normalized.isEmpty) ? null : normalized;
+    if (_appliedCouponCode == next) {
+      return;
+    }
+    _appliedCouponCode = next;
+    _schedulePersist();
+  }
+
+  Future<void> markOrderQueued({
+    required String orderRequestToken,
+    required String checkoutSessionId,
+  }) async {
+    _pendingOrderRequestToken = orderRequestToken.trim();
+    _checkoutSessionId = checkoutSessionId.trim();
+    _notify();
+    await _persistStateNow();
+    StabilityLogger.cart(
+      'Cart locked with offline pending token=$_pendingOrderRequestToken',
+    );
+  }
+
   Future<void> markOrderPlaced(String orderId) async {
     _activeOrderId = orderId;
+    _pendingOrderRequestToken = null;
+    _checkoutSessionId = null;
+    _notify();
+    await _persistStateNow();
+  }
+
+  Future<void> clearPendingCheckout() async {
+    if (!isCheckoutPending) {
+      return;
+    }
+    _pendingOrderRequestToken = null;
+    _checkoutSessionId = null;
     _notify();
     await _persistStateNow();
   }
 
   Future<void> refreshActiveOrderStatus() async {
+    if (_activeOrderId == null || _activeOrderId!.isEmpty) {
+      await _resolvePendingOrderFromToken();
+    }
+
     final orderId = _activeOrderId;
     if (orderId == null || orderId.isEmpty) {
       return;
@@ -385,47 +589,12 @@ class CartController extends ChangeNotifier {
 
   Future<void> _restoreState() async {
     _prefs = await SharedPreferences.getInstance();
-    final raw = _prefs!.getString(_storageKey);
-
-    if (raw != null && raw.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(raw);
-        if (decoded is Map<String, dynamic>) {
-          final itemMaps = (decoded['items'] as List?) ?? const [];
-          for (final item in itemMaps) {
-            if (item is Map) {
-              final parsed = CartItem.fromMap(Map<String, dynamic>.from(item));
-              if (parsed.id.isNotEmpty) {
-                _items[parsed.id] = parsed;
-              }
-            }
-          }
-
-          _restaurantId = (decoded['restaurant_id'] ?? '').toString().trim();
-          if (_restaurantId!.isEmpty) {
-            _restaurantId = null;
-          }
-
-          final address = (decoded['delivery_address'] ?? '').toString().trim();
-          _deliveryAddress = address.isEmpty ? null : address;
-          _deliveryLat = _toNullableDouble(decoded['delivery_lat']);
-          _deliveryLng = _toNullableDouble(decoded['delivery_lng']);
-          _houseNumber = (decoded['house_number'] ?? '').toString().trim();
-          _deliveryCost = _toNullableDouble(decoded['delivery_cost']) ?? 0;
-          _selectedPaymentMethod = CartPaymentMethod.fromValue(
-            decoded['payment_method']?.toString(),
-          );
-
-          final orderId = (decoded['active_order_id'] ?? '').toString().trim();
-          _activeOrderId = orderId.isEmpty ? null : orderId;
-        }
-      } catch (error, stack) {
-        await ErrorLogger.logError(
-          module: 'cart_provider.restoreState',
-          error: error,
-          stack: stack,
-        );
+    final restoredPrimary = await _restoreFromSnapshotKey(_storageKey);
+    if (!restoredPrimary) {
+      final restoredBackup = await _restoreFromSnapshotKey(_backupStorageKey);
+      if (!restoredBackup) {
         await _prefs!.remove(_storageKey);
+        await _prefs!.remove(_backupStorageKey);
       }
     }
 
@@ -439,6 +608,104 @@ class CartController extends ChangeNotifier {
     await refreshActiveOrderStatus();
   }
 
+  Future<bool> _restoreFromSnapshotKey(String key) async {
+    final raw = _prefs!.getString(key);
+    if (raw == null || raw.isEmpty) {
+      return false;
+    }
+
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        return false;
+      }
+      if (!_isSnapshotValid(decoded)) {
+        StabilityLogger.cart('Invalid or corrupted cart snapshot at key=$key');
+        return false;
+      }
+      _restoreFromSnapshot(decoded);
+      return true;
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'cart_provider.restoreState',
+        error: error,
+        stack: stack,
+      );
+      return false;
+    }
+  }
+
+  bool _isSnapshotValid(Map<String, dynamic> snapshot) {
+    final version = (snapshot['version'] as num?)?.toInt() ?? 1;
+    if (version > _snapshotVersion) {
+      return false;
+    }
+    final items = snapshot['items'];
+    if (items != null && items is! List) {
+      return false;
+    }
+    final restaurantId = snapshot['restaurant_id'];
+    if (restaurantId != null && restaurantId is! String) {
+      return false;
+    }
+    return true;
+  }
+
+  void _restoreFromSnapshot(Map<String, dynamic> snapshot) {
+    _items.clear();
+    final itemMaps = (snapshot['items'] as List?) ?? const [];
+    for (final item in itemMaps) {
+      if (item is! Map) {
+        continue;
+      }
+      final parsed = CartItem.fromMap(Map<String, dynamic>.from(item));
+      if (parsed.id.isEmpty) {
+        continue;
+      }
+      _items[parsed.id] = parsed;
+    }
+
+    _restaurantId = (snapshot['restaurant_id'] ?? '').toString().trim();
+    if (_restaurantId!.isEmpty) {
+      _restaurantId = null;
+    }
+
+    final address = (snapshot['delivery_address'] ?? '').toString().trim();
+    _deliveryAddress = address.isEmpty ? null : address;
+    _deliveryLat = _toNullableDouble(snapshot['delivery_lat']);
+    _deliveryLng = _toNullableDouble(snapshot['delivery_lng']);
+    _buildingNumber = _firstText(snapshot, const [
+      'building_number',
+      'house_number',
+    ]);
+    _apartmentNumber = _firstText(snapshot, const [
+      'apartment_number',
+      'apartment',
+    ]);
+    _floorNumber = _firstText(snapshot, const [
+      'floor_number',
+      'floor',
+    ]);
+    _landmark = _firstText(snapshot, const ['landmark']);
+    _checkoutNotes = _firstText(snapshot, const [
+      'checkout_notes',
+      'notes',
+    ]);
+    _deliveryCost = _toNullableDouble(snapshot['delivery_cost']) ?? 0;
+    _selectedPaymentMethod = CartPaymentMethod.fromValue(
+      snapshot['payment_method']?.toString(),
+    );
+    _appliedCouponCode =
+        _normalizeNullableText(snapshot['applied_coupon_code']);
+
+    final orderId = (snapshot['active_order_id'] ?? '').toString().trim();
+    _activeOrderId = orderId.isEmpty ? null : orderId;
+    _pendingOrderRequestToken =
+        _normalizeNullableText(snapshot['pending_order_request_token']);
+    _checkoutSessionId =
+        _normalizeNullableText(snapshot['checkout_session_id']);
+  }
+
   Future<void> _persistState() async {
     if (!_restored || _disposed) {
       return;
@@ -449,30 +716,50 @@ class CartController extends ChangeNotifier {
       final hasState = _items.isNotEmpty ||
           _restaurantId != null ||
           _deliveryAddress != null ||
-          _houseNumber.isNotEmpty ||
+          _buildingNumber.isNotEmpty ||
+          _apartmentNumber.isNotEmpty ||
+          _floorNumber.isNotEmpty ||
+          _landmark.isNotEmpty ||
+          _checkoutNotes.isNotEmpty ||
           _deliveryCost > 0 ||
           _activeOrderId != null ||
-          _selectedPaymentMethod != null;
+          _selectedPaymentMethod != null ||
+          _appliedCouponCode != null ||
+          _pendingOrderRequestToken != null ||
+          _checkoutSessionId != null;
 
       if (!hasState) {
         await prefs.remove(_storageKey);
+        await prefs.remove(_backupStorageKey);
         return;
       }
 
+      final payload = {
+        'version': _snapshotVersion,
+        'items': _items.values.map((item) => item.toMap()).toList(),
+        'restaurant_id': _restaurantId,
+        'delivery_address': _deliveryAddress,
+        'delivery_lat': _deliveryLat,
+        'delivery_lng': _deliveryLng,
+        'house_number': _buildingNumber,
+        'building_number': _buildingNumber,
+        'apartment_number': _apartmentNumber,
+        'floor_number': _floorNumber,
+        'landmark': _landmark,
+        'checkout_notes': _checkoutNotes,
+        'delivery_cost': _deliveryCost,
+        'active_order_id': _activeOrderId,
+        'payment_method': _selectedPaymentMethod?.value,
+        'applied_coupon_code': _appliedCouponCode,
+        'pending_order_request_token': _pendingOrderRequestToken,
+        'checkout_session_id': _checkoutSessionId,
+      };
+      final encoded = jsonEncode(payload);
       await prefs.setString(
         _storageKey,
-        jsonEncode({
-          'items': _items.values.map((item) => item.toMap()).toList(),
-          'restaurant_id': _restaurantId,
-          'delivery_address': _deliveryAddress,
-          'delivery_lat': _deliveryLat,
-          'delivery_lng': _deliveryLng,
-          'house_number': _houseNumber,
-          'delivery_cost': _deliveryCost,
-          'active_order_id': _activeOrderId,
-          'payment_method': _selectedPaymentMethod?.value,
-        }),
+        encoded,
       );
+      await prefs.setString(_backupStorageKey, encoded);
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'cart_provider.persistState',
@@ -482,11 +769,86 @@ class CartController extends ChangeNotifier {
     }
   }
 
+  Future<void> _resolvePendingOrderFromToken() async {
+    final token = _pendingOrderRequestToken?.trim();
+    if (token == null || token.isEmpty) {
+      return;
+    }
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null || userId.isEmpty) {
+      return;
+    }
+
+    try {
+      final row = await _supabase
+          .from('order_request_tokens')
+          .select('status, order_id')
+          .eq('user_id', userId)
+          .eq('order_request_token', token)
+          .limit(1)
+          .maybeSingle();
+      if (row is! Map<String, dynamic>) {
+        return;
+      }
+      final status = row['status']?.toString().trim().toLowerCase();
+      final orderId = row['order_id']?.toString().trim();
+      if (status == 'completed' && orderId != null && orderId.isNotEmpty) {
+        _activeOrderId = orderId;
+        _pendingOrderRequestToken = null;
+        _checkoutSessionId = null;
+        _notify();
+        await _persistStateNow();
+      }
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'cart_provider.resolvePendingOrderFromToken',
+        error: error,
+        stack: stack,
+      );
+    }
+  }
+
+  Future<void> _handleOfflineOrderSynced(OfflineOrderQueueResult result) async {
+    final pendingToken = _pendingOrderRequestToken?.trim();
+    if (pendingToken == null || pendingToken.isEmpty) {
+      return;
+    }
+    if (pendingToken != result.orderRequestToken) {
+      return;
+    }
+    _activeOrderId = result.orderId;
+    _pendingOrderRequestToken = null;
+    _checkoutSessionId = null;
+    _notify();
+    await _persistStateNow();
+    StabilityLogger.cart(
+      'Pending queued order synced token=${result.orderRequestToken} orderId=${result.orderId}',
+    );
+  }
+
   static double? _toNullableDouble(dynamic value) {
     if (value is num) {
       return value.toDouble();
     }
     return double.tryParse(value?.toString() ?? '');
+  }
+
+  static String? _normalizeNullableText(dynamic value) {
+    final text = value?.toString().trim();
+    if (text == null || text.isEmpty) {
+      return null;
+    }
+    return text;
+  }
+
+  static String _firstText(Map<String, dynamic> source, List<String> keys) {
+    for (final key in keys) {
+      final text = source[key]?.toString().trim();
+      if (text != null && text.isNotEmpty && text != 'null') {
+        return text;
+      }
+    }
+    return '';
   }
 
   void _notify() {
@@ -500,6 +862,7 @@ class CartController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _persistDebounce?.cancel();
+    unawaited(_offlineSyncSubscription?.cancel());
     super.dispose();
   }
 }

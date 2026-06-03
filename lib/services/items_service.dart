@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter/foundation.dart';
 
 import '../core/services/error_logger.dart';
 import 'session_manager.dart';
@@ -7,6 +8,7 @@ class ItemsService {
   static final _client = Supabase.instance.client;
   static const Duration _cacheTtl = Duration(minutes: 5);
   static final Map<String, _ItemsCacheEntry> _itemsCache = {};
+  static const int _defaultPageSize = 80;
 
   static void _ensureManager() {
     final role = _client.auth.currentUser?.userMetadata?['role'];
@@ -26,23 +28,41 @@ class ItemsService {
   }
 
   static Future<List<Map<String, dynamic>>> fetchByCategory({
+    required String restaurantId,
     required String categoryId,
     bool forceRefresh = false,
+    int page = 0,
+    int pageSize = _defaultPageSize,
   }) async {
+    final normalizedRestaurantId = restaurantId.trim();
+    final normalizedCategoryId = categoryId.trim();
+    final safePageSize = pageSize <= 0 ? _defaultPageSize : pageSize;
+    final from = page < 0 ? 0 : page * safePageSize;
+    final to = from + safePageSize - 1;
+
     try {
-      final cacheKey = categoryId.trim();
+      final cacheKey = '$normalizedRestaurantId::$normalizedCategoryId';
       final cached = forceRefresh ? null : _itemsCache[cacheKey];
       if (cached != null && !cached.isExpired) {
         return cached.value;
       }
 
+      debugPrint(
+        '[ItemsService.fetchByCategory] query: restaurant_id=$normalizedRestaurantId '
+        'category_id=$normalizedCategoryId range=$from:$to',
+      );
+
       final res =
           await SessionManager.instance.runWithValidSession<List<dynamic>>(
         () => _client
             .from('items')
-            .select('id, name, price, image_url, created_at')
-            .eq('category_id', categoryId)
-            .order('created_at'),
+            .select(
+                'id, restaurant_id, category_id, name, price, image_url, sort_order, created_at')
+            .eq('restaurant_id', normalizedRestaurantId)
+            .eq('category_id', normalizedCategoryId)
+            .order('sort_order', ascending: true)
+            .order('created_at')
+            .range(from, to),
       );
       if (res == null) {
         return const [];
@@ -53,6 +73,19 @@ class ItemsService {
           .map((row) => Map<String, dynamic>.from(row))
           .toList(growable: false);
       final sortedItems = _sortItems(items);
+      debugPrint(
+        '[ItemsService.fetchByCategory] response_count=${sortedItems.length} '
+        'restaurant_id=$normalizedRestaurantId category_id=$normalizedCategoryId',
+      );
+
+      if (sortedItems.isEmpty) {
+        debugPrint(
+          '[ItemsService.fetchByCategory] empty response reason: '
+          'no_data OR wrong_filter OR RLS_blocker | restaurant_id=$normalizedRestaurantId '
+          'category_id=$normalizedCategoryId',
+        );
+      }
+
       _itemsCache[cacheKey] = _ItemsCacheEntry(
         value: sortedItems,
         cachedAt: DateTime.now(),
@@ -108,7 +141,9 @@ class ItemsService {
             throw const SessionExpiredException();
           }
 
-          _itemsCache.remove(normalizedCategoryId);
+          _itemsCache.remove(
+            '${context.restaurantId?.trim() ?? ''}::$normalizedCategoryId',
+          );
           return res;
         } on PostgrestException catch (error) {
           if (_isSchemaMismatchError(error)) {

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -37,6 +38,7 @@ class SelectAddressPage extends StatefulWidget {
 
 class _SelectAddressPageState extends State<SelectAddressPage>
     with TickerProviderStateMixin {
+  final GlobalKey _mapKey = GlobalKey();
   final MapController _controller = MapController();
   final TextEditingController _addressController = TextEditingController();
   final TextEditingController _houseNumberController = TextEditingController();
@@ -339,6 +341,37 @@ class _SelectAddressPageState extends State<SelectAddressPage>
     await _selectPoint(point);
   }
 
+  void _handleMarkerDragUpdate(DragUpdateDetails details) {
+    final renderObject = _mapKey.currentContext?.findRenderObject();
+    if (renderObject is! RenderBox) {
+      return;
+    }
+
+    final localPosition = renderObject.globalToLocal(details.globalPosition);
+    final nextPoint = _controller.camera.pointToLatLng(
+      math.Point<double>(localPosition.dx, localPosition.dy),
+    );
+
+    setState(() {
+      _selectedPoint = nextPoint;
+      loadingAddress = false;
+      _statusMessage = 'اترك الدبوس لتحميل العنوان الجديد.';
+    });
+  }
+
+  Future<void> _handleMarkerDragEnd(DragEndDetails details) async {
+    final point = _selectedPoint;
+    if (point == null) {
+      return;
+    }
+
+    setState(() {
+      loadingAddress = true;
+      _statusMessage = 'جارٍ تحميل عنوان الموقع المحدد...';
+    });
+    await _resolveAddress(point);
+  }
+
   Future<void> _confirm() async {
     if (_selectedPoint == null || loadingAddress) {
       return;
@@ -404,6 +437,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
       body: Stack(
         children: [
           FlutterMap(
+            key: _mapKey,
             mapController: _controller,
             options: MapOptions(
               initialCenter: _selectedPoint ?? const LatLng(30.0444, 31.2357),
@@ -432,7 +466,12 @@ class _SelectAddressPageState extends State<SelectAddressPage>
                       point: _selectedPoint!,
                       width: 48,
                       height: 48,
-                      child: const _DeliveryLocationMarker(),
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onPanUpdate: _handleMarkerDragUpdate,
+                        onPanEnd: _handleMarkerDragEnd,
+                        child: const _DeliveryLocationMarker(),
+                      ),
                     ),
                   ],
                 ),

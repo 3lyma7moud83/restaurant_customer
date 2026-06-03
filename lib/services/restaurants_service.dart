@@ -39,6 +39,7 @@ class RestaurantsService {
       user_id,
       restaurant_id,
       name,
+      is_paused,
       image_url,
       restaurant_type,
       phone,
@@ -58,9 +59,12 @@ class RestaurantsService {
       user_id,
       restaurant_id,
       name,
+      is_paused,
       image_url,
       restaurant_type,
-      service_radius_meters
+      service_radius_meters,
+      open_time,
+      close_time
 
     ''';
 
@@ -69,6 +73,7 @@ class RestaurantsService {
       user_id,
       restaurant_id,
       name,
+      is_paused,
       image_url,
       restaurant_type,
       phone,
@@ -87,6 +92,7 @@ class RestaurantsService {
       user_id,
       restaurant_id,
       name,
+      is_paused,
       image_url,
       restaurant_type,
       phone,
@@ -118,7 +124,13 @@ class RestaurantsService {
           _allActiveCacheAt != null &&
           DateTime.now().difference(_allActiveCacheAt!) <= _listCacheTtl;
       if (hasValidAllActiveCache) {
-        return _allActiveCache!;
+        final visibleRestaurants =
+            _allActiveCache!.where(isVisibilityAllowed).toList(growable: false);
+        if (visibleRestaurants.length != _allActiveCache!.length) {
+          _allActiveCache = visibleRestaurants;
+          _allActiveCacheAt = DateTime.now();
+        }
+        return visibleRestaurants;
       }
 
       final res =
@@ -142,17 +154,20 @@ class RestaurantsService {
             )
             .where((id) => id.isNotEmpty),
       );
-      final restaurants = managerRows.map(
-        (row) {
-          final restaurantId = _stringValue(row['restaurant_id']) ??
-              _stringValue(row['user_id']) ??
-              '';
-          return _normalizeManagerRestaurant(
-            row,
-            location: locationByRestaurantId[restaurantId],
-          );
-        },
-      ).toList(growable: false);
+      final restaurants = managerRows
+          .map(
+            (row) {
+              final restaurantId = _stringValue(row['restaurant_id']) ??
+                  _stringValue(row['user_id']) ??
+                  '';
+              return _normalizeManagerRestaurant(
+                row,
+                location: locationByRestaurantId[restaurantId],
+              );
+            },
+          )
+          .where(isVisibilityAllowed)
+          .toList(growable: false);
       _allActiveCache = restaurants;
       _allActiveCacheAt = DateTime.now();
       return restaurants;
@@ -180,7 +195,16 @@ class RestaurantsService {
       );
       final cachedNearby = forceRefresh ? null : _nearbyCache[cacheKey];
       if (cachedNearby != null && !cachedNearby.isExpired) {
-        return cachedNearby.value;
+        final visibleNearby = cachedNearby.value
+            .where(isVisibilityAllowed)
+            .toList(growable: false);
+        if (visibleNearby.length != cachedNearby.value.length) {
+          _nearbyCache[cacheKey] = _RestaurantListCacheEntry(
+            value: visibleNearby,
+            cachedAt: DateTime.now(),
+          );
+        }
+        return visibleNearby;
       }
 
       final rpcRows =
@@ -242,6 +266,9 @@ class RestaurantsService {
             'service_radius_meters': row['service_radius_meters'],
           },
         );
+        if (!isVisibilityAllowed(merged)) {
+          continue;
+        }
         final hasLocation =
             restaurantLatOf(merged) != null && restaurantLngOf(merged) != null;
         if (!hasLocation) {
@@ -462,6 +489,9 @@ class RestaurantsService {
   ) {
     final normalized =
         _normalizeManagerRestaurant(Map<String, dynamic>.from(row));
+    if (!isVisibilityAllowed(normalized)) {
+      return null;
+    }
     final restaurantId = restaurantIdOf(normalized);
     if (restaurantId.isEmpty) {
       return null;
@@ -497,6 +527,112 @@ class RestaurantsService {
       toLng: lng,
     );
     return distance <= radius;
+  }
+
+  static bool isVisibilityAllowed(Map<String, dynamic> restaurant) {
+    if (_toBool(restaurant['is_paused']) == true) {
+      return false;
+    }
+
+    return isWithinOperatingHours(restaurant);
+  }
+
+  static bool isWithinOperatingHours(
+    Map<String, dynamic> restaurant, {
+    DateTime? now,
+  }) {
+    final openingMinute = _clockMinuteOf(
+      restaurant['open_time'] ??
+          restaurant['opening_time'] ??
+          restaurant['opens_at'] ??
+          restaurant['start_time'],
+    );
+    final closingMinute = _clockMinuteOf(
+      restaurant['close_time'] ??
+          restaurant['closing_time'] ??
+          restaurant['closes_at'] ??
+          restaurant['end_time'],
+    );
+    if (openingMinute == null || closingMinute == null) {
+      return false;
+    }
+
+    final current = now ?? DateTime.now();
+    final currentMinute = (current.hour * 60) + current.minute;
+    return _isWithinOperatingWindow(
+      currentMinute: currentMinute,
+      openingMinute: openingMinute,
+      closingMinute: closingMinute,
+    );
+  }
+
+  static int? _clockMinuteOf(dynamic value) {
+    final raw = _stringValue(value);
+    if (raw == null) {
+      return null;
+    }
+
+    final parsedDate = DateTime.tryParse(raw);
+    if (parsedDate != null) {
+      final local = parsedDate.toLocal();
+      return (local.hour * 60) + local.minute;
+    }
+
+    final normalized = raw.replaceAll('.', ':').trim();
+
+    final amPmMatch = RegExp(
+      r'^(\d{1,2}):(\d{2})(?::\d{2})?\s*([aApP][mM])$',
+    ).firstMatch(normalized);
+    if (amPmMatch != null) {
+      final hour = int.tryParse(amPmMatch.group(1) ?? '');
+      final minute = int.tryParse(amPmMatch.group(2) ?? '');
+      final meridiem = (amPmMatch.group(3) ?? '').toLowerCase();
+      if (hour == null ||
+          minute == null ||
+          hour < 1 ||
+          hour > 12 ||
+          minute < 0 ||
+          minute > 59) {
+        return null;
+      }
+      final hour24 = (hour % 12) + (meridiem == 'pm' ? 12 : 0);
+      return (hour24 * 60) + minute;
+    }
+
+    final hhmmMatch = RegExp(
+      r'^(\d{1,2}):(\d{2})(?::\d{2})?(?:\s*(?:z|[+-]\d{2}(?::?\d{2})?))?$',
+      caseSensitive: false,
+    ).firstMatch(normalized);
+    if (hhmmMatch == null) {
+      return null;
+    }
+
+    final hour = int.tryParse(hhmmMatch.group(1) ?? '');
+    final minute = int.tryParse(hhmmMatch.group(2) ?? '');
+    if (hour == null ||
+        minute == null ||
+        hour < 0 ||
+        hour > 23 ||
+        minute < 0 ||
+        minute > 59) {
+      return null;
+    }
+
+    return (hour * 60) + minute;
+  }
+
+  static bool _isWithinOperatingWindow({
+    required int currentMinute,
+    required int openingMinute,
+    required int closingMinute,
+  }) {
+    if (openingMinute == closingMinute) {
+      return true;
+    }
+    if (openingMinute < closingMinute) {
+      return currentMinute >= openingMinute && currentMinute <= closingMinute;
+    }
+    return currentMinute >= openingMinute || currentMinute <= closingMinute;
   }
 
   static double haversineDistanceMeters({
@@ -690,6 +826,7 @@ class RestaurantsService {
       'restaurant_id': restaurantId,
       'manager_id': managerId,
       'user_id': managerId,
+      'is_paused': _toBool(row['is_paused']),
 
       // basic info
       'restaurant_name':
@@ -758,6 +895,7 @@ class RestaurantsService {
     merged['image_url'] = restaurantImageOf(merged);
     merged['restaurant_type'] = cardTypeOf(merged);
     merged['phone'] = restaurantPhoneOf(merged);
+    merged['is_paused'] = _toBool(merged['is_paused']);
     merged['opening_time'] = _stringValue(merged['opening_time']) ??
         _stringValue(merged['open_time']);
     merged['closing_time'] = _stringValue(merged['closing_time']) ??
@@ -1045,6 +1183,31 @@ class RestaurantsService {
     }
     if (value is String) {
       return double.tryParse(value);
+    }
+    return null;
+  }
+
+  static bool? _toBool(dynamic value) {
+    if (value is bool) {
+      return value;
+    }
+    if (value is num) {
+      if (value == 1) {
+        return true;
+      }
+      if (value == 0) {
+        return false;
+      }
+      return null;
+    }
+    if (value is String) {
+      final normalized = value.trim().toLowerCase();
+      if (normalized == 'true' || normalized == 't' || normalized == '1') {
+        return true;
+      }
+      if (normalized == 'false' || normalized == 'f' || normalized == '0') {
+        return false;
+      }
     }
     return null;
   }

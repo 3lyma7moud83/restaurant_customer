@@ -14,6 +14,9 @@ class CustomerAddress {
     required this.isPrimary,
     required this.createdAt,
     required this.updatedAt,
+    this.apartmentNumber = '',
+    this.floorNumber = '',
+    this.landmark = '',
     this.lat,
     this.lng,
   });
@@ -27,6 +30,9 @@ class CustomerAddress {
   final bool isPrimary;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final String apartmentNumber;
+  final String floorNumber;
+  final String landmark;
   final double? lat;
   final double? lng;
 
@@ -45,16 +51,43 @@ class CustomerAddress {
     return CustomerAddress(
       id: (row['id'] ?? '').toString(),
       userId: (row['user_id'] ?? '').toString(),
-      primaryAddress: (row['full_address'] ?? '').toString().trim(),
-      houseApartmentNo: (row['building_number'] ?? '').toString().trim(),
+      primaryAddress: _firstText(row, const [
+        'full_address',
+        'primary_address',
+        'address',
+      ]),
+      houseApartmentNo: _firstText(row, const [
+        'building_number',
+        'house_apartment_no',
+        'house_number',
+      ]),
       area: (row['area'] ?? '').toString().trim(),
       additionalNotes: (row['additional_notes'] ?? '').toString().trim(),
       isPrimary: hasIsPrimaryColumn ? row['is_primary'] == true : true,
       createdAt: createdAt,
       updatedAt: updatedAt,
+      apartmentNumber: _firstText(row, const [
+        'apartment_number',
+        'apartment',
+      ]),
+      floorNumber: _firstText(row, const [
+        'floor_number',
+        'floor',
+      ]),
+      landmark: _firstText(row, const ['landmark']),
       lat: (row['lat'] as num?)?.toDouble(),
       lng: (row['lng'] as num?)?.toDouble(),
     );
+  }
+
+  static String _firstText(Map<String, dynamic> row, List<String> keys) {
+    for (final key in keys) {
+      final text = row[key]?.toString().trim();
+      if (text != null && text.isNotEmpty && text != 'null') {
+        return text;
+      }
+    }
+    return '';
   }
 }
 
@@ -67,33 +100,6 @@ class CustomerAddressService {
 
   static bool _hasIsPrimaryColumn = true;
   static bool _hasUserIdUniqueConstraint = true;
-
-  static const String _selectFieldsWithIsPrimary = '''
-    id,
-    user_id,
-    full_address,
-    building_number,
-    area,
-    additional_notes,
-    is_primary,
-    lat,
-    lng,
-    created_at,
-    updated_at
-  ''';
-
-  static const String _selectFieldsWithoutIsPrimary = '''
-    id,
-    user_id,
-    full_address,
-    building_number,
-    area,
-    additional_notes,
-    lat,
-    lng,
-    created_at,
-    updated_at
-  ''';
 
   static Future<CustomerAddress?> getPrimaryAddress({
     bool forceRefresh = false,
@@ -136,6 +142,9 @@ class CustomerAddressService {
   static Future<CustomerAddress> savePrimaryAddress({
     required String primaryAddress,
     required String houseApartmentNo,
+    String? apartmentNumber,
+    String? floorNumber,
+    String? landmark,
     String? area,
     String? additionalNotes,
     double? lat,
@@ -151,6 +160,9 @@ class CustomerAddressService {
 
     final normalizedAddress = primaryAddress.trim();
     final normalizedHouseNumber = houseApartmentNo.trim();
+    final normalizedApartmentNumber = (apartmentNumber ?? '').trim();
+    final normalizedFloorNumber = (floorNumber ?? '').trim();
+    final normalizedLandmark = (landmark ?? '').trim();
     final normalizedArea = (area ?? '').trim();
     final normalizedNotes = (additionalNotes ?? '').trim();
 
@@ -161,7 +173,12 @@ class CustomerAddressService {
           final payload = <String, dynamic>{
             'user_id': user.id,
             'full_address': normalizedAddress,
+            'primary_address': normalizedAddress,
             'building_number': normalizedHouseNumber,
+            'house_apartment_no': normalizedHouseNumber,
+            'apartment_number': normalizedApartmentNumber,
+            'floor_number': normalizedFloorNumber,
+            'landmark': normalizedLandmark,
             'area': normalizedArea,
             'additional_notes': normalizedNotes,
             'lat': lat,
@@ -199,14 +216,10 @@ class CustomerAddressService {
   static Future<Map<String, dynamic>?> _fetchLatestAddressRow(
     String userId,
   ) async {
-    final selectFields = _hasIsPrimaryColumn
-        ? _selectFieldsWithIsPrimary
-        : _selectFieldsWithoutIsPrimary;
-
     try {
       final rows = await _client
           .from('customer_addresses')
-          .select(selectFields)
+          .select('*')
           .eq('user_id', userId)
           .order('updated_at', ascending: false)
           .limit(1);
@@ -233,19 +246,23 @@ class CustomerAddressService {
       if (_hasIsPrimaryColumn) 'is_primary': true,
     };
 
-    final selectFields = _hasIsPrimaryColumn
-        ? _selectFieldsWithIsPrimary
-        : _selectFieldsWithoutIsPrimary;
-
     if (_hasUserIdUniqueConstraint) {
       try {
         final row = await _client
             .from('customer_addresses')
             .upsert(upsertPayload, onConflict: 'user_id')
-            .select(selectFields)
+            .select('*')
             .single();
         return _normalizeAddressRow(Map<String, dynamic>.from(row));
       } on PostgrestException catch (error) {
+        final prunedPayload = _payloadWithoutMissingColumn(payload, error);
+        if (prunedPayload != null) {
+          return _saveAddressRow(
+            userId: userId,
+            payload: prunedPayload,
+          );
+        }
+
         if (_hasIsPrimaryColumn && _isMissingIsPrimaryColumnError(error)) {
           _hasIsPrimaryColumn = false;
           return _saveAddressRow(
@@ -275,37 +292,87 @@ class CustomerAddressService {
     required String userId,
     required Map<String, dynamic> payload,
   }) async {
-    final latest = await _fetchLatestAddressRow(userId);
-    final hasExisting =
-        latest != null && (latest['id'] ?? '').toString().isNotEmpty;
-    final savePayload = <String, dynamic>{
-      ...payload,
-      if (_hasIsPrimaryColumn) 'is_primary': true,
-    };
-    final selectFields = _hasIsPrimaryColumn
-        ? _selectFieldsWithIsPrimary
-        : _selectFieldsWithoutIsPrimary;
+    try {
+      final latest = await _fetchLatestAddressRow(userId);
+      final hasExisting =
+          latest != null && (latest['id'] ?? '').toString().isNotEmpty;
+      final savePayload = <String, dynamic>{
+        ...payload,
+        if (_hasIsPrimaryColumn) 'is_primary': true,
+      };
 
-    if (!hasExisting) {
-      final inserted = await _client
+      if (!hasExisting) {
+        final inserted = await _client
+            .from('customer_addresses')
+            .insert(savePayload)
+            .select('*')
+            .single();
+        return _normalizeAddressRow(Map<String, dynamic>.from(inserted));
+      }
+
+      final existingId = latest['id'].toString();
+      final updatePayload = Map<String, dynamic>.from(savePayload)
+        ..remove('user_id');
+
+      final updated = await _client
           .from('customer_addresses')
-          .insert(savePayload)
-          .select(selectFields)
+          .update(updatePayload)
+          .eq('id', existingId)
+          .select('*')
           .single();
-      return _normalizeAddressRow(Map<String, dynamic>.from(inserted));
+      return _normalizeAddressRow(Map<String, dynamic>.from(updated));
+    } on PostgrestException catch (error) {
+      final prunedPayload = _payloadWithoutMissingColumn(payload, error);
+      if (prunedPayload != null) {
+        return _saveWithoutUpsert(
+          userId: userId,
+          payload: prunedPayload,
+        );
+      }
+
+      if (_hasIsPrimaryColumn && _isMissingIsPrimaryColumnError(error)) {
+        _hasIsPrimaryColumn = false;
+        return _saveWithoutUpsert(
+          userId: userId,
+          payload: payload,
+        );
+      }
+      rethrow;
+    }
+  }
+
+  static Map<String, dynamic>? _payloadWithoutMissingColumn(
+    Map<String, dynamic> payload,
+    PostgrestException error,
+  ) {
+    final message = error.message.toLowerCase();
+    if (!_isSchemaMismatchError(error)) {
+      return null;
     }
 
-    final existingId = latest['id'].toString();
-    final updatePayload = Map<String, dynamic>.from(savePayload)
-      ..remove('user_id');
+    for (final column in const [
+      'full_address',
+      'primary_address',
+      'building_number',
+      'house_apartment_no',
+      'apartment_number',
+      'floor_number',
+      'landmark',
+      'area',
+      'additional_notes',
+      'lat',
+      'lng',
+    ]) {
+      if (!payload.containsKey(column)) {
+        continue;
+      }
+      if (!message.contains(column.toLowerCase())) {
+        continue;
+      }
+      return Map<String, dynamic>.from(payload)..remove(column);
+    }
 
-    final updated = await _client
-        .from('customer_addresses')
-        .update(updatePayload)
-        .eq('id', existingId)
-        .select(selectFields)
-        .single();
-    return _normalizeAddressRow(Map<String, dynamic>.from(updated));
+    return null;
   }
 
   static List<Map<String, dynamic>> _mapRows(dynamic rows) {
@@ -344,6 +411,17 @@ class CustomerAddressService {
         (message.contains('on conflict') &&
             message.contains('constraint') &&
             message.contains('user_id'));
+  }
+
+  static bool _isSchemaMismatchError(PostgrestException error) {
+    final message = error.message.toLowerCase();
+    return error.code == 'PGRST204' ||
+        message.contains('schema cache') ||
+        message.contains('could not find') ||
+        (message.contains('column') &&
+            (message.contains('does not exist') ||
+                message.contains('not found') ||
+                message.contains('unknown')));
   }
 }
 

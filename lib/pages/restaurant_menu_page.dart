@@ -82,8 +82,10 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
 
   Future<void> _loadCategories() async {
     try {
-      final fetchedCategories =
-          await CategoriesService.getByManager(widget.managerId);
+      final fetchedCategories = await CategoriesService.getByRestaurantCached(
+        restaurantId: widget.restaurantId,
+        managerId: widget.managerId,
+      );
       if (!mounted) {
         return;
       }
@@ -125,6 +127,7 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
     final requestId = ++_itemsRequestId;
     try {
       final result = await ItemsService.fetchByCategory(
+        restaurantId: widget.restaurantId,
         categoryId: selectedCategoryId!,
       );
 

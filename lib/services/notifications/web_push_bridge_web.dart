@@ -3,8 +3,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:html' as html;
+import 'dart:js_util' as js_util;
 
 typedef WebNotificationTapHandler = void Function(Map<String, String> data);
+
+const String _messagingServiceWorkerFileName = 'firebase-messaging-sw.js';
 
 WebNotificationTapHandler? _notificationTapHandler;
 bool _notificationBridgeInitialized = false;
@@ -16,10 +19,23 @@ Future<void> ensureWebMessagingServiceWorkerReady() async {
     return;
   }
 
+  final scriptUrl = _resolveMessagingServiceWorkerScriptUrl();
+  final scope = _resolveMessagingServiceWorkerScope();
+
+  await _awaitBootstrapServiceWorkerReadyPromise();
+
   try {
-    await serviceWorker.register('firebase-messaging-sw.js');
+    await serviceWorker.register(
+      scriptUrl,
+      <String, dynamic>{'scope': scope},
+    );
   } catch (_) {
     // Keep going and rely on any existing registration.
+    try {
+      await serviceWorker.register(_messagingServiceWorkerFileName);
+    } catch (_) {
+      // Ignore fallback failures and continue with existing registrations.
+    }
   }
 
   try {
@@ -62,6 +78,10 @@ bool supportsWebBrowserNotifications() {
 
 bool isWebDocumentVisible() {
   return html.document.visibilityState == 'visible';
+}
+
+String? currentWebUserAgent() {
+  return html.window.navigator.userAgent;
 }
 
 Future<void> initializeWebNotificationBridge({
@@ -197,4 +217,74 @@ dynamic _decodeMessage(dynamic value) {
     }
   }
   return value;
+}
+
+Future<void> _awaitBootstrapServiceWorkerReadyPromise() async {
+  try {
+    final readyPromise = js_util.getProperty<Object?>(
+      html.window,
+      '__fcmServiceWorkerReady',
+    );
+    if (readyPromise == null) {
+      return;
+    }
+    await js_util
+        .promiseToFuture<Object?>(readyPromise)
+        .timeout(const Duration(seconds: 8));
+  } catch (_) {
+    // Keep going and register from Dart side.
+  }
+}
+
+String _resolveMessagingServiceWorkerScriptUrl() {
+  final fromMeta = _stringFromBootstrapMeta('scriptUrl');
+  if (fromMeta != null && fromMeta.isNotEmpty) {
+    return fromMeta;
+  }
+  return Uri.base.resolve(_messagingServiceWorkerFileName).toString();
+}
+
+String _resolveMessagingServiceWorkerScope() {
+  final fromMeta = _stringFromBootstrapMeta('scope');
+  if (fromMeta != null && fromMeta.isNotEmpty) {
+    return fromMeta;
+  }
+
+  final basePath = Uri.base.path;
+  if (basePath.isEmpty) {
+    return '/';
+  }
+  if (basePath.endsWith('/')) {
+    return basePath;
+  }
+
+  final lastSlash = basePath.lastIndexOf('/');
+  if (lastSlash < 0) {
+    return '/';
+  }
+  final normalized = basePath.substring(0, lastSlash + 1);
+  return normalized.isEmpty ? '/' : normalized;
+}
+
+String? _stringFromBootstrapMeta(String key) {
+  try {
+    final meta = js_util.getProperty<Object?>(
+      html.window,
+      '__fcmServiceWorkerMeta',
+    );
+    if (meta == null) {
+      return null;
+    }
+    final value = js_util.getProperty<Object?>(meta, key);
+    if (value == null) {
+      return null;
+    }
+    final normalized = value.toString().trim();
+    if (normalized.isEmpty) {
+      return null;
+    }
+    return normalized;
+  } catch (_) {
+    return null;
+  }
 }
