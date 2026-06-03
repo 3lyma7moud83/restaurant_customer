@@ -8,12 +8,17 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../cart/cart_provider.dart';
+import '../core/orders/delivery_confirmation_ui.dart';
 import '../core/orders/order_status_utils.dart';
 import '../core/orders/order_ui.dart';
 import '../core/realtime/realtime_channel_controller.dart';
 import '../core/services/error_logger.dart';
+import '../core/stability/stability_logger.dart';
 import '../core/theme/app_theme.dart';
+import '../core/ui/app_snackbar.dart';
+import '../core/ui/input_focus_guard.dart';
 import '../services/orders_service.dart';
+import 'delivery_issue_page.dart';
 import 'order_chat_page.dart';
 
 class OrderTrackingPage extends StatefulWidget {
@@ -47,6 +52,8 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
   bool _pendingItemsRefresh = false;
   bool _isLoadingOrderOnly = false;
   bool _pendingOrderRefresh = false;
+  bool _deliveryConfirmationDialogOpen = false;
+  String? _lastPromptedDeliveryConfirmationKey;
 
   @override
   void initState() {
@@ -321,6 +328,7 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
     required bool isLoading,
     required String? errorMessage,
   }) {
+    final previousOrder = _order;
     final nextOrder =
         _order != null && order != null && mapEquals(_order, order)
             ? _order
@@ -342,6 +350,8 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
       _loading = isLoading;
       _errorMessage = errorMessage;
     });
+
+    _handleDeliveryConfirmationStateChange(previousOrder, nextOrder);
   }
 
   List<Map<String, dynamic>> _reuseItems(List<Map<String, dynamic>> nextItems) {
@@ -525,6 +535,143 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
     );
   }
 
+  void _handleDeliveryConfirmationStateChange(
+    Map<String, dynamic>? previousOrder,
+    Map<String, dynamic>? nextOrder,
+  ) {
+    if (nextOrder == null) {
+      _closeDeliveryConfirmationDialogIfOpen();
+      return;
+    }
+
+    final previousStatus = previousOrder == null
+        ? ''
+        : OrdersService.normalizedStatusOf(
+            previousOrder,
+          );
+    final nextStatus = OrdersService.normalizedStatusOf(nextOrder);
+
+    if (nextStatus == awaitingCustomerConfirmationStatus) {
+      if (previousStatus != awaitingCustomerConfirmationStatus &&
+          ModalRoute.of(context)?.isCurrent == true) {
+        StabilityLogger.deliveryConfirmation(
+          'Awaiting Customer Confirmation order=${OrdersService.idOf(nextOrder)} '
+          'authoritative_state_version=${OrdersService.authoritativeStateVersionOf(nextOrder) ?? '-'} '
+          'order_version=${OrdersService.orderVersionOf(nextOrder) ?? '-'}',
+        );
+      }
+      _scheduleDeliveryConfirmationDialog(nextOrder);
+      return;
+    }
+
+    if (previousStatus == awaitingCustomerConfirmationStatus) {
+      final shouldNotifyCompletion = _deliveryConfirmationDialogOpen ||
+          ModalRoute.of(context)?.isCurrent == true;
+      _closeDeliveryConfirmationDialogIfOpen();
+      if (nextStatus == 'completed' && shouldNotifyCompletion) {
+        StabilityLogger.deliveryConfirmation(
+          'Delivery Completed order=${OrdersService.idOf(nextOrder)} '
+          'authoritative_state_version=${OrdersService.authoritativeStateVersionOf(nextOrder) ?? '-'} '
+          'order_version=${OrdersService.orderVersionOf(nextOrder) ?? '-'}',
+        );
+        AppSnackBar.show(
+          context,
+          message: 'تم تأكيد استلام الطلب بنجاح',
+        );
+      }
+    }
+  }
+
+  void _scheduleDeliveryConfirmationDialog(
+    Map<String, dynamic> order, {
+    bool force = false,
+  }) {
+    if (!mounted ||
+        ModalRoute.of(context)?.isCurrent != true ||
+        !isAwaitingCustomerConfirmationStatus(order['status'])) {
+      return;
+    }
+
+    final promptKey = deliveryConfirmationStateKey(order);
+    if (!force && _lastPromptedDeliveryConfirmationKey == promptKey) {
+      return;
+    }
+    _lastPromptedDeliveryConfirmationKey = promptKey;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final currentOrder = _order;
+      if (currentOrder == null ||
+          !isAwaitingCustomerConfirmationStatus(currentOrder['status'])) {
+        return;
+      }
+      if (!force && deliveryConfirmationStateKey(currentOrder) != promptKey) {
+        return;
+      }
+      unawaited(_openDeliveryConfirmationDialog(currentOrder));
+    });
+  }
+
+  Future<void> _openDeliveryConfirmationDialog(
+    Map<String, dynamic> order,
+  ) async {
+    if (_deliveryConfirmationDialogOpen ||
+        !isAwaitingCustomerConfirmationStatus(order['status'])) {
+      return;
+    }
+
+    _deliveryConfirmationDialogOpen = true;
+    try {
+      await showDeliveryConfirmationDialog(
+        context: context,
+        order: order,
+        onConfirm: confirmDeliveryReceived,
+        onBeforeReportIssue: () {
+          _deliveryConfirmationDialogOpen = false;
+        },
+        onReportIssue: () => unawaited(_openDeliveryIssuePage(order)),
+      );
+    } finally {
+      _deliveryConfirmationDialogOpen = false;
+    }
+  }
+
+  void _closeDeliveryConfirmationDialogIfOpen() {
+    if (!_deliveryConfirmationDialogOpen || !mounted) {
+      return;
+    }
+    _deliveryConfirmationDialogOpen = false;
+    Navigator.of(context).pop();
+  }
+
+  Future<void> confirmDeliveryReceived() async {
+    final order = _order;
+    if (order == null ||
+        !isAwaitingCustomerConfirmationStatus(order['status'])) {
+      throw Exception('لا يمكن تأكيد الاستلام على الحالة الحالية للطلب.');
+    }
+
+    await OrdersService.confirmDeliveryReceived(order);
+  }
+
+  Future<void> _openDeliveryIssuePage(
+      Map<String, dynamic> fallbackOrder) async {
+    await InputFocusGuard.prepareForUiTransition(context: context);
+    if (!mounted) {
+      return;
+    }
+    final order = _order ?? fallbackOrder;
+    await Navigator.push<bool>(
+      context,
+      AppTheme.platformPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => DeliveryIssuePage(order: order),
+      ),
+    );
+  }
+
   Future<void> _callRestaurant(String phone) async {
     final normalizedPhone = phone.trim();
     if (normalizedPhone.isEmpty) {
@@ -619,6 +766,21 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
                           ),
                         ),
                         const SizedBox(height: 16),
+                        if (isAwaitingCustomerConfirmationStatus(
+                          order['status'],
+                        )) ...[
+                          _AnimatedTrackingSection(
+                            delay: const Duration(milliseconds: 60),
+                            child: DeliveryConfirmationBanner(
+                              onOpenConfirmation: () =>
+                                  _scheduleDeliveryConfirmationDialog(
+                                order,
+                                force: true,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                        ],
                         _AnimatedTrackingSection(
                           delay: const Duration(milliseconds: 80),
                           child: _TrackingOrderSummaryCard(order: order),
@@ -1213,6 +1375,9 @@ String _trackingStatusLabelForCustomer(String rawStatus) {
   if (normalized == 'accepted') {
     return 'قيد التحضير';
   }
+  if (normalized == awaitingCustomerConfirmationStatus) {
+    return 'بانتظار تأكيد استلام الطلب';
+  }
   return rawStatus;
 }
 
@@ -1530,6 +1695,8 @@ class _TrackingDeliveryProgress {
     final normalizedStatus = normalizeOrderStatus(order['status']?.toString());
     final snapshot = _TrackingRouteSnapshot.fromOrder(order);
     final isFinalDelivered = _isFinalDeliveryStatus(normalizedStatus);
+    final isAwaitingCustomerConfirmation =
+        normalizedStatus == awaitingCustomerConfirmationStatus;
     final isTransit = _isTransitStatus(normalizedStatus);
     final hasAssignedDriver = OrdersService.driverIdOf(order) != null;
     final hasLiveDriverPoint = snapshot?.driverPoint != null;
@@ -1559,6 +1726,22 @@ class _TrackingDeliveryProgress {
         driverStatus: 'حالة السائق: تم إنهاء الطلب بنجاح.',
         distanceSummary: summary,
         etaSummary: 'وقت الوصول المتوقع: تم التسليم.',
+      );
+    }
+
+    if (isAwaitingCustomerConfirmation) {
+      final summary = totalDistance == null
+          ? null
+          : 'وصل الطلب إلى نقطة التسليم (${_distanceLabel(totalDistance)})';
+      return _TrackingDeliveryProgress(
+        stage: _TrackingDeliveryStage.delivered,
+        progress: 1,
+        color: const Color(0xFF7C3AED),
+        label: 'بانتظار تأكيد استلام الطلب',
+        showMotorcycle: false,
+        driverStatus: 'حالة السائق: أكد تسليم الطلب وينتظر تأكيدك.',
+        distanceSummary: summary,
+        etaSummary: 'وقت الوصول المتوقع: بانتظار تأكيد الاستلام.',
       );
     }
 

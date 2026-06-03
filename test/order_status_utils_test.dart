@@ -8,6 +8,10 @@ void main() {
       expect(parseOrderStatus('on_the_way'), OrderStatusStage.onTheWay);
       expect(parseOrderStatus('on-way'), OrderStatusStage.onTheWay);
       expect(parseOrderStatus('delivered'), OrderStatusStage.onTheWay);
+      expect(
+        parseOrderStatus('awaiting_customer_confirmation'),
+        OrderStatusStage.awaitingCustomerConfirmation,
+      );
       expect(parseOrderStatus('completed'), OrderStatusStage.completed);
       expect(parseOrderStatus('cancelled'), OrderStatusStage.cancelled);
     });
@@ -18,6 +22,20 @@ void main() {
           orderStatusInfo(OrderStatusStage.onTheWay).shouldTrackDriver, isTrue);
       expect(
           orderStatusInfo(OrderStatusStage.completed).trackingProgressIndex, 3);
+      expect(
+        orderStatusInfo(OrderStatusStage.awaitingCustomerConfirmation)
+            .trackingProgressIndex,
+        3,
+      );
+      expect(
+        orderStatusInfo(OrderStatusStage.awaitingCustomerConfirmation).isActive,
+        isTrue,
+      );
+      expect(
+        orderStatusInfo(OrderStatusStage.awaitingCustomerConfirmation)
+            .isTerminal,
+        isFalse,
+      );
       expect(orderStatusInfo(OrderStatusStage.cancelled).canTrack, isFalse);
     });
   });

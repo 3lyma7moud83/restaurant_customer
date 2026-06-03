@@ -4,10 +4,14 @@ enum OrderStatusStage {
   pending,
   accepted,
   onTheWay,
+  awaitingCustomerConfirmation,
   completed,
   cancelled,
   unknown,
 }
+
+const String awaitingCustomerConfirmationStatus =
+    'awaiting_customer_confirmation';
 
 class OrderStatusInfo {
   const OrderStatusInfo({
@@ -34,7 +38,8 @@ class OrderStatusInfo {
   bool get isActive {
     return stage == OrderStatusStage.pending ||
         stage == OrderStatusStage.accepted ||
-        stage == OrderStatusStage.onTheWay;
+        stage == OrderStatusStage.onTheWay ||
+        stage == OrderStatusStage.awaitingCustomerConfirmation;
   }
 
   bool get isTerminal {
@@ -50,6 +55,7 @@ class OrderStatusInfo {
         return 1;
       case OrderStatusStage.onTheWay:
         return 2;
+      case OrderStatusStage.awaitingCustomerConfirmation:
       case OrderStatusStage.completed:
         return 3;
       case OrderStatusStage.cancelled:
@@ -94,6 +100,14 @@ OrderStatusInfo resolveOrderStatus(String? rawStatus) {
         icon: Icons.delivery_dining_rounded,
         rawValue: 'on_the_way',
       );
+    case awaitingCustomerConfirmationStatus:
+      return const OrderStatusInfo(
+        stage: OrderStatusStage.awaitingCustomerConfirmation,
+        text: 'بانتظار تأكيد الاستلام',
+        color: Color(0xFF7C3AED),
+        icon: Icons.fact_check_rounded,
+        rawValue: awaitingCustomerConfirmationStatus,
+      );
     case 'completed':
     case 'done':
     case 'delivered_final':
@@ -133,6 +147,8 @@ OrderStatusInfo orderStatusInfo(OrderStatusStage stage) {
     OrderStatusStage.pending => resolveOrderStatus('pending'),
     OrderStatusStage.accepted => resolveOrderStatus('accepted'),
     OrderStatusStage.onTheWay => resolveOrderStatus('on_the_way'),
+    OrderStatusStage.awaitingCustomerConfirmation =>
+      resolveOrderStatus(awaitingCustomerConfirmationStatus),
     OrderStatusStage.completed => resolveOrderStatus('completed'),
     OrderStatusStage.cancelled => resolveOrderStatus('cancelled'),
     OrderStatusStage.unknown => resolveOrderStatus(null),
@@ -150,4 +166,8 @@ String normalizeOrderStatus(String? rawStatus) {
           .replaceAll('-', '_')
           .replaceAll(' ', '_') ??
       '';
+}
+
+bool isAwaitingCustomerConfirmationStatus(String? rawStatus) {
+  return normalizeOrderStatus(rawStatus) == awaitingCustomerConfirmationStatus;
 }

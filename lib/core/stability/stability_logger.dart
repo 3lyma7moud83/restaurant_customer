@@ -9,6 +9,8 @@ class StabilityLogger {
   static void session(String message) => _log('SESSION', message);
   static void offlineQueue(String message) => _log('OFFLINE_QUEUE', message);
   static void notification(String message) => _log('NOTIFICATION', message);
+  static void deliveryConfirmation(String message) =>
+      _log('DELIVERY_CONFIRMATION', message);
   static void abuse(String message) => _log('ABUSE', message);
   static void reconciliation(String message) => _log('RECONCILIATION', message);
   static void realtime(String message) => _log('REALTIME', message);

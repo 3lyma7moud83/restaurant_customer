@@ -233,6 +233,8 @@ class OrdersService {
 
   static final SupabaseClient _client = Supabase.instance.client;
   static const Duration _cacheTtl = Duration(seconds: 30);
+  static const Duration _deliveryConfirmationRequestTimeout =
+      Duration(seconds: 15);
   static final Map<String, _OrderCacheEntry<List<Map<String, dynamic>>>>
       _customerOrdersCache = {};
   static final Map<String, _OrderCacheEntry<Map<String, dynamic>>> _orderCache =
@@ -249,6 +251,7 @@ class OrdersService {
     'accepted',
     'on_the_way',
     'delivered',
+    awaitingCustomerConfirmationStatus,
   ];
 
   static const List<String> _orderOwnerColumns = [
@@ -395,6 +398,85 @@ class OrdersService {
     );
 
     return rows?.length ?? 0;
+  }
+
+  static Future<void> confirmDeliveryReceived(
+    Map<String, dynamic> order,
+  ) async {
+    final orderId = idOf(order);
+    if (orderId.isEmpty) {
+      throw const PostgrestException(message: 'order_id_required');
+    }
+
+    final authoritativeStateVersion = authoritativeStateVersionOf(order);
+    final orderVersion = orderVersionOf(order);
+
+    try {
+      await _runDeliveryConfirmationRpc(
+        'confirm_delivery_received',
+        params: {
+          'p_order_id': orderId,
+          'p_authoritative_state_version': authoritativeStateVersion,
+          'p_order_version': orderVersion,
+        },
+      );
+      StabilityLogger.deliveryConfirmation(
+        'Customer Confirmed Delivery order=$orderId '
+        'authoritative_state_version=${authoritativeStateVersion ?? '-'} '
+        'order_version=${orderVersion ?? '-'}',
+      );
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'orders_service.confirmDeliveryReceived',
+        action: orderId,
+        error: error,
+        stack: stack,
+      );
+      throw Exception(_deliveryConfirmationUserMessage(error));
+    }
+  }
+
+  static Future<void> reportDeliveryIssue(
+    Map<String, dynamic> order, {
+    required String reason,
+  }) async {
+    final orderId = idOf(order);
+    final normalizedReason = reason.trim();
+    if (orderId.isEmpty) {
+      throw const PostgrestException(message: 'order_id_required');
+    }
+    if (normalizedReason.isEmpty) {
+      throw const PostgrestException(message: 'delivery_issue_reason_required');
+    }
+
+    final authoritativeStateVersion = authoritativeStateVersionOf(order);
+    final orderVersion = orderVersionOf(order);
+
+    try {
+      await _runDeliveryConfirmationRpc(
+        'report_delivery_issue',
+        params: {
+          'p_order_id': orderId,
+          'p_reason': normalizedReason,
+          'p_authoritative_state_version': authoritativeStateVersion,
+          'p_order_version': orderVersion,
+        },
+      );
+      StabilityLogger.deliveryConfirmation(
+        'Customer Reported Delivery Issue order=$orderId '
+        'reason=$normalizedReason '
+        'authoritative_state_version=${authoritativeStateVersion ?? '-'} '
+        'order_version=${orderVersion ?? '-'}',
+      );
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'orders_service.reportDeliveryIssue',
+        action: orderId,
+        error: error,
+        stack: stack,
+      );
+      throw Exception(_deliveryConfirmationUserMessage(error));
+    }
   }
 
   static Future<String> createOrder(
@@ -811,6 +893,47 @@ class OrdersService {
         normalized.contains('temporarily unavailable');
   }
 
+  static Future<dynamic> _runDeliveryConfirmationRpc(
+    String rpcName, {
+    required Map<String, dynamic> params,
+  }) {
+    return SessionManager.instance.runWithValidSession<dynamic>(
+      () => _client
+          .rpc(
+            rpcName,
+            params: params,
+          )
+          .timeout(_deliveryConfirmationRequestTimeout),
+      requireSession: true,
+    );
+  }
+
+  static String _deliveryConfirmationUserMessage(Object error) {
+    final normalized = error.toString().toLowerCase();
+
+    if (_isTransientOrderSubmissionError(error)) {
+      return 'تعذر الاتصال بالسيرفر. تحقق من الاتصال وحاول مرة أخرى دون تغيير حالة الطلب.';
+    }
+
+    if (normalized.contains('stale_order_state') ||
+        normalized.contains('version_conflict') ||
+        normalized.contains('40001')) {
+      return 'تم تحديث الطلب من السيرفر. انتظر تحديث الحالة الرسمي ثم حاول مرة أخرى.';
+    }
+
+    if (normalized.contains('invalid_order_state')) {
+      return 'لا يمكن تنفيذ تأكيد الاستلام على الحالة الحالية للطلب.';
+    }
+
+    if (normalized.contains('function') ||
+        normalized.contains('could not find') ||
+        normalized.contains('does not exist')) {
+      return 'خدمة تأكيد الاستلام غير متاحة حالياً. حاول مرة أخرى لاحقاً.';
+    }
+
+    return 'تعذر تنفيذ الطلب حالياً. حاول مرة أخرى دون تغيير حالة الطلب.';
+  }
+
   static Future<String?> _resolveOrderIdFromOrdersTableByToken({
     required String userId,
     required String orderRequestToken,
@@ -875,6 +998,14 @@ class OrdersService {
 
   static String normalizedStatusOf(Map<String, dynamic> order) {
     return normalizeOrderStatus(order['status']?.toString());
+  }
+
+  static int? authoritativeStateVersionOf(Map<String, dynamic> order) {
+    return _intValue(order['authoritative_state_version']);
+  }
+
+  static int? orderVersionOf(Map<String, dynamic> order) {
+    return _intValue(order['order_version']);
   }
 
   static OrderStatusStage statusStageOf(Map<String, dynamic> order) {
@@ -1906,6 +2037,20 @@ class OrdersService {
       return null;
     }
     return text;
+  }
+
+  static int? _intValue(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    final text = _stringValue(value);
+    if (text == null) {
+      return null;
+    }
+    return int.tryParse(text);
   }
 
   static double? _coordinateFromDynamic(
