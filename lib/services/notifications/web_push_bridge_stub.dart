@@ -1,4 +1,9 @@
 typedef WebNotificationTapHandler = void Function(Map<String, String> data);
+typedef WebNotificationLifecycleHandler = void Function(
+  String event,
+  Map<String, String> data,
+  Map<String, dynamic> metadata,
+);
 
 Future<void> ensureWebMessagingServiceWorkerReady() async {}
 
@@ -24,6 +29,7 @@ String? currentWebUserAgent() {
 
 Future<void> initializeWebNotificationBridge({
   required WebNotificationTapHandler onNotificationTap,
+  WebNotificationLifecycleHandler? onLifecycleEvent,
 }) async {}
 
 Future<bool> showForegroundWebNotification({

@@ -85,6 +85,7 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
       final fetchedCategories = await CategoriesService.getByRestaurantCached(
         restaurantId: widget.restaurantId,
         managerId: widget.managerId,
+        forceRefresh: true,
       );
       if (!mounted) {
         return;
@@ -129,6 +130,7 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
       final result = await ItemsService.fetchByCategory(
         restaurantId: widget.restaurantId,
         categoryId: selectedCategoryId!,
+        forceRefresh: true,
       );
 
       if (!mounted || requestId != _itemsRequestId) {

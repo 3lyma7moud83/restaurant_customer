@@ -61,7 +61,6 @@ class ItemsService {
             .eq('restaurant_id', normalizedRestaurantId)
             .eq('category_id', normalizedCategoryId)
             .order('sort_order', ascending: true)
-            .order('created_at')
             .range(from, to),
       );
       if (res == null) {
@@ -381,40 +380,27 @@ class ItemsService {
         details.contains('foreign key');
   }
 
-  // Deterministic order for menu rendering:
-  // 1) created_at ascending to keep insertion order stable
-  // 2) name
-  // 3) id fallback for strict deterministic output
+  static num _sortOrderOf(Map<String, dynamic> row) {
+    final value =
+        row.containsKey('sort_order') ? row['sort_order'] : row['sortOrder'];
+    if (value is num) {
+      return value;
+    }
+    return num.tryParse(value?.toString().trim() ?? '') ?? 0;
+  }
+
   static List<Map<String, dynamic>> _sortItems(
     List<Map<String, dynamic>> source,
   ) {
-    final next = List<Map<String, dynamic>>.from(source);
-    next.sort((a, b) {
-      final createdA = DateTime.tryParse((a['created_at'] ?? '').toString());
-      final createdB = DateTime.tryParse((b['created_at'] ?? '').toString());
-      if (createdA != null && createdB != null) {
-        final byCreated = createdA.compareTo(createdB);
-        if (byCreated != 0) {
-          return byCreated;
-        }
-      } else if (createdA != null) {
-        return -1;
-      } else if (createdB != null) {
-        return 1;
+    final indexed = source.indexed.toList(growable: false);
+    indexed.sort((a, b) {
+      final bySortOrder = _sortOrderOf(a.$2).compareTo(_sortOrderOf(b.$2));
+      if (bySortOrder != 0) {
+        return bySortOrder;
       }
-
-      final nameA = (a['name'] ?? '').toString().trim().toLowerCase();
-      final nameB = (b['name'] ?? '').toString().trim().toLowerCase();
-      final byName = nameA.compareTo(nameB);
-      if (byName != 0) {
-        return byName;
-      }
-
-      final idA = (a['id'] ?? '').toString();
-      final idB = (b['id'] ?? '').toString();
-      return idA.compareTo(idB);
+      return a.$1.compareTo(b.$1);
     });
-    return next;
+    return indexed.map((entry) => entry.$2).toList(growable: false);
   }
 }
 

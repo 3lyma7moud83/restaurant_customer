@@ -6,12 +6,20 @@ import 'dart:html' as html;
 import 'dart:js_util' as js_util;
 
 typedef WebNotificationTapHandler = void Function(Map<String, String> data);
+typedef WebNotificationLifecycleHandler = void Function(
+  String event,
+  Map<String, String> data,
+  Map<String, dynamic> metadata,
+);
 
 const String _messagingServiceWorkerFileName = 'firebase-messaging-sw.js';
 
 WebNotificationTapHandler? _notificationTapHandler;
+WebNotificationLifecycleHandler? _notificationLifecycleHandler;
 bool _notificationBridgeInitialized = false;
 StreamSubscription<dynamic>? _serviceWorkerMessageSubscription;
+StreamSubscription<html.Event>? _onlineSubscription;
+StreamSubscription<html.Event>? _visibilitySubscription;
 
 Future<void> ensureWebMessagingServiceWorkerReady() async {
   final serviceWorker = html.window.navigator.serviceWorker;
@@ -86,8 +94,10 @@ String? currentWebUserAgent() {
 
 Future<void> initializeWebNotificationBridge({
   required WebNotificationTapHandler onNotificationTap,
+  WebNotificationLifecycleHandler? onLifecycleEvent,
 }) async {
   _notificationTapHandler = onNotificationTap;
+  _notificationLifecycleHandler = onLifecycleEvent;
   if (_notificationBridgeInitialized) {
     return;
   }
@@ -100,12 +110,34 @@ Future<void> initializeWebNotificationBridge({
 
   _serviceWorkerMessageSubscription ??=
       serviceWorker.onMessage.listen((html.MessageEvent messageEvent) {
-    final payload = _extractNotificationClickPayload(messageEvent.data);
-    if (payload.isEmpty) {
+    final decoded = _decodeMessage(messageEvent.data);
+    final clickPayload = _extractNotificationClickPayload(decoded);
+    if (clickPayload.isNotEmpty) {
+      _notificationTapHandler?.call(clickPayload);
       return;
     }
-    _notificationTapHandler?.call(payload);
+
+    final lifecycle = _extractNotificationLifecyclePayload(decoded);
+    if (lifecycle == null) {
+      return;
+    }
+    _notificationLifecycleHandler?.call(
+      lifecycle.event,
+      lifecycle.data,
+      lifecycle.metadata,
+    );
+    _applyLifecycleSideEffects(lifecycle);
   });
+
+  _onlineSubscription ??= html.window.onOnline.listen((_) {
+    unawaited(_requestServiceWorkerRecovery('online'));
+  });
+  _visibilitySubscription ??= html.document.onVisibilityChange.listen((_) {
+    if (html.document.visibilityState == 'visible') {
+      unawaited(_requestServiceWorkerRecovery('document_visible'));
+    }
+  });
+  unawaited(_requestServiceWorkerRecovery('bridge_initialized'));
 }
 
 Future<bool> showForegroundWebNotification({
@@ -114,48 +146,7 @@ Future<bool> showForegroundWebNotification({
   required Map<String, String> data,
   String? tag,
 }) async {
-  if (!html.Notification.supported) {
-    return false;
-  }
-  if (html.Notification.permission != 'granted') {
-    return false;
-  }
-
-  try {
-    await ensureWebMessagingServiceWorkerReady();
-    final registration = await html.window.navigator.serviceWorker?.ready;
-    if (registration != null) {
-      final options = <String, dynamic>{
-        'body': body,
-        'icon': '/icons/Icon-192.png',
-        'badge': '/icons/Icon-192.png',
-        if (tag != null && tag.trim().isNotEmpty) 'tag': tag,
-        if (data.isNotEmpty) 'data': data,
-        'requireInteraction': true,
-        'renotify': true,
-      };
-      await (registration as dynamic).showNotification(title, options);
-      return true;
-    }
-  } catch (_) {
-    // Fallback to direct Notification API if service worker path fails.
-  }
-
-  try {
-    final notification = html.Notification(
-      title,
-      body: body,
-      icon: '/icons/Icon-192.png',
-      tag: tag,
-    );
-    notification.onClick.listen((_) {
-      notification.close();
-      _notificationTapHandler?.call(data);
-    });
-    return true;
-  } catch (_) {
-    return false;
-  }
+  return false;
 }
 
 void clearWebLaunchNotificationQueryParameters() {
@@ -181,17 +172,16 @@ void clearWebLaunchNotificationQueryParameters() {
 }
 
 Map<String, String> _extractNotificationClickPayload(dynamic raw) {
-  final decoded = _decodeMessage(raw);
-  if (decoded is! Map) {
+  if (raw is! Map) {
     return const {};
   }
 
-  final type = decoded['type']?.toString();
+  final type = raw['type']?.toString();
   if (type != 'fcm_notification_click') {
     return const {};
   }
 
-  final rawData = decoded['data'];
+  final rawData = raw['data'];
   if (rawData is! Map) {
     return const {};
   }
@@ -202,6 +192,39 @@ Map<String, String> _extractNotificationClickPayload(dynamic raw) {
       value == null ? '' : value.toString(),
     ),
   )..removeWhere((_, value) => value.trim().isEmpty);
+}
+
+_LifecycleMessage? _extractNotificationLifecyclePayload(dynamic raw) {
+  if (raw is! Map) {
+    return null;
+  }
+
+  final type = raw['type']?.toString();
+  if (type != 'fcm_notification_lifecycle') {
+    return null;
+  }
+
+  final event = raw['event']?.toString().trim();
+  if (event == null || event.isEmpty) {
+    return null;
+  }
+
+  final rawData = raw['data'];
+  final data = rawData is Map
+      ? rawData.map(
+          (key, value) => MapEntry(
+            key.toString(),
+            value == null ? '' : value.toString(),
+          ),
+        )
+      : <String, String>{};
+  data.removeWhere((_, value) => value.trim().isEmpty);
+
+  return _LifecycleMessage(
+    event: event,
+    data: data,
+    metadata: _normalizeMetadata(raw['meta']),
+  );
 }
 
 dynamic _decodeMessage(dynamic value) {
@@ -217,6 +240,110 @@ dynamic _decodeMessage(dynamic value) {
     }
   }
   return value;
+}
+
+Map<String, dynamic> _normalizeMetadata(dynamic raw) {
+  if (raw is! Map) {
+    return const {};
+  }
+  return raw.map((key, value) => MapEntry(key.toString(), value));
+}
+
+void _applyLifecycleSideEffects(_LifecycleMessage lifecycle) {
+  final badgeCount = _intFromMetadata(lifecycle.metadata['badge_count']);
+  if (badgeCount != null) {
+    _setAppBadge(badgeCount);
+  }
+
+  final recovered = lifecycle.metadata['recovered'] == true ||
+      lifecycle.metadata['recovered']?.toString() == 'true';
+  if (recovered) {
+    return;
+  }
+
+  if (lifecycle.event == 'displayed') {
+    _vibrateIfSupported();
+  }
+}
+
+void _vibrateIfSupported() {
+  try {
+    if (!js_util.hasProperty(html.window.navigator, 'vibrate')) {
+      return;
+    }
+    js_util.callMethod<Object?>(
+      html.window.navigator,
+      'vibrate',
+      [
+        <int>[200, 100, 200],
+      ],
+    );
+  } catch (_) {
+    // Browser vibration support is optional.
+  }
+}
+
+void _setAppBadge(int count) {
+  try {
+    if (count > 0 &&
+        js_util.hasProperty(html.window.navigator, 'setAppBadge')) {
+      js_util.callMethod<Object?>(
+        html.window.navigator,
+        'setAppBadge',
+        [count],
+      );
+      return;
+    }
+    if (count == 0 &&
+        js_util.hasProperty(html.window.navigator, 'clearAppBadge')) {
+      js_util.callMethod<Object?>(
+        html.window.navigator,
+        'clearAppBadge',
+        const [],
+      );
+    }
+  } catch (_) {
+    // The Badging API is optional.
+  }
+}
+
+int? _intFromMetadata(Object? value) {
+  if (value is int) {
+    return value;
+  }
+  if (value is num) {
+    return value.toInt();
+  }
+  return int.tryParse(value?.toString() ?? '');
+}
+
+Future<void> _requestServiceWorkerRecovery(String reason) async {
+  final serviceWorker = html.window.navigator.serviceWorker;
+  if (serviceWorker == null) {
+    return;
+  }
+
+  final message = jsonEncode({
+    'type': 'fcm_recovery_request',
+    'reason': reason,
+  });
+
+  try {
+    serviceWorker.controller?.postMessage(message);
+  } catch (_) {
+    // Fall through to the ready registration path.
+  }
+
+  try {
+    final registration =
+        await serviceWorker.ready.timeout(const Duration(seconds: 8));
+    final active = js_util.getProperty<Object?>(registration, 'active');
+    if (active != null) {
+      js_util.callMethod<Object?>(active, 'postMessage', [message]);
+    }
+  } catch (_) {
+    // Recovery is best-effort and retried on visibility/online events.
+  }
 }
 
 Future<void> _awaitBootstrapServiceWorkerReadyPromise() async {
@@ -287,4 +414,16 @@ String? _stringFromBootstrapMeta(String key) {
   } catch (_) {
     return null;
   }
+}
+
+class _LifecycleMessage {
+  const _LifecycleMessage({
+    required this.event,
+    required this.data,
+    required this.metadata,
+  });
+
+  final String event;
+  final Map<String, String> data;
+  final Map<String, dynamic> metadata;
 }

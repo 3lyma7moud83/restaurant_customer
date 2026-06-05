@@ -554,6 +554,10 @@ function shouldUseCustomerMinimalNotificationOnly(
   return token.supports_http_v1 === false;
 }
 
+function isCustomerWebToken(token: CustomerTokenRow): boolean {
+  return sanitizeText(token.platform).toLowerCase() === "web";
+}
+
 function resolveCustomerNotificationContent(args: {
   notification: CustomerNotificationRow;
   queuePayload: Record<string, unknown>;
@@ -648,6 +652,26 @@ function buildCustomerMessagePayload(args: {
     );
   }
   const webLink = dataPayload.click_action || "/orders";
+
+  if (isCustomerWebToken(token)) {
+    dataPayload.fcm_web_delivery_required = "service_worker_push";
+    dataPayload.fcm_payload_version = "1";
+    return {
+      message: {
+        token: token.fcm_token,
+        data: dataPayload,
+        webpush: {
+          headers: {
+            TTL: "0",
+            Urgency: "high",
+          },
+          fcm_options: {
+            link: webLink,
+          },
+        },
+      },
+    };
+  }
 
   const messageBase: Record<string, unknown> = {
     token: token.fcm_token,
@@ -1461,6 +1485,21 @@ async function deliverCustomerNotificationToToken(args: {
     notification: args.notification,
     queuePayload: safeRecord(args.queueRow.request_payload),
   });
+  console.log(JSON.stringify({
+    type: "customer_notification_sent",
+    message: "Notification sent",
+    worker_id: WORKER_ID,
+    queue_id: args.queueRow.id,
+    notification_id: args.notification.id,
+    token_id: args.token.id,
+    platform: args.token.platform,
+    payload_mode: isCustomerWebToken(args.token)
+      ? "web_data_only_service_worker_push"
+      : shouldUseCustomerMinimalNotificationOnly(args.token)
+      ? "minimal_notification_only"
+      : "notification_and_data",
+  }));
+
   const startedAt = Date.now();
   const result = await sendHttpV1(
     args.fcmUrl,
@@ -1468,6 +1507,21 @@ async function deliverCustomerNotificationToToken(args: {
     requestPayload,
   );
   const latencyMs = Date.now() - startedAt;
+
+  if (result.ok) {
+    console.log(JSON.stringify({
+      type: "customer_fcm_accepted",
+      message: "FCM accepted",
+      worker_id: WORKER_ID,
+      queue_id: args.queueRow.id,
+      notification_id: args.notification.id,
+      token_id: args.token.id,
+      platform: args.token.platform,
+      status_code: result.statusCode,
+      fcm_response_name: sanitizeText(result.responsePayload.name),
+      latency_ms: latencyMs,
+    }));
+  }
 
   console.log(JSON.stringify({
     type: "customer_fcm_delivery_attempt",
@@ -1534,6 +1588,17 @@ async function processCustomerQueueRow(args: {
       errorMessage,
     };
   }
+
+  console.log(JSON.stringify({
+    type: "customer_notification_requested",
+    message: "Notification requested",
+    worker_id: WORKER_ID,
+    queue_id: queueRow.id,
+    notification_id: notification.id,
+    customer_user_id: notification.customer_user_id,
+    token_count: tokens.length,
+    source: "queue_customer_fcm",
+  }));
 
   if (tokens.length === 0) {
     const errorMessage = "no_active_customer_tokens";

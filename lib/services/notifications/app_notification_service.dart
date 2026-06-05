@@ -15,6 +15,7 @@ import '../../core/config/app_firebase_options.dart';
 import '../../core/services/error_logger.dart';
 import '../../core/stability/notification_dedupe_service.dart';
 import '../../core/stability/rpc_security_service.dart';
+import '../../core/stability/stability_metrics_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/ui/input_focus_guard.dart';
 import '../../pages/orders_page.dart';
@@ -229,19 +230,22 @@ class AppNotificationService {
 
       final initialMessage = await _messagingInstance.getInitialMessage();
       if (initialMessage != null) {
-        unawaited(
-          _handleMessageInteraction(initialMessage, source: 'initial_message'),
-        );
-      }
-      if (kIsWeb) {
-        final launchTapData = _extractWebLaunchTapData();
-        if (launchTapData.isNotEmpty) {
-          _queueNotificationTap(
-            launchTapData,
-            source: 'web_launch_query',
+        if (kIsWeb) {
+          _logIncomingMessage(
+            initialMessage,
+            source: 'initial_message_web_ignored',
           );
-          _scheduleNotificationTapDrain();
-          clearWebLaunchNotificationQueryParameters();
+          debugPrint(
+            '[FCM][web] initialMessage ignored for notification lifecycle; '
+            'web delivery proof must come from firebase-messaging-sw.js push.',
+          );
+        } else {
+          unawaited(
+            _handleMessageInteraction(
+              initialMessage,
+              source: 'initial_message',
+            ),
+          );
         }
       }
 
@@ -493,8 +497,42 @@ class AppNotificationService {
         );
         _scheduleNotificationTapDrain();
       },
+      onLifecycleEvent: _handleWebNotificationLifecycleEvent,
     );
     _webBridgeInitialized = true;
+  }
+
+  void _handleWebNotificationLifecycleEvent(
+    String event,
+    Map<String, String> data,
+    Map<String, dynamic> metadata,
+  ) {
+    if (!kIsWeb) {
+      return;
+    }
+
+    final notificationId = _normalizeDataValue(
+          data['notification_id'] ?? metadata['notification_id']?.toString(),
+        ) ??
+        '<missing>';
+    final recovered = metadata['recovered'] == true ||
+        metadata['recovered']?.toString() == 'true';
+    debugPrint(
+      '[FCM][web][sw_lifecycle] event=$event '
+      'notification_id=$notificationId recovered=$recovered '
+      'data=$data meta=$metadata',
+    );
+
+    StabilityMetricsService.instance.increment(
+      'notification_$event',
+      module: 'notification_delivery',
+      payload: {
+        'source': 'firebase-messaging-sw.js',
+        'notification_id': notificationId,
+        'message_id': metadata['message_id']?.toString() ?? data['message_id'],
+        'recovered': recovered,
+      },
+    );
   }
 
   Future<void> _requestNotificationPermissions() async {
@@ -650,6 +688,24 @@ class AppNotificationService {
 
   Future<void> _handleForegroundMessage(RemoteMessage message) async {
     _logIncomingMessage(message, source: 'foreground');
+    if (kIsWeb) {
+      debugPrint(
+        '[FCM][web][foreground] message treated as data synchronization only; '
+        'notification delivery is not recorded until firebase-messaging-sw.js '
+        'receives the push event and displays the browser notification.',
+      );
+      StabilityMetricsService.instance.increment(
+        'notification_foreground_message_sync_only',
+        module: 'notification_delivery',
+        payload: {
+          'source': 'FirebaseMessaging.onMessage',
+          'message_id': message.messageId,
+          'notification_id': message.data['notification_id']?.toString(),
+        },
+      );
+      return;
+    }
+
     if (_isDuplicateForegroundMessage(message)) {
       debugPrint(
         '[FCM][foreground] duplicate message skipped: ${message.messageId}',
@@ -678,32 +734,6 @@ class AppNotificationService {
       message.notification?.body ?? message.data['body']?.toString() ?? '',
     );
     final data = _normalizeStringData(message.data);
-
-    if (kIsWeb) {
-      var permission = currentWebNotificationPermission();
-      if (permission != 'granted') {
-        permission = await ensureWebNotificationPermission();
-      }
-      if (permission != 'granted') {
-        debugPrint(
-          '[FCM][web] Foreground notification skipped due to permission=$permission.',
-        );
-        return;
-      }
-
-      final shown = await showForegroundWebNotification(
-        title: title,
-        body: body,
-        data: data,
-        tag: _notificationTagForMessage(message),
-      );
-      if (!shown) {
-        debugPrint('[FCM][web] Foreground browser notification was not shown.');
-      } else {
-        debugPrint('[FCM][web] Foreground browser notification displayed.');
-      }
-      return;
-    }
 
     final localPayload = <String, String>{
       ...data,
@@ -801,6 +831,24 @@ class AppNotificationService {
     required String source,
   }) async {
     _logIncomingMessage(message, source: source);
+    if (kIsWeb) {
+      debugPrint(
+        '[FCM][web][$source] Firebase message interaction ignored for '
+        'notification lifecycle; web clicks must originate from '
+        'firebase-messaging-sw.js notificationclick.',
+      );
+      StabilityMetricsService.instance.increment(
+        'notification_web_interaction_sync_only',
+        module: 'notification_delivery',
+        payload: {
+          'source': source,
+          'message_id': message.messageId,
+          'notification_id': message.data['notification_id']?.toString(),
+        },
+      );
+      return;
+    }
+
     final data = _normalizeStringData(message.data);
     if (data.isEmpty) {
       return;
@@ -929,25 +977,6 @@ class AppNotificationService {
         debugPrint('[FCM][tap:$source] unhandled screen="$normalizedScreen".');
         return;
     }
-  }
-
-  Map<String, String> _extractWebLaunchTapData() {
-    if (!kIsWeb) {
-      return const {};
-    }
-
-    final uri = Uri.base;
-    final screen = _normalizeDataValue(uri.queryParameters['screen']);
-    final clickAction =
-        _normalizeDataValue(uri.queryParameters['click_action']);
-    if (screen == null && clickAction == null) {
-      return const {};
-    }
-
-    return {
-      if (screen != null) 'screen': screen,
-      if (clickAction != null) 'click_action': clickAction,
-    };
   }
 
   String? _resolveScreenFromData(Map<String, String> data) {
