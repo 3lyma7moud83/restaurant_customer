@@ -1,0 +1,75 @@
+{
+    "value":  [
+                  {
+                      "id":  283,
+                      "queue_id":  154,
+                      "notification_id":  "bf481ff3-a1f2-4383-b20e-8147e58f0b39",
+                      "token_id":  "95460842-b575-432f-85ad-1beb1289684c",
+                      "request_payload":  {
+                                              "message":  {
+                                                              "data":  {
+                                                                           "body":  "Production FCM while browser open live_e2e_browser_open_20260605_235537",
+                                                                           "type":  "order_update",
+                                                                           "event":  "order_update",
+                                                                           "route":  "/orders",
+                                                                           "sound":  "default",
+                                                                           "title":  "Live Browser Open live_e2e_browser_open_20260605_235537",
+                                                                           "screen":  "orders",
+                                                                           "status_key":  "order_update",
+                                                                           "click_action":  "/orders",
+                                                                           "notification_id":  "bf481ff3-a1f2-4383-b20e-8147e58f0b39",
+                                                                           "notification_type":  "order_update"
+                                                                       },
+                                                              "token":  "elPMEPWrXewge85Bj0w0n8:APA91bEudjLicDudOPmOsMapzBRVhESNpwFoOFGv_a3mx1SRV0EZXuJvOsUb-WUkpwgjA-3pzW4QhqgWWX1hQU_QyF9JyDZurRnWT1KEKks7Rp-YfHZ2UOM",
+                                                              "android":  {
+                                                                              "ttl":  "0s",
+                                                                              "priority":  "HIGH",
+                                                                              "notification":  {
+                                                                                                   "sound":  "default",
+                                                                                                   "channel_id":  "high_importance_channel",
+                                                                                                   "click_action":  "FLUTTER_NOTIFICATION_CLICK",
+                                                                                                   "default_sound":  true,
+                                                                                                   "default_vibrate_timings":  true
+                                                                                               }
+                                                                          },
+                                                              "webpush":  {
+                                                                              "fcm_options":  {
+                                                                                                  "link":  "/orders"
+                                                                                              },
+                                                                              "notification":  {
+                                                                                                   "body":  "Production FCM while browser open live_e2e_browser_open_20260605_235537",
+                                                                                                   "data":  {
+                                                                                                                "body":  "Production FCM while browser open live_e2e_browser_open_20260605_235537",
+                                                                                                                "type":  "order_update",
+                                                                                                                "event":  "order_update",
+                                                                                                                "route":  "/orders",
+                                                                                                                "sound":  "default",
+                                                                                                                "title":  "Live Browser Open live_e2e_browser_open_20260605_235537",
+                                                                                                                "screen":  "orders",
+                                                                                                                "status_key":  "order_update",
+                                                                                                                "click_action":  "/orders",
+                                                                                                                "notification_id":  "bf481ff3-a1f2-4383-b20e-8147e58f0b39",
+                                                                                                                "notification_type":  "order_update"
+                                                                                                            },
+                                                                                                   "icon":  "/icons/Icon-192.png",
+                                                                                                   "badge":  "/icons/Icon-192.png",
+                                                                                                   "title":  "Live Browser Open live_e2e_browser_open_20260605_235537",
+                                                                                                   "requireInteraction":  true
+                                                                                               }
+                                                                          },
+                                                              "notification":  {
+                                                                                   "body":  "Production FCM while browser open live_e2e_browser_open_20260605_235537",
+                                                                                   "title":  "Live Browser Open live_e2e_browser_open_20260605_235537"
+                                                                               }
+                                                          }
+                                          },
+                      "response_payload":  {
+                                               "name":  "projects/mat3amak-app-9d310/messages/3aad1bfe-d111-4fe8-b832-4371ea7db9d1"
+                                           },
+                      "error_message":  null,
+                      "fcm_latency_ms":  185,
+                      "created_at":  "2026-06-05T20:55:38.237588+00:00"
+                  }
+              ],
+    "Count":  1
+}

@@ -16,27 +16,31 @@ class AppCachedImage extends StatelessWidget {
     super.key,
     required this.imageUrl,
     this.fit = BoxFit.cover,
+    this.alignment = Alignment.center,
     this.borderRadius,
     this.width,
     this.height,
     this.placeholder = const _ShimmerPlaceholder(),
     this.errorWidget = const ImageFallback(),
+    this.enhanceColors = true,
   });
 
   final String? imageUrl;
   final BoxFit fit;
+  final Alignment alignment;
   final BorderRadius? borderRadius;
   final double? width;
   final double? height;
   final Widget placeholder;
   final Widget errorWidget;
+  final bool enhanceColors;
 
-  int? _cacheDimension(double? value) {
+  int? _cacheDimension(double? value, double devicePixelRatio) {
     if (value == null || !value.isFinite || value <= 0) {
       return null;
     }
 
-    final normalized = value.clamp(40.0, 2400.0).round();
+    final normalized = (value * devicePixelRatio).clamp(80.0, 2400.0).round();
     return normalized <= 0 ? null : normalized;
   }
 
@@ -44,43 +48,139 @@ class AppCachedImage extends StatelessWidget {
   Widget build(BuildContext context) {
     final normalizedUrl = imageUrl?.trim();
 
-    final imageChild = normalizedUrl == null || normalizedUrl.isEmpty
-        ? errorWidget
-        : kIsWeb
-            ? Image.network(
-                normalizedUrl,
-                width: width,
-                height: height,
-                fit: fit,
-                gaplessPlayback: true,
-                loadingBuilder: (context, child, progress) {
-                  if (progress == null) {
-                    return child;
-                  }
-                  return placeholder;
-                },
-                errorBuilder: (_, __, ___) => errorWidget,
-              )
-            : CachedNetworkImage(
-                imageUrl: normalizedUrl,
-                width: width,
-                height: height,
-                fit: fit,
-                memCacheWidth: _cacheDimension(width),
-                memCacheHeight: _cacheDimension(height),
-                fadeInDuration: const Duration(milliseconds: 160),
-                fadeOutDuration: const Duration(milliseconds: 90),
-                placeholder: (_, __) => placeholder,
-                errorWidget: (_, __, ___) => errorWidget,
-              );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final constrainedWidth =
+            constraints.hasBoundedWidth ? constraints.maxWidth : null;
+        final constrainedHeight =
+            constraints.hasBoundedHeight ? constraints.maxHeight : null;
+        final effectiveWidth = width ?? constrainedWidth;
+        final effectiveHeight = height ?? constrainedHeight;
+        final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
 
-    if (borderRadius == null) {
-      return imageChild;
+        final imageChild = normalizedUrl == null || normalizedUrl.isEmpty
+            ? errorWidget
+            : kIsWeb
+                ? Image.network(
+                    normalizedUrl,
+                    width: effectiveWidth,
+                    height: effectiveHeight,
+                    fit: fit,
+                    alignment: alignment,
+                    filterQuality: FilterQuality.medium,
+                    gaplessPlayback: true,
+                    frameBuilder:
+                        (context, child, frame, wasSynchronouslyLoaded) {
+                      if (wasSynchronouslyLoaded) {
+                        return _ImagePresentationSurface(
+                          enhanceColors: enhanceColors,
+                          child: child,
+                        );
+                      }
+                      return AnimatedOpacity(
+                        opacity: frame == null ? 0 : 1,
+                        duration: const Duration(milliseconds: 180),
+                        curve: Curves.easeOutCubic,
+                        child: _ImagePresentationSurface(
+                          enhanceColors: enhanceColors,
+                          child: child,
+                        ),
+                      );
+                    },
+                    loadingBuilder: (context, child, progress) {
+                      if (progress == null) {
+                        return child;
+                      }
+                      return placeholder;
+                    },
+                    errorBuilder: (_, __, ___) => errorWidget,
+                  )
+                : CachedNetworkImage(
+                    imageUrl: normalizedUrl,
+                    width: effectiveWidth,
+                    height: effectiveHeight,
+                    memCacheWidth:
+                        _cacheDimension(effectiveWidth, devicePixelRatio),
+                    memCacheHeight:
+                        _cacheDimension(effectiveHeight, devicePixelRatio),
+                    fadeInDuration: const Duration(milliseconds: 180),
+                    fadeOutDuration: const Duration(milliseconds: 80),
+                    imageBuilder: (context, imageProvider) =>
+                        _ImagePresentationSurface(
+                      enhanceColors: enhanceColors,
+                      child: Image(
+                        image: imageProvider,
+                        width: effectiveWidth,
+                        height: effectiveHeight,
+                        fit: fit,
+                        alignment: alignment,
+                        filterQuality: FilterQuality.medium,
+                        gaplessPlayback: true,
+                      ),
+                    ),
+                    placeholder: (_, __) => placeholder,
+                    errorWidget: (_, __, ___) => errorWidget,
+                  );
+
+        final sizedChild = SizedBox(
+          width: width,
+          height: height,
+          child: imageChild,
+        );
+
+        if (borderRadius == null) {
+          return ClipRect(child: sizedChild);
+        }
+
+        return ClipRRect(
+          borderRadius: borderRadius!,
+          child: sizedChild,
+        );
+      },
+    );
+  }
+}
+
+class _ImagePresentationSurface extends StatelessWidget {
+  const _ImagePresentationSurface({
+    required this.child,
+    required this.enhanceColors,
+  });
+
+  final Widget child;
+  final bool enhanceColors;
+
+  @override
+  Widget build(BuildContext context) {
+    final image = ClipRect(child: child);
+    if (!enhanceColors) {
+      return image;
     }
 
-    return ClipRRect(
-      borderRadius: borderRadius!,
-      child: imageChild,
+    return ColorFiltered(
+      colorFilter: const ColorFilter.matrix(<double>[
+        1.07,
+        0,
+        0,
+        0,
+        4,
+        0,
+        1.06,
+        0,
+        0,
+        3,
+        0,
+        0,
+        1.04,
+        0,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0,
+      ]),
+      child: image,
     );
   }
 }

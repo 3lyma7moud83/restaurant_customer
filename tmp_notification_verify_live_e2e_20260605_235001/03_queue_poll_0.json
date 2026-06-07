@@ -1,0 +1,24 @@
+{
+    "id":  153,
+    "notification_id":  "bda7ee59-0ee6-4b7d-9a91-f7c107f16094",
+    "customer_user_id":  "f8fcb260-e287-402d-95b7-aaf540393b44",
+    "status":  "pending",
+    "attempt_count":  0,
+    "max_attempts":  6,
+    "next_retry_at":  "2026-06-05T20:50:01.45372+00:00",
+    "processing_started_at":  null,
+    "sent_at":  null,
+    "failed_at":  null,
+    "last_error":  null,
+    "worker_id":  null,
+    "request_payload":  {
+                            "screen":  "orders",
+                            "created_by":  "codex_live_e2e",
+                            "verify_run":  "live_e2e_20260605_235001",
+                            "click_action":  "/?screen=orders",
+                            "production_delivery":  "true"
+                        },
+    "response_payload":  null,
+    "created_at":  "2026-06-05T20:50:01.45372+00:00",
+    "updated_at":  "2026-06-05T20:50:01.45372+00:00"
+}

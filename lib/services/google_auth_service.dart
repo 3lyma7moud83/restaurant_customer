@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../core/auth/oauth_callback_cleaner.dart';
 import '../core/config/env.dart';
 import '../core/services/error_logger.dart';
 import 'profile_service.dart';
@@ -38,6 +39,7 @@ class GoogleAuthService {
     if (kIsWeb) {
       await _client.auth.signInWithOAuth(
         OAuthProvider.google,
+        redirectTo: cleanOAuthRedirectUrl(),
       );
       return const GoogleAuthResult(
         status: GoogleAuthStatus.redirecting,

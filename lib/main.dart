@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'core/auth/oauth_callback_cleaner.dart';
 import 'core/config/mapbox_setup.dart';
 import 'core/errors/global_error_handler.dart';
 import 'core/localization/app_localizations.dart';
@@ -196,8 +197,10 @@ Future<BootstrapResult> _bootstrap() async {
           detectSessionInUri: true,
         ),
       );
+      clearOAuthCallbackParameters();
       _bootstrapLog('Supabase initialized.');
     } else {
+      clearOAuthCallbackParameters();
       _bootstrapLog('Supabase already initialized.');
     }
   } catch (error, stack) {
