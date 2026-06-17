@@ -12,8 +12,13 @@ class RealtimePresenceService {
 
   static const Duration _staleEntryTtl = Duration(minutes: 10);
   static const Duration _cleanupInterval = Duration(seconds: 45);
-  static const Duration _baseReconnectDelay = Duration(seconds: 2);
-  static const Duration _maxReconnectDelay = Duration(seconds: 30);
+  static const List<Duration> _reconnectBackoff = <Duration>[
+    Duration(seconds: 1),
+    Duration(seconds: 2),
+    Duration(seconds: 5),
+    Duration(seconds: 10),
+    Duration(seconds: 30),
+  ];
 
   final Map<String, _RealtimePresenceEntry> _entries =
       <String, _RealtimePresenceEntry>{};
@@ -138,20 +143,20 @@ class RealtimePresenceService {
   Duration reconnectDelay(String topic) {
     final entry = _entries[topic];
     final attempts = entry?.reconnectAttempts ?? 0;
-    final boundedAttempts = attempts < 0 ? 0 : (attempts > 8 ? 8 : attempts);
-    final exponent = boundedAttempts > 5 ? 5 : boundedAttempts;
-    final seconds = _baseReconnectDelay.inSeconds * (1 << exponent);
-    final boundedSeconds =
-        seconds.clamp(_baseReconnectDelay.inSeconds, _maxReconnectDelay.inSeconds);
+    final index = attempts <= 0
+        ? 0
+        : (attempts - 1).clamp(0, _reconnectBackoff.length - 1);
+    final baseDelay = _reconnectBackoff[index];
     final jitterMs = _random.nextInt(600);
-    return Duration(seconds: boundedSeconds, milliseconds: jitterMs);
+    return baseDelay + Duration(milliseconds: jitterMs);
   }
 
   Future<void> _cleanupStaleEntries() async {
     try {
       final now = DateTime.now().toUtc();
       final staleTopics = _entries.entries
-          .where((entry) => now.difference(entry.value.lastSeenAt) > _staleEntryTtl)
+          .where((entry) =>
+              now.difference(entry.value.lastSeenAt) > _staleEntryTtl)
           .map((entry) => entry.key)
           .toList(growable: false);
       if (staleTopics.isEmpty) {

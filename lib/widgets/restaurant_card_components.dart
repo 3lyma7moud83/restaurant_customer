@@ -123,8 +123,8 @@ class AppCachedImage extends StatelessWidget {
                   );
 
         final sizedChild = SizedBox(
-          width: width,
-          height: height,
+          width: effectiveWidth,
+          height: effectiveHeight,
           child: imageChild,
         );
 

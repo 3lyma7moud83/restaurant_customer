@@ -19,6 +19,7 @@ import '../services/customer_address_service.dart';
 import '../services/orders_service.dart';
 import '../services/profile_service.dart';
 import '../services/session_manager.dart';
+import '../widgets/restaurant_card_components.dart';
 import 'cart_provider.dart';
 import 'select_address_page.dart';
 
@@ -47,10 +48,6 @@ class _CartPageState extends State<CartPage> {
   final phoneCtrl = TextEditingController();
   final addressCtrl = TextEditingController();
   final houseNumberCtrl = TextEditingController();
-  final apartmentNumberCtrl = TextEditingController();
-  final floorNumberCtrl = TextEditingController();
-  final landmarkCtrl = TextEditingController();
-  final notesCtrl = TextEditingController();
   final discountCodeCtrl = TextEditingController();
 
   bool _contentVisible = kIsWeb;
@@ -60,10 +57,6 @@ class _CartPageState extends State<CartPage> {
   bool _applyingDiscount = false;
   bool _didSyncAddress = false;
   bool _didSyncHouseNumber = false;
-  bool _didSyncApartmentNumber = false;
-  bool _didSyncFloorNumber = false;
-  bool _didSyncLandmark = false;
-  bool _didSyncNotes = false;
   bool _saveAddressAsDefault = false;
   String? _loadedActiveOrderId;
   Map<String, dynamic>? _activeOrder;
@@ -76,10 +69,6 @@ class _CartPageState extends State<CartPage> {
     super.initState();
     addressCtrl.addListener(_handleAddressChanged);
     houseNumberCtrl.addListener(_handleHouseNumberChanged);
-    apartmentNumberCtrl.addListener(_handleApartmentNumberChanged);
-    floorNumberCtrl.addListener(_handleFloorNumberChanged);
-    landmarkCtrl.addListener(_handleLandmarkChanged);
-    notesCtrl.addListener(_handleNotesChanged);
     unawaited(_loadProfile());
   }
 
@@ -99,27 +88,6 @@ class _CartPageState extends State<CartPage> {
       _setControllerValue(houseNumberCtrl, cart.houseNumber);
     }
 
-    if (!_didSyncApartmentNumber ||
-        apartmentNumberCtrl.text != cart.apartmentNumber) {
-      _didSyncApartmentNumber = true;
-      _setControllerValue(apartmentNumberCtrl, cart.apartmentNumber);
-    }
-
-    if (!_didSyncFloorNumber || floorNumberCtrl.text != cart.floorNumber) {
-      _didSyncFloorNumber = true;
-      _setControllerValue(floorNumberCtrl, cart.floorNumber);
-    }
-
-    if (!_didSyncLandmark || landmarkCtrl.text != cart.landmark) {
-      _didSyncLandmark = true;
-      _setControllerValue(landmarkCtrl, cart.landmark);
-    }
-
-    if (!_didSyncNotes || notesCtrl.text != cart.checkoutNotes) {
-      _didSyncNotes = true;
-      _setControllerValue(notesCtrl, cart.checkoutNotes);
-    }
-
     final activeOrderId = cart.activeOrderId;
     if (_loadedActiveOrderId != activeOrderId) {
       _loadedActiveOrderId = activeOrderId;
@@ -135,10 +103,6 @@ class _CartPageState extends State<CartPage> {
     phoneCtrl.dispose();
     addressCtrl.dispose();
     houseNumberCtrl.dispose();
-    apartmentNumberCtrl.dispose();
-    floorNumberCtrl.dispose();
-    landmarkCtrl.dispose();
-    notesCtrl.dispose();
     discountCodeCtrl.dispose();
     super.dispose();
   }
@@ -319,30 +283,6 @@ class _CartPageState extends State<CartPage> {
             savedPrimaryAddress.houseApartmentNo,
           );
         }
-        if (apartmentNumberCtrl.text.trim().isEmpty) {
-          _setControllerValue(
-            apartmentNumberCtrl,
-            savedPrimaryAddress.apartmentNumber,
-          );
-        }
-        if (floorNumberCtrl.text.trim().isEmpty) {
-          _setControllerValue(
-            floorNumberCtrl,
-            savedPrimaryAddress.floorNumber,
-          );
-        }
-        if (landmarkCtrl.text.trim().isEmpty) {
-          _setControllerValue(
-            landmarkCtrl,
-            savedPrimaryAddress.landmark,
-          );
-        }
-        if (notesCtrl.text.trim().isEmpty) {
-          _setControllerValue(
-            notesCtrl,
-            savedPrimaryAddress.additionalNotes,
-          );
-        }
 
         final cart = CartProvider.maybeOf(context);
         if (cart != null &&
@@ -357,18 +297,10 @@ class _CartPageState extends State<CartPage> {
               lat: savedPrimaryAddress.lat!,
               lng: savedPrimaryAddress.lng!,
               houseNumber: savedPrimaryAddress.houseApartmentNo,
-              apartmentNumber: savedPrimaryAddress.apartmentNumber,
-              floorNumber: savedPrimaryAddress.floorNumber,
-              landmark: savedPrimaryAddress.landmark,
-              notes: savedPrimaryAddress.additionalNotes,
             );
           } else {
             cart.setDeliveryAddress(savedPrimaryAddress.primaryAddress);
             cart.setHouseNumber(savedPrimaryAddress.houseApartmentNo);
-            cart.setApartmentNumber(savedPrimaryAddress.apartmentNumber);
-            cart.setFloorNumber(savedPrimaryAddress.floorNumber);
-            cart.setLandmark(savedPrimaryAddress.landmark);
-            cart.setCheckoutNotes(savedPrimaryAddress.additionalNotes);
           }
         }
       }
@@ -432,54 +364,6 @@ class _CartPageState extends State<CartPage> {
     final currentValue = houseNumberCtrl.text.trim();
     if (currentValue != cart.houseNumber) {
       cart.setHouseNumber(currentValue);
-    }
-  }
-
-  void _handleApartmentNumberChanged() {
-    final cart = CartProvider.maybeOf(context);
-    if (cart == null || cart.isLocked) {
-      return;
-    }
-
-    final currentValue = apartmentNumberCtrl.text.trim();
-    if (currentValue != cart.apartmentNumber) {
-      cart.setApartmentNumber(currentValue);
-    }
-  }
-
-  void _handleFloorNumberChanged() {
-    final cart = CartProvider.maybeOf(context);
-    if (cart == null || cart.isLocked) {
-      return;
-    }
-
-    final currentValue = floorNumberCtrl.text.trim();
-    if (currentValue != cart.floorNumber) {
-      cart.setFloorNumber(currentValue);
-    }
-  }
-
-  void _handleLandmarkChanged() {
-    final cart = CartProvider.maybeOf(context);
-    if (cart == null || cart.isLocked) {
-      return;
-    }
-
-    final currentValue = landmarkCtrl.text.trim();
-    if (currentValue != cart.landmark) {
-      cart.setLandmark(currentValue);
-    }
-  }
-
-  void _handleNotesChanged() {
-    final cart = CartProvider.maybeOf(context);
-    if (cart == null || cart.isLocked) {
-      return;
-    }
-
-    final currentValue = notesCtrl.text.trim();
-    if (currentValue != cart.checkoutNotes) {
-      cart.setCheckoutNotes(currentValue);
     }
   }
 
@@ -548,10 +432,6 @@ class _CartPageState extends State<CartPage> {
       lat: lat,
       lng: lng,
       houseNumber: houseNumber,
-      apartmentNumber: apartmentNumberCtrl.text.trim(),
-      floorNumber: floorNumberCtrl.text.trim(),
-      landmark: landmarkCtrl.text.trim(),
-      notes: notesCtrl.text.trim(),
     );
     if (customerName.isNotEmpty) {
       _setControllerValue(nameCtrl, customerName);
@@ -646,9 +526,6 @@ class _CartPageState extends State<CartPage> {
     final fullAddress = OrdersService.composeDeliveryAddress(
       address: cart.deliveryAddress!,
       buildingNumber: houseNumberCtrl.text,
-      apartmentNumber: apartmentNumberCtrl.text,
-      floorNumber: floorNumberCtrl.text,
-      landmark: landmarkCtrl.text,
     );
     final pricing = _pricingFor(cart);
 
@@ -663,10 +540,10 @@ class _CartPageState extends State<CartPage> {
           customerPhone: phoneCtrl.text.trim(),
           address: fullAddress,
           buildingNumber: houseNumberCtrl.text.trim(),
-          apartmentNumber: apartmentNumberCtrl.text.trim(),
-          floorNumber: floorNumberCtrl.text.trim(),
-          landmark: landmarkCtrl.text.trim(),
-          notes: notesCtrl.text.trim(),
+          apartmentNumber: '',
+          floorNumber: '',
+          landmark: '',
+          notes: '',
           customerLat: cart.deliveryLat!,
           customerLng: cart.deliveryLng!,
           totalPrice: pricing.finalTotal,
@@ -675,9 +552,13 @@ class _CartPageState extends State<CartPage> {
           items: cart.items
               .map<CreateOrderItemInput>(
                 (item) => CreateOrderItemInput(
+                  itemId: item.itemId,
                   name: item.name,
                   price: item.price,
                   quantity: item.qty,
+                  variantId: item.variantId,
+                  variantName: item.variantName,
+                  variantPrice: item.variantPrice,
                   note: item.note,
                 ),
               )
@@ -729,10 +610,6 @@ class _CartPageState extends State<CartPage> {
     final requiredFields = <TextEditingController, String>{
       addressCtrl: 'اكتب عنوان التوصيل.',
       houseNumberCtrl: 'اكتب رقم العمارة.',
-      apartmentNumberCtrl: 'اكتب رقم الشقة.',
-      floorNumberCtrl: 'اكتب الدور.',
-      landmarkCtrl: 'اكتب علامة مميزة للمكان.',
-      notesCtrl: 'اكتب الملاحظات الإضافية أو اكتب "لا يوجد".',
     };
     for (final entry in requiredFields.entries) {
       if (entry.key.text.trim().isEmpty) {
@@ -770,11 +647,8 @@ class _CartPageState extends State<CartPage> {
       final saved = await CustomerAddressService.savePrimaryAddress(
         primaryAddress: addressCtrl.text.trim(),
         houseApartmentNo: houseNumberCtrl.text.trim(),
-        apartmentNumber: apartmentNumberCtrl.text.trim(),
-        floorNumber: floorNumberCtrl.text.trim(),
-        landmark: landmarkCtrl.text.trim(),
         area: '',
-        additionalNotes: notesCtrl.text.trim(),
+        additionalNotes: '',
         lat: cart.deliveryLat,
         lng: cart.deliveryLng,
       );
@@ -785,10 +659,6 @@ class _CartPageState extends State<CartPage> {
           lat: saved.lat!,
           lng: saved.lng!,
           houseNumber: saved.houseApartmentNo,
-          apartmentNumber: saved.apartmentNumber,
-          floorNumber: saved.floorNumber,
-          landmark: saved.landmark,
-          notes: saved.additionalNotes,
         );
       }
     } catch (error, stack) {
@@ -917,7 +787,7 @@ class _CartPageState extends State<CartPage> {
       builder: (dialogContext) => AlertDialog(
         title: const Text('حذف الصنف من السلة؟'),
         content: Text(
-          'سيتم حذف "${item.name}" بالكامل من السلة.',
+          'سيتم حذف "${item.displayName}" بالكامل من السلة.',
           textAlign: TextAlign.right,
         ),
         actions: [
@@ -1085,61 +955,6 @@ class _CartPageState extends State<CartPage> {
                                     labelText: 'رقم العمارة',
                                     hintText: 'مثال: 12',
                                     prefixIcon: Icon(Icons.apartment_outlined),
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                TextField(
-                                  controller: apartmentNumberCtrl,
-                                  enabled: !cart.isLocked && !creatingOrder,
-                                  onTapOutside: (_) =>
-                                      InputFocusGuard.dismiss(),
-                                  textAlign: TextAlign.right,
-                                  decoration: const InputDecoration(
-                                    labelText: 'رقم الشقة',
-                                    hintText: 'مثال: 7',
-                                    prefixIcon:
-                                        Icon(Icons.meeting_room_outlined),
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                TextField(
-                                  controller: floorNumberCtrl,
-                                  enabled: !cart.isLocked && !creatingOrder,
-                                  onTapOutside: (_) =>
-                                      InputFocusGuard.dismiss(),
-                                  textAlign: TextAlign.right,
-                                  decoration: const InputDecoration(
-                                    labelText: 'الدور',
-                                    hintText: 'مثال: الثالث',
-                                    prefixIcon: Icon(Icons.stairs_outlined),
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                TextField(
-                                  controller: landmarkCtrl,
-                                  enabled: !cart.isLocked && !creatingOrder,
-                                  onTapOutside: (_) =>
-                                      InputFocusGuard.dismiss(),
-                                  textAlign: TextAlign.right,
-                                  decoration: const InputDecoration(
-                                    labelText: 'علامة مميزة للمكان',
-                                    hintText: 'مثال: بجوار الصيدلية',
-                                    prefixIcon: Icon(Icons.flag_outlined),
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                TextField(
-                                  controller: notesCtrl,
-                                  enabled: !cart.isLocked && !creatingOrder,
-                                  onTapOutside: (_) =>
-                                      InputFocusGuard.dismiss(),
-                                  textAlign: TextAlign.right,
-                                  minLines: 2,
-                                  maxLines: 4,
-                                  decoration: const InputDecoration(
-                                    labelText: 'ملاحظات إضافية',
-                                    hintText: 'تعليمات الوصول أو اكتب لا يوجد',
-                                    prefixIcon: Icon(Icons.notes_outlined),
                                   ),
                                 ),
                                 if (!cart.isLocked) ...[
@@ -1396,7 +1211,7 @@ class _CartLineItem extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      item.name,
+                      item.displayName,
                       textAlign: TextAlign.right,
                       style: const TextStyle(
                         color: AppTheme.text,
@@ -1405,7 +1220,7 @@ class _CartLineItem extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '${localizedCurrency(context, item.price)} للقطعة',
+                      localizedCurrency(context, item.price),
                       style: const TextStyle(
                         color: Color(0xFF667085),
                         fontWeight: FontWeight.w600,
@@ -1415,18 +1230,7 @@ class _CartLineItem extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: AppTheme.primary.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(
-                  Icons.fastfood_rounded,
-                  color: AppTheme.primary,
-                ),
-              ),
+              _CartItemImage(imageUrl: item.image),
             ],
           ),
           const SizedBox(height: 10),
@@ -1525,6 +1329,40 @@ class _QuantityStepper extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _CartItemImage extends StatelessWidget {
+  const _CartItemImage({
+    required this.imageUrl,
+  });
+
+  final String imageUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    const size = 44.0;
+    final normalizedUrl = imageUrl.trim();
+
+    return SizedBox.square(
+      dimension: size,
+      child: normalizedUrl.isEmpty
+          ? const ImageFallback(
+              icon: Icons.fastfood_rounded,
+              iconSize: 22,
+            )
+          : AppCachedImage(
+              imageUrl: normalizedUrl,
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              borderRadius: BorderRadius.circular(14),
+              errorWidget: const ImageFallback(
+                icon: Icons.fastfood_rounded,
+                iconSize: 22,
+              ),
+            ),
     );
   }
 }

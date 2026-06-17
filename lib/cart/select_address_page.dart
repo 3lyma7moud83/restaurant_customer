@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -38,23 +37,31 @@ class SelectAddressPage extends StatefulWidget {
 
 class _SelectAddressPageState extends State<SelectAddressPage>
     with TickerProviderStateMixin {
-  final GlobalKey _mapKey = GlobalKey();
+  static const double _goodAccuracyThresholdMeters = 50;
+  static const Duration _mapIdleDebounce = Duration(milliseconds: 500);
+  static const LatLng _fallbackCenter = LatLng(30.0444, 31.2357);
+
   final MapController _controller = MapController();
   final TextEditingController _addressController = TextEditingController();
   final TextEditingController _houseNumberController = TextEditingController();
   final FocusNode _addressFocusNode = FocusNode();
   final FocusNode _houseNumberFocusNode = FocusNode();
+  final ValueNotifier<LatLng> _centerNotifier =
+      ValueNotifier<LatLng>(_fallbackCenter);
 
   AnimationController? _moveController;
+  Timer? _mapIdleTimer;
 
-  String _statusMessage = 'جارٍ تحديد موقعك...';
+  String _statusMessage = 'جارٍ تحديد موقعك بدقة عالية...';
   bool loadingAddress = false;
   bool locatingUser = false;
   bool _satelliteMode = false;
+  bool _mapIsMoving = false;
   int _addressRequestId = 0;
 
   LatLng? _selectedPoint;
   LatLng? _currentLocationPoint;
+  double? _gpsAccuracyMeters;
 
   String? get _mapboxToken {
     try {
@@ -76,20 +83,56 @@ class _SelectAddressPageState extends State<SelectAddressPage>
         : 'https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/{z}/{x}/{y}@2x?access_token=$token';
   }
 
+  String get _accuracyStatus {
+    final accuracy = _gpsAccuracyMeters;
+    if (accuracy == null) {
+      return 'جاري القياس';
+    }
+    if (accuracy <= 10) {
+      return 'ممتازة';
+    }
+    if (accuracy < _goodAccuracyThresholdMeters) {
+      return 'جيدة';
+    }
+    return 'ضعيفة';
+  }
+
+  Color get _accuracyColor {
+    final accuracy = _gpsAccuracyMeters;
+    if (accuracy == null) {
+      return const Color(0xFF667085);
+    }
+    if (accuracy <= 10) {
+      return const Color(0xFF027A48);
+    }
+    if (accuracy < _goodAccuracyThresholdMeters) {
+      return const Color(0xFFB54708);
+    }
+    return const Color(0xFFB42318);
+  }
+
+  bool get _hasGoodGpsFix =>
+      _gpsAccuracyMeters != null &&
+      _gpsAccuracyMeters! <= _goodAccuracyThresholdMeters;
+
+  bool get _canConfirm =>
+      _selectedPoint != null &&
+      !loadingAddress &&
+      !locatingUser &&
+      !_mapIsMoving &&
+      _hasGoodGpsFix &&
+      _addressController.text.trim().isNotEmpty;
+
   @override
   void initState() {
     super.initState();
     if (widget.initialLat != null && widget.initialLng != null) {
       _selectedPoint = LatLng(widget.initialLat!, widget.initialLng!);
+      _centerNotifier.value = _selectedPoint!;
     }
 
     _addressController.text = widget.initialAddress?.trim() ?? '';
     _houseNumberController.text = widget.initialHouseNumber?.trim() ?? '';
-
-    if (_selectedPoint != null) {
-      _statusMessage =
-          'تم تحميل الموقع الحالي. عدّل العنوان ثم اضغط تأكيد العنوان.';
-    }
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
@@ -99,28 +142,21 @@ class _SelectAddressPageState extends State<SelectAddressPage>
       final initialPoint = _selectedPoint;
       if (initialPoint != null) {
         _controller.move(initialPoint, 16.5);
-        if (_addressController.text.isEmpty) {
-          setState(() {
-            loadingAddress = true;
-            _statusMessage = 'جارٍ تحميل العنوان الحالي...';
-          });
-          unawaited(_resolveAddress(initialPoint));
-        }
-        return;
       }
-
       unawaited(_centerOnUserLocation());
     });
   }
 
   @override
   void dispose() {
+    _mapIdleTimer?.cancel();
     _moveController?.dispose();
     _controller.dispose();
     _addressController.dispose();
     _houseNumberController.dispose();
     _addressFocusNode.dispose();
     _houseNumberFocusNode.dispose();
+    _centerNotifier.dispose();
     super.dispose();
   }
 
@@ -129,27 +165,45 @@ class _SelectAddressPageState extends State<SelectAddressPage>
       return;
     }
 
-    setState(() => locatingUser = true);
+    setState(() {
+      locatingUser = true;
+      loadingAddress = true;
+      _statusMessage = 'جارٍ الحصول على GPS Fix بدقة عالية...';
+    });
 
     try {
-      final point = await _getCurrentLocation();
+      final position = await _getBestCurrentPosition();
       if (!mounted) {
         return;
       }
 
-      if (point == null) {
+      if (position == null) {
         setState(() {
-          locatingUser = false;
+          loadingAddress = false;
           _statusMessage =
-              'فعّل الموقع أو اضغط على الخريطة لتحديد العنوان يدويًا.';
+              'فعّل خدمة الموقع وامنح الصلاحية لتحديد عنوان التوصيل.';
         });
         return;
       }
 
-      await _selectPoint(
+      final point = LatLng(position.latitude, position.longitude);
+      _currentLocationPoint = point;
+      _gpsAccuracyMeters = position.accuracy.isFinite
+          ? position.accuracy
+          : _goodAccuracyThresholdMeters + 1;
+
+      if (!_hasGoodGpsFix) {
+        setState(() {
+          _statusMessage = 'جاري تحسين دقة الموقع...';
+        });
+      }
+
+      await _selectCenter(
         point,
-        markAsCurrentLocation: true,
-        statusMessage: 'جارٍ تحديد عنوانك...',
+        animate: true,
+        statusMessage: _hasGoodGpsFix
+            ? 'جارٍ تحميل عنوان موقعك الحالي...'
+            : 'جاري تحسين دقة الموقع...',
       );
     } catch (error, stack) {
       await ErrorLogger.logError(
@@ -167,38 +221,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
     }
   }
 
-  Future<void> _selectPoint(
-    LatLng point, {
-    bool markAsCurrentLocation = false,
-    String statusMessage = 'جارٍ تحديد العنوان...',
-  }) async {
-    _setControllerValue(
-      _addressController,
-      '',
-      focusNode: _addressFocusNode,
-      skipIfFocused: true,
-    );
-    _setControllerValue(
-      _houseNumberController,
-      '',
-      focusNode: _houseNumberFocusNode,
-      skipIfFocused: true,
-    );
-
-    setState(() {
-      if (markAsCurrentLocation) {
-        _currentLocationPoint = point;
-      }
-      _selectedPoint = point;
-      loadingAddress = true;
-      _statusMessage = statusMessage;
-    });
-
-    await _animateTo(point, zoom: 16.5);
-    await _resolveAddress(point);
-  }
-
-  Future<LatLng?> _getCurrentLocation() async {
+  Future<Position?> _getBestCurrentPosition() async {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       return null;
@@ -214,11 +237,70 @@ class _SelectAddressPageState extends State<SelectAddressPage>
       return null;
     }
 
-    final position = await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.bestForNavigation,
-    );
+    Position? best;
 
-    return LatLng(position.latitude, position.longitude);
+    try {
+      best = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.bestForNavigation,
+        timeLimit: const Duration(seconds: 12),
+      );
+      if (_isGoodPosition(best)) {
+        return best;
+      }
+    } catch (_) {
+      // Continue to the live stream below to avoid relying on a stale fix.
+    }
+
+    try {
+      final stream = Geolocator.getPositionStream(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+          distanceFilter: 0,
+          timeLimit: Duration(seconds: 18),
+        ),
+      );
+
+      await for (final position in stream) {
+        if (best == null || position.accuracy < best.accuracy) {
+          best = position;
+        }
+        if (_isGoodPosition(position)) {
+          return position;
+        }
+      }
+    } on TimeoutException {
+      return best;
+    } catch (_) {
+      return best;
+    }
+
+    return best;
+  }
+
+  bool _isGoodPosition(Position position) {
+    return position.accuracy.isFinite &&
+        position.accuracy <= _goodAccuracyThresholdMeters;
+  }
+
+  Future<void> _selectCenter(
+    LatLng point, {
+    bool animate = false,
+    String statusMessage = 'جارٍ تحديد العنوان...',
+  }) async {
+    _mapIdleTimer?.cancel();
+    _centerNotifier.value = point;
+
+    setState(() {
+      _selectedPoint = point;
+      loadingAddress = true;
+      _mapIsMoving = false;
+      _statusMessage = statusMessage;
+    });
+
+    if (animate) {
+      await _animateTo(point, zoom: 17);
+    }
+    await _resolveAddress(point);
   }
 
   Future<void> _animateTo(
@@ -226,7 +308,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
     double? zoom,
   }) async {
     if (kIsWeb) {
-      _controller.move(target, zoom ?? 16.5);
+      _controller.move(target, zoom ?? 17);
       return;
     }
 
@@ -238,7 +320,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
       _moveController?.dispose();
       final controller = AnimationController(
         vsync: this,
-        duration: const Duration(milliseconds: 520),
+        duration: const Duration(milliseconds: 420),
       );
       _moveController = controller;
 
@@ -271,7 +353,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
 
       await controller.forward();
     } catch (_) {
-      _controller.move(target, zoom ?? 16.5);
+      _controller.move(target, zoom ?? 17);
     }
   }
 
@@ -310,7 +392,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
       setState(() {
         loadingAddress = false;
         _statusMessage =
-            'تعذر تحديد العنوان تلقائيًا. يمكنك كتابة العنوان يدويًا ثم التأكيد.';
+            'تعذر تحديد العنوان تلقائيًا. يمكنك كتابة العنوان يدويًا بعد ثبات الموقع.';
       });
       return;
     }
@@ -332,48 +414,46 @@ class _SelectAddressPageState extends State<SelectAddressPage>
 
     setState(() {
       loadingAddress = false;
-      _statusMessage =
-          'تم تحديد الموقع. يمكنك تعديل العنوان ثم الضغط على تأكيد العنوان.';
+      _statusMessage = _hasGoodGpsFix
+          ? 'تم تحديد الموقع. راجع العنوان ثم اضغط تأكيد الموقع.'
+          : 'جاري تحسين دقة الموقع...';
     });
   }
 
-  Future<void> _handleTap(LatLng point) async {
-    await _selectPoint(point);
-  }
+  void _handlePositionChanged(MapCamera camera, bool hasGesture) {
+    final center = camera.center;
+    _centerNotifier.value = center;
 
-  void _handleMarkerDragUpdate(DragUpdateDetails details) {
-    final renderObject = _mapKey.currentContext?.findRenderObject();
-    if (renderObject is! RenderBox) {
+    if (!hasGesture) {
       return;
     }
 
-    final localPosition = renderObject.globalToLocal(details.globalPosition);
-    final nextPoint = _controller.camera.pointToLatLng(
-      math.Point<double>(localPosition.dx, localPosition.dy),
-    );
-
-    setState(() {
-      _selectedPoint = nextPoint;
-      loadingAddress = false;
-      _statusMessage = 'اترك الدبوس لتحميل العنوان الجديد.';
-    });
-  }
-
-  Future<void> _handleMarkerDragEnd(DragEndDetails details) async {
-    final point = _selectedPoint;
-    if (point == null) {
-      return;
+    _mapIdleTimer?.cancel();
+    if (!_mapIsMoving && mounted) {
+      setState(() {
+        _mapIsMoving = true;
+        loadingAddress = false;
+        _statusMessage = 'حرّك الخريطة حتى يصبح الدبوس فوق موقع التسليم.';
+      });
     }
 
-    setState(() {
-      loadingAddress = true;
-      _statusMessage = 'جارٍ تحميل عنوان الموقع المحدد...';
+    _mapIdleTimer = Timer(_mapIdleDebounce, () {
+      if (!mounted) {
+        return;
+      }
+      unawaited(_selectCenter(
+        _centerNotifier.value,
+        statusMessage: 'جارٍ تحميل عنوان الموقع المحدد...',
+      ));
     });
-    await _resolveAddress(point);
   }
 
   Future<void> _confirm() async {
-    if (_selectedPoint == null || loadingAddress) {
+    if (!_hasGoodGpsFix) {
+      _showSnack('جاري تحسين دقة الموقع...');
+      return;
+    }
+    if (_selectedPoint == null || loadingAddress || _mapIsMoving) {
       return;
     }
 
@@ -391,8 +471,12 @@ class _SelectAddressPageState extends State<SelectAddressPage>
     }
     Navigator.pop(context, {
       'address': address,
+      'formatted_address': address,
       'lat': _selectedPoint!.latitude,
       'lng': _selectedPoint!.longitude,
+      'latitude': _selectedPoint!.latitude,
+      'longitude': _selectedPoint!.longitude,
+      'accuracy': _gpsAccuracyMeters,
       'house_number': houseNumber,
       // Backward-compatible keys for existing consumers.
       'fullAddress': address,
@@ -431,18 +515,18 @@ class _SelectAddressPageState extends State<SelectAddressPage>
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final initialCenter = _selectedPoint ?? _fallbackCenter;
 
     return Scaffold(
       appBar: AppBar(title: const Text('عنوان التوصيل')),
       body: Stack(
         children: [
           FlutterMap(
-            key: _mapKey,
             mapController: _controller,
             options: MapOptions(
-              initialCenter: _selectedPoint ?? const LatLng(30.0444, 31.2357),
-              initialZoom: _selectedPoint == null ? 13 : 16.5,
-              onTap: (_, point) => _handleTap(point),
+              initialCenter: initialCenter,
+              initialZoom: _selectedPoint == null ? 13 : 17,
+              onPositionChanged: _handlePositionChanged,
             ),
             children: [
               TileLayer(
@@ -459,23 +543,15 @@ class _SelectAddressPageState extends State<SelectAddressPage>
                     ),
                   ],
                 ),
-              if (_selectedPoint != null)
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: _selectedPoint!,
-                      width: 48,
-                      height: 48,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onPanUpdate: _handleMarkerDragUpdate,
-                        onPanEnd: _handleMarkerDragEnd,
-                        child: const _DeliveryLocationMarker(),
-                      ),
-                    ),
-                  ],
-                ),
             ],
+          ),
+          const IgnorePointer(
+            child: Center(
+              child: Padding(
+                padding: EdgeInsets.only(bottom: 42),
+                child: _DeliveryLocationMarker(),
+              ),
+            ),
           ),
           PositionedDirectional(
             top: 16,
@@ -505,6 +581,16 @@ class _SelectAddressPageState extends State<SelectAddressPage>
             ),
           ),
           PositionedDirectional(
+            top: 16,
+            start: 16,
+            child: ValueListenableBuilder<LatLng>(
+              valueListenable: _centerNotifier,
+              builder: (context, center, _) {
+                return _CoordinatePill(point: center);
+              },
+            ),
+          ),
+          PositionedDirectional(
             start: 16,
             end: 16,
             bottom: 20,
@@ -519,7 +605,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       color: Colors.white,
-                      borderRadius: BorderRadius.circular(22),
+                      borderRadius: BorderRadius.circular(18),
                       boxShadow: const [
                         BoxShadow(
                           color: Color(0x14000000),
@@ -533,7 +619,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
                       children: [
                         Row(
                           children: [
-                            if (loadingAddress)
+                            if (loadingAddress || locatingUser)
                               const SizedBox(
                                 width: 18,
                                 height: 18,
@@ -560,7 +646,13 @@ class _SelectAddressPageState extends State<SelectAddressPage>
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-                        const SizedBox(height: 14),
+                        const SizedBox(height: 12),
+                        _AccuracySummary(
+                          accuracyMeters: _gpsAccuracyMeters,
+                          status: _accuracyStatus,
+                          color: _accuracyColor,
+                        ),
+                        const SizedBox(height: 12),
                         TextField(
                           controller: _addressController,
                           focusNode: _addressFocusNode,
@@ -568,8 +660,9 @@ class _SelectAddressPageState extends State<SelectAddressPage>
                           textAlign: TextAlign.right,
                           minLines: 2,
                           maxLines: 3,
+                          onChanged: (_) => setState(() {}),
                           decoration: const InputDecoration(
-                            labelText: 'عنوان التوصيل',
+                            labelText: 'العنوان الحالي',
                             hintText:
                                 'اكتب العنوان إذا لم يتم التقاطه تلقائيًا',
                             prefixIcon: Icon(Icons.location_on_outlined),
@@ -582,8 +675,8 @@ class _SelectAddressPageState extends State<SelectAddressPage>
                           onTapOutside: (_) => InputFocusGuard.dismiss(),
                           textAlign: TextAlign.right,
                           decoration: const InputDecoration(
-                            labelText: 'رقم البيت',
-                            hintText: 'مثال: شقة 12 - الدور الثالث',
+                            labelText: 'رقم العمارة',
+                            hintText: 'مثال: 12',
                             prefixIcon: Icon(Icons.home_outlined),
                           ),
                         ),
@@ -591,18 +684,116 @@ class _SelectAddressPageState extends State<SelectAddressPage>
                     ),
                   ),
                   const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _selectedPoint == null || loadingAddress
-                          ? null
-                          : _confirm,
-                      icon: const Icon(Icons.done_rounded),
-                      label: const Text('تأكيد العنوان'),
-                    ),
+                  Column(
+                    children: [
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed:
+                              locatingUser ? null : _centerOnUserLocation,
+                          icon: const Icon(Icons.my_location_rounded),
+                          label: const Text('استخدام موقعي الحالي'),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _canConfirm ? _confirm : null,
+                          icon: const Icon(Icons.done_rounded),
+                          label: const Text('تأكيد الموقع'),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CoordinatePill extends StatelessWidget {
+  const _CoordinatePill({required this.point});
+
+  final LatLng point;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x14000000),
+            blurRadius: 14,
+            offset: Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        child: Text(
+          '${point.latitude.toStringAsFixed(6)}, ${point.longitude.toStringAsFixed(6)}',
+          textDirection: TextDirection.ltr,
+          style: const TextStyle(
+            color: AppTheme.text,
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AccuracySummary extends StatelessWidget {
+  const _AccuracySummary({
+    required this.accuracyMeters,
+    required this.status,
+    required this.color,
+  });
+
+  final double? accuracyMeters;
+  final String status;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final accuracyText = accuracyMeters == null
+        ? 'جاري قياس الدقة'
+        : 'دقة الموقع ${accuracyMeters!.round()}m';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: 0.24)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.gps_fixed_rounded, color: color, size: 20),
+          const SizedBox(width: 8),
+          Text(
+            status,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const Spacer(),
+          Text(
+            accuracyText,
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              color: AppTheme.text,
+              fontWeight: FontWeight.w800,
             ),
           ),
         ],
@@ -678,8 +869,15 @@ class _DeliveryLocationMarker extends StatelessWidget {
   Widget build(BuildContext context) {
     return const Icon(
       Icons.location_pin,
-      size: 48,
+      size: 52,
       color: AppTheme.primary,
+      shadows: [
+        Shadow(
+          color: Color(0x33000000),
+          blurRadius: 10,
+          offset: Offset(0, 4),
+        ),
+      ],
     );
   }
 }

@@ -498,6 +498,10 @@ class SessionSecurityService {
     if (client == null) {
       return;
     }
+    if (client.auth.currentUser == null) {
+      await _clearRevocationSubscription();
+      return;
+    }
     if (_revocationUserId == userId && _revocationChannel != null) {
       return;
     }
@@ -512,7 +516,7 @@ class SessionSecurityService {
 
     _revocationUserId = userId;
     final channel = client.channel(
-      'security-revocation-$userId-${DateTime.now().microsecondsSinceEpoch}',
+      'security-revocation-$userId',
     );
     _revocationChannel = channel;
     channel
@@ -549,12 +553,16 @@ class SessionSecurityService {
         .subscribe((status, [error]) {
       if (status == RealtimeSubscribeStatus.subscribed) {
         StabilityLogger.revocation(
-          '[REVOCATION] Realtime revocation feed subscribed for user=$userId',
+          '[REVOCATION] Subscription Created topic=security-revocation-$userId',
         );
       } else if (status == RealtimeSubscribeStatus.channelError ||
           status == RealtimeSubscribeStatus.timedOut) {
         StabilityLogger.authRevalidation(
           '[AUTH_REVALIDATION] Revocation feed status=$status error=${error ?? '-'}',
+        );
+      } else if (status == RealtimeSubscribeStatus.closed) {
+        StabilityLogger.revocation(
+          '[REVOCATION] Connection Closed topic=security-revocation-$userId',
         );
       }
     });
@@ -582,12 +590,27 @@ class SessionSecurityService {
     final channel = _revocationChannel;
     _revocationChannel = null;
     _revocationUserId = null;
+    StabilityLogger.revocation(
+      '[REVOCATION] Realtime Cleanup Started topic=security-revocation',
+    );
     if (client == null || channel == null) {
+      StabilityLogger.revocation(
+        '[REVOCATION] Realtime Cleanup Finished topic=security-revocation',
+      );
       return;
     }
     try {
       await client.removeChannel(channel);
+      StabilityLogger.revocation(
+        '[REVOCATION] Channel Removed Successfully topic=security-revocation',
+      );
+      StabilityLogger.revocation(
+        '[REVOCATION] Subscription Removed topic=security-revocation',
+      );
     } catch (_) {}
+    StabilityLogger.revocation(
+      '[REVOCATION] Realtime Cleanup Finished topic=security-revocation',
+    );
   }
 
   void _startRevocationPolling() {

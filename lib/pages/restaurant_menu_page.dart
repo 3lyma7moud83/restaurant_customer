@@ -39,6 +39,7 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
   String? selectedCategoryId;
   bool loading = true;
   int _itemsRequestId = 0;
+  final Map<String, String> _selectedVariantIdsByItem = {};
 
   @override
   void initState() {
@@ -190,6 +191,140 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
     return context.tr('common.currency', args: {'value': normalized});
   }
 
+  List<MenuItemVariant> _variantsOf(
+    Map<String, dynamic> item,
+    double fallbackPrice,
+  ) {
+    final source = _variantListSource(item);
+    if (source == null || source.isEmpty) {
+      return const [];
+    }
+
+    final variants = <MenuItemVariant>[];
+    for (var index = 0; index < source.length; index++) {
+      final rawVariant = source[index];
+      if (rawVariant is! Map) {
+        continue;
+      }
+      final variant = Map<String, dynamic>.from(rawVariant);
+      final name = _firstVariantText(variant, const [
+        'name',
+        'variant_name',
+        'title',
+        'label',
+        'size',
+        'size_name',
+        'weight',
+        'weight_label',
+      ]);
+      if (name == null || name.isEmpty) {
+        continue;
+      }
+
+      final price = _variantPriceOf(variant, fallbackPrice);
+      variants.add(
+        MenuItemVariant(
+          id: _variantIdOf(variant, index, name, price),
+          name: name,
+          price: price,
+        ),
+      );
+    }
+    return variants;
+  }
+
+  List<dynamic>? _variantListSource(Map<String, dynamic> item) {
+    for (final key in const [
+      'variants',
+      'item_variants',
+      'itemVariants',
+      'sizes',
+      'weights',
+      'options',
+    ]) {
+      final value = item[key];
+      if (value is List && value.isNotEmpty) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  MenuItemVariant? _selectedVariantFor(
+    String itemId,
+    List<MenuItemVariant> variants,
+  ) {
+    if (variants.isEmpty) {
+      return null;
+    }
+
+    final selectedId = _selectedVariantIdsByItem[itemId];
+    if (selectedId != null && selectedId.isNotEmpty) {
+      for (final variant in variants) {
+        if (variant.id == selectedId) {
+          return variant;
+        }
+      }
+    }
+    return variants.first;
+  }
+
+  String? _firstVariantText(
+    Map<String, dynamic> variant,
+    List<String> keys,
+  ) {
+    for (final key in keys) {
+      final text = variant[key]?.toString().trim();
+      if (text != null && text.isNotEmpty && text.toLowerCase() != 'null') {
+        return text;
+      }
+    }
+    return null;
+  }
+
+  String _variantIdOf(
+    Map<String, dynamic> variant,
+    int index,
+    String name,
+    double price,
+  ) {
+    final explicitId = _firstVariantText(
+      variant,
+      const ['id', 'variant_id', 'variantId'],
+    );
+    if (explicitId != null && explicitId.isNotEmpty) {
+      return explicitId;
+    }
+    return '${index}_${name}_${price.toStringAsFixed(2)}';
+  }
+
+  double _variantPriceOf(
+    Map<String, dynamic> variant,
+    double fallbackPrice,
+  ) {
+    for (final key in const [
+      'price',
+      'variant_price',
+      'variantPrice',
+      'unit_price',
+      'amount',
+      'value',
+    ]) {
+      final price = _priceOf(variant[key]);
+      if (price > 0) {
+        return price;
+      }
+    }
+
+    final priceDelta = _priceOf(
+      variant['price_delta'] ?? variant['priceDelta'],
+    );
+    if (priceDelta != 0) {
+      return fallbackPrice + priceDelta;
+    }
+    return fallbackPrice;
+  }
+
   String _sanitizeItemName(String rawValue) {
     final normalized = rawValue.trim();
     if (normalized.isEmpty) {
@@ -266,6 +401,7 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
     required String itemName,
     required double price,
     required String imageUrl,
+    MenuItemVariant? variant,
   }) async {
     if (cart.isLocked) {
       _showLockedCartNotice();
@@ -286,6 +422,9 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
       price: price,
       image: imageUrl,
       restaurantId: widget.restaurantId,
+      variantId: variant?.id,
+      variantName: variant?.name,
+      variantPrice: variant?.price,
     );
   }
 
@@ -442,21 +581,38 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
                               (item['image_url'] ?? '').toString(),
                             );
                             final price = _priceOf(item['price']);
+                            final variants = _variantsOf(item, price);
+                            final selectedVariant =
+                                _selectedVariantFor(itemId, variants);
+                            final selectedPrice =
+                                selectedVariant?.price ?? price;
 
                             return RepaintBoundary(
                               child: ItemCard(
                                 name: itemName,
-                                priceText: _formatCurrency(price),
+                                priceText: _formatCurrency(selectedPrice),
                                 imageUrl: imageUrl,
-                                quantity: cart.getQuantity(itemId),
+                                quantity: cart.getQuantity(
+                                  itemId,
+                                  variantId: selectedVariant?.id,
+                                ),
+                                variants: variants,
+                                selectedVariant: selectedVariant,
+                                onVariantSelected: (variant) {
+                                  setState(() {
+                                    _selectedVariantIdsByItem[itemId] =
+                                        variant.id;
+                                  });
+                                },
                                 onAdd: () {
                                   unawaited(
                                     _handleAddItem(
                                       cart: cart,
                                       itemId: itemId,
                                       itemName: itemName,
-                                      price: price,
+                                      price: selectedPrice,
                                       imageUrl: imageUrl,
+                                      variant: selectedVariant,
                                     ),
                                   );
                                 },
@@ -649,11 +805,26 @@ class _MenuCartAction extends StatelessWidget {
   }
 }
 
+class MenuItemVariant {
+  const MenuItemVariant({
+    required this.id,
+    required this.name,
+    required this.price,
+  });
+
+  final String id;
+  final String name;
+  final double price;
+}
+
 class ItemCard extends StatefulWidget {
   final String name;
   final String priceText;
   final String imageUrl;
   final int quantity;
+  final List<MenuItemVariant> variants;
+  final MenuItemVariant? selectedVariant;
+  final ValueChanged<MenuItemVariant>? onVariantSelected;
   final VoidCallback onAdd;
 
   const ItemCard({
@@ -662,6 +833,9 @@ class ItemCard extends StatefulWidget {
     required this.priceText,
     required this.imageUrl,
     required this.quantity,
+    this.variants = const <MenuItemVariant>[],
+    this.selectedVariant,
+    this.onVariantSelected,
     required this.onAdd,
   });
 
@@ -690,6 +864,99 @@ class _ItemCardState extends State<ItemCard> {
     );
 
     widget.onAdd();
+  }
+
+  Future<void> _showVariantPicker() async {
+    final selectedVariant = widget.selectedVariant;
+    if (selectedVariant == null || widget.variants.length <= 1) {
+      return;
+    }
+
+    final result = await showModalBottomSheet<MenuItemVariant>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  sheetContext.tr('menu.select_variant'),
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                    color: AppTheme.text,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.52,
+                  ),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    physics: AppTheme.bouncingScrollPhysics,
+                    itemCount: widget.variants.length,
+                    separatorBuilder: (_, __) =>
+                        const Divider(height: 1, color: Color(0xFFEDE5DA)),
+                    itemBuilder: (_, index) {
+                      final variant = widget.variants[index];
+                      final selected = variant.id == selectedVariant.id;
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        onTap: () => Navigator.pop(sheetContext, variant),
+                        leading: selected
+                            ? const Icon(
+                                Icons.check_circle_rounded,
+                                color: AppTheme.primary,
+                              )
+                            : const Icon(
+                                Icons.circle_outlined,
+                                color: Color(0xFF98A2B3),
+                              ),
+                        title: Text(
+                          variant.name,
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            color: AppTheme.text,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        subtitle: Text(
+                          _localizedVariantPrice(sheetContext, variant.price),
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            color: Color(0xFF667085),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (!mounted || result == null) {
+      return;
+    }
+    widget.onVariantSelected?.call(result);
+  }
+
+  String _localizedVariantPrice(BuildContext context, double value) {
+    final normalized =
+        value % 1 == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(2);
+    return context.tr('common.currency', args: {'value': normalized});
   }
 
   @override
@@ -771,6 +1038,7 @@ class _ItemCardState extends State<ItemCard> {
                                 )
                               : AppCachedImage(
                                   imageUrl: widget.imageUrl,
+                                  fit: BoxFit.cover,
                                   placeholder:
                                       const _MenuItemImagePlaceholder(),
                                   errorWidget: const ImageFallback(
@@ -800,6 +1068,17 @@ class _ItemCardState extends State<ItemCard> {
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
+                          ),
+                        ),
+                      if (widget.variants.length > 1 &&
+                          widget.selectedVariant != null)
+                        PositionedDirectional(
+                          top: compact ? 4 : 6,
+                          end: compact ? 4 : 6,
+                          child: _VariantOverlayButton(
+                            label: widget.selectedVariant!.name,
+                            compact: compact,
+                            onTap: () => unawaited(_showVariantPicker()),
                           ),
                         ),
                     ],
@@ -897,6 +1176,68 @@ class _ItemCardState extends State<ItemCard> {
           ),
         );
       },
+    );
+  }
+}
+
+class _VariantOverlayButton extends StatelessWidget {
+  const _VariantOverlayButton({
+    required this.label,
+    required this.compact,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool compact;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final height = compact ? 22.0 : 24.0;
+    final fontSize = compact ? 10.0 : 10.6;
+
+    return Material(
+      color: Colors.black.withValues(alpha: 0.58),
+      borderRadius: BorderRadius.circular(999),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          height: height,
+          constraints: BoxConstraints(
+            minWidth: compact ? 46 : 52,
+            maxWidth: compact ? 82 : 96,
+          ),
+          padding: EdgeInsetsDirectional.only(
+            start: compact ? 7 : 8,
+            end: compact ? 5 : 6,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: fontSize,
+                    height: 1,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 2),
+              Icon(
+                Icons.keyboard_arrow_down_rounded,
+                color: Colors.white,
+                size: compact ? 14 : 15,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

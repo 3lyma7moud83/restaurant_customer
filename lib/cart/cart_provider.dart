@@ -33,29 +33,50 @@ enum CartPaymentMethod {
 class CartItem {
   CartItem({
     required this.id,
+    String? itemId,
     required this.name,
     required this.price,
     required this.image,
     this.qty = 1,
+    this.variantId = '',
+    this.variantName = '',
+    double? variantPrice,
     this.modifiers = const <String>[],
     this.note = '',
-  });
+  })  : itemId = _normalizeItemId(itemId, id),
+        variantPrice = variantPrice ?? price;
 
   final String id;
+  final String itemId;
   final String name;
   final double price;
   final String image;
   int qty;
+  final String variantId;
+  final String variantName;
+  final double variantPrice;
   final List<String> modifiers;
   String note;
+
+  String get displayName {
+    final normalizedVariantName = variantName.trim();
+    if (normalizedVariantName.isEmpty) {
+      return name;
+    }
+    return '$name ($normalizedVariantName)';
+  }
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      'item_id': itemId,
       'name': name,
       'price': price,
       'image': image,
       'qty': qty,
+      'variant_id': variantId,
+      'variant_name': variantName,
+      'variant_price': variantPrice,
       'modifiers': modifiers,
       'note': note,
     };
@@ -67,10 +88,16 @@ class CartItem {
         1;
     return CartItem(
       id: (map['id'] ?? '').toString(),
+      itemId: (map['item_id'] ?? map['itemId'] ?? '').toString(),
       name: (map['name'] ?? '').toString(),
       price: _toDouble(map['price']),
       image: (map['image'] ?? '').toString(),
       qty: parsedQty < 1 ? 1 : parsedQty,
+      variantId: (map['variant_id'] ?? map['variantId'] ?? '').toString(),
+      variantName: (map['variant_name'] ?? map['variantName'] ?? '').toString(),
+      variantPrice: _toDouble(
+        map['variant_price'] ?? map['variantPrice'] ?? map['price'],
+      ),
       modifiers: (map['modifiers'] as List? ?? const [])
           .map((item) => item.toString().trim())
           .where((item) => item.isNotEmpty)
@@ -84,6 +111,14 @@ class CartItem {
       return value.toDouble();
     }
     return double.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  static String _normalizeItemId(String? itemId, String fallbackId) {
+    final normalized = itemId?.trim();
+    if (normalized != null && normalized.isNotEmpty) {
+      return normalized;
+    }
+    return fallbackId;
   }
 }
 
@@ -218,8 +253,20 @@ class CartController extends ChangeNotifier {
         (sum, item) => sum + (item.price * item.qty),
       );
 
-  int getQuantity(String id) {
-    return _items[id]?.qty ?? 0;
+  static String lineItemId({
+    required String itemId,
+    String? variantId,
+  }) {
+    final normalizedItemId = itemId.trim();
+    final normalizedVariantId = variantId?.trim() ?? '';
+    if (normalizedVariantId.isEmpty) {
+      return normalizedItemId;
+    }
+    return '$normalizedItemId::variant::$normalizedVariantId';
+  }
+
+  int getQuantity(String id, {String? variantId}) {
+    return _items[lineItemId(itemId: id, variantId: variantId)]?.qty ?? 0;
   }
 
   void addItem({
@@ -228,12 +275,27 @@ class CartController extends ChangeNotifier {
     required double price,
     required String image,
     String? restaurantId,
+    String? variantId,
+    String? variantName,
+    double? variantPrice,
     List<String> modifiers = const <String>[],
     String note = '',
   }) {
     if (isLocked) {
       return;
     }
+
+    final normalizedItemId = id.trim();
+    if (normalizedItemId.isEmpty) {
+      return;
+    }
+    final normalizedVariantId = variantId?.trim() ?? '';
+    final normalizedVariantName = variantName?.trim() ?? '';
+    final effectivePrice = variantPrice ?? price;
+    final lineId = lineItemId(
+      itemId: normalizedItemId,
+      variantId: normalizedVariantId,
+    );
 
     if (restaurantId != null) {
       if (_restaurantId != null && _restaurantId != restaurantId) {
@@ -242,14 +304,18 @@ class CartController extends ChangeNotifier {
       _restaurantId = restaurantId;
     }
 
-    if (_items.containsKey(id)) {
-      _items[id]!.qty++;
+    if (_items.containsKey(lineId)) {
+      _items[lineId]!.qty++;
     } else {
-      _items[id] = CartItem(
-        id: id,
+      _items[lineId] = CartItem(
+        id: lineId,
+        itemId: normalizedItemId,
         name: name,
-        price: price,
+        price: effectivePrice,
         image: image,
+        variantId: normalizedVariantId,
+        variantName: normalizedVariantName,
+        variantPrice: effectivePrice,
         modifiers: modifiers,
         note: note,
       );

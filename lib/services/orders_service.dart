@@ -53,22 +53,47 @@ class OrderQueuedOfflineException implements Exception {
 
 class CreateOrderItemInput {
   const CreateOrderItemInput({
+    required this.itemId,
     required this.name,
     required this.price,
     required this.quantity,
+    this.variantId = '',
+    this.variantName = '',
+    double? variantPrice,
     this.note = '',
-  });
+  }) : variantPrice = variantPrice ?? price;
 
+  final String itemId;
   final String name;
   final double price;
   final int quantity;
+  final String variantId;
+  final String variantName;
+  final double variantPrice;
   final String note;
+
+  String get displayName {
+    final normalizedVariantName = variantName.trim();
+    if (normalizedVariantName.isEmpty) {
+      return name;
+    }
+    return '$name ($normalizedVariantName)';
+  }
 
   Map<String, dynamic> toRpcJson() {
     final normalizedNote = note.trim();
+    final normalizedItemId = itemId.trim();
+    final normalizedVariantId = variantId.trim();
+    final normalizedVariantName = variantName.trim();
     return {
+      if (normalizedItemId.isNotEmpty) 'item_id': normalizedItemId,
       'item_name': name,
+      'item_display_name': displayName,
       'price': price,
+      if (normalizedVariantId.isNotEmpty) 'variant_id': normalizedVariantId,
+      if (normalizedVariantName.isNotEmpty)
+        'variant_name': normalizedVariantName,
+      if (normalizedVariantName.isNotEmpty) 'variant_price': variantPrice,
       'qty': quantity,
       'quantity': quantity,
       if (normalizedNote.isNotEmpty) 'note': normalizedNote,
@@ -76,14 +101,30 @@ class CreateOrderItemInput {
     };
   }
 
-  Map<String, dynamic> toOrderItemInsert(String orderId) {
+  Map<String, dynamic> toOrderItemInsert(
+    String orderId, {
+    bool includeItemId = true,
+    bool includeVariantFields = true,
+    bool useDisplayName = false,
+  }) {
     final normalizedNote = note.trim();
+    final normalizedItemId = itemId.trim();
+    final normalizedVariantId = variantId.trim();
+    final normalizedVariantName = variantName.trim();
     return {
       'order_id': orderId,
-      'item_name': name,
+      if (includeItemId && normalizedItemId.isNotEmpty)
+        'item_id': normalizedItemId,
+      'item_name': useDisplayName ? displayName : name,
       'price': price,
       'qty': quantity,
       'quantity': quantity,
+      if (includeVariantFields && normalizedVariantId.isNotEmpty)
+        'variant_id': normalizedVariantId,
+      if (includeVariantFields && normalizedVariantName.isNotEmpty)
+        'variant_name': normalizedVariantName,
+      if (includeVariantFields && normalizedVariantName.isNotEmpty)
+        'variant_price': variantPrice,
       if (normalizedNote.isNotEmpty) 'notes': normalizedNote,
     };
   }
@@ -198,10 +239,14 @@ class CreateOrderInput {
       items: itemMaps
           .map(
             (item) => CreateOrderItemInput(
+              itemId: _stringValue(item['item_id']) ?? '',
               name: _stringValue(item['item_name']) ?? '',
               price: _toDouble(item['price']) ?? 0,
               quantity:
                   (_toDouble(item['qty'] ?? item['quantity']) ?? 1).round(),
+              variantId: _stringValue(item['variant_id']) ?? '',
+              variantName: _stringValue(item['variant_name']) ?? '',
+              variantPrice: _toDouble(item['variant_price'] ?? item['price']),
               note: _stringValue(item['notes'] ?? item['note']) ?? '',
             ),
           )
@@ -1285,9 +1330,17 @@ class OrdersService {
   }
 
   static String itemNameOf(Map<String, dynamic> item) {
-    return _stringValue(item['item_name']) ??
-        _stringValue(item['name']) ??
-        'عنصر';
+    final name =
+        _stringValue(item['item_name']) ?? _stringValue(item['name']) ?? 'عنصر';
+    final variantName =
+        _stringValue(item['variant_name'] ?? item['variantName']);
+    if (variantName == null || variantName.isEmpty) {
+      return name;
+    }
+    if (name.contains('($variantName)')) {
+      return name;
+    }
+    return '$name ($variantName)';
   }
 
   static double itemPriceOf(Map<String, dynamic> item) {
@@ -1483,11 +1536,30 @@ class OrdersService {
     final fullPayloads = items
         .map((item) => item.toOrderItemInsert(orderId))
         .toList(growable: false);
+    final payloadsWithoutVariantColumns = items
+        .map(
+          (item) => item.toOrderItemInsert(
+            orderId,
+            includeItemId: false,
+            includeVariantFields: false,
+            useDisplayName: true,
+          ),
+        )
+        .toList(growable: false);
     final variants = [
       fullPayloads,
       _orderItemPayloadsWithout(fullPayloads, const {'quantity'}),
       _orderItemPayloadsWithout(fullPayloads, const {'notes'}),
       _orderItemPayloadsWithout(fullPayloads, const {'quantity', 'notes'}),
+      payloadsWithoutVariantColumns,
+      _orderItemPayloadsWithout(payloadsWithoutVariantColumns, const {
+        'quantity',
+      }),
+      _orderItemPayloadsWithout(payloadsWithoutVariantColumns, const {'notes'}),
+      _orderItemPayloadsWithout(payloadsWithoutVariantColumns, const {
+        'quantity',
+        'notes',
+      }),
     ];
 
     PostgrestException? lastSchemaError;
@@ -1550,10 +1622,12 @@ class OrdersService {
           return;
         }
         final matchedIndex = existingRows.indexWhere(
-          (row) =>
-              itemNameOf(row) == item.name &&
-              (itemPriceOf(row) - item.price).abs() < 0.01 &&
-              quantityOfItem(row) == item.quantity,
+          (row) {
+            final rowName = itemNameOf(row);
+            return (rowName == item.name || rowName == item.displayName) &&
+                (itemPriceOf(row) - item.price).abs() < 0.01 &&
+                quantityOfItem(row) == item.quantity;
+          },
         );
         final fallbackIndex = matchedIndex >= 0 ? matchedIndex : 0;
         final row = existingRows.removeAt(fallbackIndex);
@@ -1581,13 +1655,37 @@ class OrdersService {
     required CreateOrderItemInput item,
   }) async {
     final note = item.note.trim();
+    final normalizedMenuItemId = item.itemId.trim();
+    final normalizedVariantId = item.variantId.trim();
+    final normalizedVariantName = item.variantName.trim();
+    final fullPayload = {
+      'quantity': item.quantity,
+      if (normalizedMenuItemId.isNotEmpty) 'item_id': normalizedMenuItemId,
+      if (normalizedVariantId.isNotEmpty) 'variant_id': normalizedVariantId,
+      if (normalizedVariantName.isNotEmpty)
+        'variant_name': normalizedVariantName,
+      if (normalizedVariantName.isNotEmpty) 'variant_price': item.variantPrice,
+      if (note.isNotEmpty) 'notes': note,
+    };
+    final payloadWithoutVariantColumns = Map<String, dynamic>.from(fullPayload)
+      ..removeWhere(
+        (key, _) => const {
+          'item_id',
+          'variant_id',
+          'variant_name',
+          'variant_price',
+        }.contains(key),
+      );
     final variants = [
-      {
-        'quantity': item.quantity,
-        if (note.isNotEmpty) 'notes': note,
-      },
-      if (note.isNotEmpty) {'notes': note},
-      {'quantity': item.quantity},
+      fullPayload,
+      if (note.isNotEmpty)
+        Map<String, dynamic>.from(fullPayload)..remove('quantity'),
+      Map<String, dynamic>.from(fullPayload)..remove('notes'),
+      payloadWithoutVariantColumns,
+      if (note.isNotEmpty)
+        Map<String, dynamic>.from(payloadWithoutVariantColumns)
+          ..remove('quantity'),
+      Map<String, dynamic>.from(payloadWithoutVariantColumns)..remove('notes'),
     ].where((payload) => payload.isNotEmpty).toList(growable: false);
 
     for (final payload in variants) {

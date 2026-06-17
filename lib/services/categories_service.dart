@@ -62,7 +62,7 @@ class CategoriesService {
           try {
             var query = _client
                 .from('categories')
-                .select('id, name, image_url, sort_order, created_at');
+                .select('id, name, image_url, sort_order');
 
             if (normalizedManagerId.isNotEmpty) {
               query = query.or(
@@ -104,13 +104,12 @@ class CategoriesService {
           .whereType<Map>()
           .map((row) => Map<String, dynamic>.from(row))
           .toList(growable: false);
-      final sortedCategories = _sortCategories(categories);
       debugPrint(
-        '[CategoriesService.getByRestaurantCached] response_count=${sortedCategories.length} '
+        '[CategoriesService.getByRestaurantCached] response_count=${categories.length} '
         'restaurant_id=$normalizedRestaurantId manager_id=$normalizedManagerId',
       );
 
-      if (sortedCategories.isEmpty) {
+      if (categories.isEmpty) {
         debugPrint(
           '[CategoriesService.getByRestaurantCached] empty response reason: '
           'no_data OR wrong_filter OR RLS_blocker | restaurant_id=$normalizedRestaurantId',
@@ -118,10 +117,10 @@ class CategoriesService {
       }
 
       _categoriesCache[cacheKey] = _CategoriesCacheEntry(
-        value: sortedCategories,
+        value: categories,
         cachedAt: DateTime.now(),
       );
-      return sortedCategories;
+      return categories;
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'categories_service.getByManager',
@@ -130,29 +129,6 @@ class CategoriesService {
       );
       throw Exception(ErrorLogger.userMessage);
     }
-  }
-
-  static num _sortOrderOf(Map<String, dynamic> row) {
-    final value =
-        row.containsKey('sort_order') ? row['sort_order'] : row['sortOrder'];
-    if (value is num) {
-      return value;
-    }
-    return num.tryParse(value?.toString().trim() ?? '') ?? 0;
-  }
-
-  static List<Map<String, dynamic>> _sortCategories(
-    List<Map<String, dynamic>> source,
-  ) {
-    final indexed = source.indexed.toList(growable: false);
-    indexed.sort((a, b) {
-      final bySortOrder = _sortOrderOf(a.$2).compareTo(_sortOrderOf(b.$2));
-      if (bySortOrder != 0) {
-        return bySortOrder;
-      }
-      return a.$1.compareTo(b.$1);
-    });
-    return indexed.map((entry) => entry.$2).toList(growable: false);
   }
 }
 

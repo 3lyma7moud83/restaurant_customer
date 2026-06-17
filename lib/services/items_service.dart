@@ -72,12 +72,13 @@ class ItemsService {
           .map((row) => Map<String, dynamic>.from(row))
           .toList(growable: false);
       final sortedItems = _sortItems(items);
+      final itemsWithVariants = await _attachVariants(sortedItems);
       debugPrint(
-        '[ItemsService.fetchByCategory] response_count=${sortedItems.length} '
+        '[ItemsService.fetchByCategory] response_count=${itemsWithVariants.length} '
         'restaurant_id=$normalizedRestaurantId category_id=$normalizedCategoryId',
       );
 
-      if (sortedItems.isEmpty) {
+      if (itemsWithVariants.isEmpty) {
         debugPrint(
           '[ItemsService.fetchByCategory] empty response reason: '
           'no_data OR wrong_filter OR RLS_blocker | restaurant_id=$normalizedRestaurantId '
@@ -86,10 +87,10 @@ class ItemsService {
       }
 
       _itemsCache[cacheKey] = _ItemsCacheEntry(
-        value: sortedItems,
+        value: itemsWithVariants,
         cachedAt: DateTime.now(),
       );
-      return sortedItems;
+      return itemsWithVariants;
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'items_service.fetchByCategory',
@@ -378,6 +379,109 @@ class ItemsService {
     return error.code == '23503' ||
         message.contains('foreign key') ||
         details.contains('foreign key');
+  }
+
+  static Future<List<Map<String, dynamic>>> _attachVariants(
+    List<Map<String, dynamic>> items,
+  ) async {
+    if (items.isEmpty) {
+      return items;
+    }
+
+    final itemIds = items
+        .map((item) => _stringValue(item['id']))
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (itemIds.isEmpty) {
+      return items;
+    }
+
+    try {
+      final rows =
+          await SessionManager.instance.runWithValidSession<List<dynamic>>(
+        () => _client
+            .from('item_variants')
+            .select('*')
+            .inFilter('item_id', itemIds),
+      );
+      if (rows == null || rows.isEmpty) {
+        return items;
+      }
+
+      final grouped = <String, List<Map<String, dynamic>>>{};
+      for (final row in rows.whereType<Map>()) {
+        final variant = Map<String, dynamic>.from(row);
+        final itemId = _stringValue(
+              variant['item_id'] ??
+                  variant['itemId'] ??
+                  variant['menu_item_id'],
+            ) ??
+            '';
+        if (itemId.isEmpty) {
+          continue;
+        }
+        grouped
+            .putIfAbsent(itemId, () => <Map<String, dynamic>>[])
+            .add(variant);
+      }
+      if (grouped.isEmpty) {
+        return items;
+      }
+
+      grouped.updateAll((_, variants) {
+        final indexed = variants.indexed.toList(growable: false);
+        indexed.sort((a, b) {
+          final bySortOrder = _sortOrderOf(a.$2).compareTo(_sortOrderOf(b.$2));
+          if (bySortOrder != 0) {
+            return bySortOrder;
+          }
+          return a.$1.compareTo(b.$1);
+        });
+        return indexed.map((entry) => entry.$2).toList(growable: false);
+      });
+
+      return items.map((item) {
+        final itemId = _stringValue(item['id']) ?? '';
+        final variants = grouped[itemId];
+        if (variants == null || variants.isEmpty) {
+          return item;
+        }
+        return {
+          ...item,
+          'variants': variants,
+        };
+      }).toList(growable: false);
+    } on PostgrestException catch (error, stack) {
+      if (_isOptionalVariantsSourceMissing(error)) {
+        return items;
+      }
+      await ErrorLogger.logError(
+        module: 'items_service.attachVariants',
+        error: error,
+        stack: stack,
+      );
+      return items;
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'items_service.attachVariants',
+        error: error,
+        stack: stack,
+      );
+      return items;
+    }
+  }
+
+  static bool _isOptionalVariantsSourceMissing(PostgrestException error) {
+    final message = error.message.toLowerCase();
+    final details = error.details?.toString().toLowerCase() ?? '';
+    return _isSchemaMismatchError(error) ||
+        error.code == '42P01' ||
+        message.contains('item_variants') ||
+        details.contains('item_variants') ||
+        message.contains('does not exist') ||
+        details.contains('does not exist');
   }
 
   static num _sortOrderOf(Map<String, dynamic> row) {
