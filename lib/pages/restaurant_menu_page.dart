@@ -39,7 +39,6 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
   String? selectedCategoryId;
   bool loading = true;
   int _itemsRequestId = 0;
-  final Map<String, String> _selectedVariantIdsByItem = {};
 
   @override
   void initState() {
@@ -185,12 +184,6 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
     return double.tryParse(value?.toString() ?? '') ?? 0;
   }
 
-  String _formatCurrency(double value) {
-    final normalized =
-        value % 1 == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(2);
-    return context.tr('common.currency', args: {'value': normalized});
-  }
-
   List<MenuItemVariant> _variantsOf(
     Map<String, dynamic> item,
     double fallbackPrice,
@@ -209,7 +202,6 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
       final variant = Map<String, dynamic>.from(rawVariant);
       final name = _firstVariantText(variant, const [
         'name',
-        'variant_name',
         'title',
         'label',
         'size',
@@ -233,6 +225,10 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
     return variants;
   }
 
+  String _variantNamesForLog(List<MenuItemVariant> variants) {
+    return variants.map((variant) => variant.name).join(', ');
+  }
+
   List<dynamic>? _variantListSource(Map<String, dynamic> item) {
     for (final key in const [
       'variants',
@@ -248,25 +244,6 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
       }
     }
     return null;
-  }
-
-  MenuItemVariant? _selectedVariantFor(
-    String itemId,
-    List<MenuItemVariant> variants,
-  ) {
-    if (variants.isEmpty) {
-      return null;
-    }
-
-    final selectedId = _selectedVariantIdsByItem[itemId];
-    if (selectedId != null && selectedId.isNotEmpty) {
-      for (final variant in variants) {
-        if (variant.id == selectedId) {
-          return variant;
-        }
-      }
-    }
-    return variants.first;
   }
 
   String? _firstVariantText(
@@ -304,8 +281,6 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
   ) {
     for (final key in const [
       'price',
-      'variant_price',
-      'variantPrice',
       'unit_price',
       'amount',
       'value',
@@ -582,29 +557,26 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
                             );
                             final price = _priceOf(item['price']);
                             final variants = _variantsOf(item, price);
-                            final selectedVariant =
-                                _selectedVariantFor(itemId, variants);
-                            final selectedPrice =
-                                selectedVariant?.price ?? price;
+                            debugPrint(
+                              '[RestaurantMenuPage.itemBuilder] item_id=$itemId '
+                              'item_name=$itemName variants_length=${variants.length} '
+                              'variant_names=[${_variantNamesForLog(variants)}]',
+                            );
+                            final initialVariant =
+                                variants.isEmpty ? null : variants.first;
 
                             return RepaintBoundary(
                               child: ItemCard(
+                                key: ValueKey('menu-item-card-$itemId'),
+                                itemId: itemId,
                                 name: itemName,
-                                priceText: _formatCurrency(selectedPrice),
+                                basePrice: price,
                                 imageUrl: imageUrl,
-                                quantity: cart.getQuantity(
-                                  itemId,
-                                  variantId: selectedVariant?.id,
-                                ),
                                 variants: variants,
-                                selectedVariant: selectedVariant,
-                                onVariantSelected: (variant) {
-                                  setState(() {
-                                    _selectedVariantIdsByItem[itemId] =
-                                        variant.id;
-                                  });
-                                },
-                                onAdd: () {
+                                initialSelectedVariant: initialVariant,
+                                onAdd: (selectedVariant) {
+                                  final selectedPrice =
+                                      selectedVariant?.price ?? price;
                                   unawaited(
                                     _handleAddItem(
                                       cart: cart,
@@ -817,25 +789,29 @@ class MenuItemVariant {
   final double price;
 }
 
+String _localizedMenuCurrency(BuildContext context, double value) {
+  final normalized =
+      value % 1 == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(2);
+  return context.tr('common.currency', args: {'value': normalized});
+}
+
 class ItemCard extends StatefulWidget {
+  final String itemId;
   final String name;
-  final String priceText;
+  final double basePrice;
   final String imageUrl;
-  final int quantity;
   final List<MenuItemVariant> variants;
-  final MenuItemVariant? selectedVariant;
-  final ValueChanged<MenuItemVariant>? onVariantSelected;
-  final VoidCallback onAdd;
+  final MenuItemVariant? initialSelectedVariant;
+  final ValueChanged<MenuItemVariant?> onAdd;
 
   const ItemCard({
     super.key,
+    required this.itemId,
     required this.name,
-    required this.priceText,
+    required this.basePrice,
     required this.imageUrl,
-    required this.quantity,
     this.variants = const <MenuItemVariant>[],
-    this.selectedVariant,
-    this.onVariantSelected,
+    this.initialSelectedVariant,
     required this.onAdd,
   });
 
@@ -846,6 +822,69 @@ class ItemCard extends StatefulWidget {
 class _ItemCardState extends State<ItemCard> {
   bool _pressed = false;
   Timer? _pressResetTimer;
+  MenuItemVariant? _selectedVariant;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedVariant = _resolveSelectedVariant(widget.initialSelectedVariant);
+  }
+
+  @override
+  void didUpdateWidget(covariant ItemCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (!_sameVariants(oldWidget.variants, widget.variants)) {
+      _selectedVariant = _resolveSelectedVariant(_selectedVariant);
+    }
+  }
+
+  MenuItemVariant? get _effectiveVariant {
+    return _resolveSelectedVariant(_selectedVariant);
+  }
+
+  MenuItemVariant? _resolveSelectedVariant(MenuItemVariant? preferred) {
+    if (widget.variants.isEmpty) {
+      return null;
+    }
+
+    final preferredId = preferred?.id.trim();
+    if (preferredId != null && preferredId.isNotEmpty) {
+      for (final variant in widget.variants) {
+        if (variant.id == preferredId) {
+          return variant;
+        }
+      }
+    }
+    return widget.variants.first;
+  }
+
+  bool _sameVariants(
+    List<MenuItemVariant> previous,
+    List<MenuItemVariant> next,
+  ) {
+    if (previous.length != next.length) {
+      return false;
+    }
+    for (var index = 0; index < previous.length; index++) {
+      final previousVariant = previous[index];
+      final nextVariant = next[index];
+      if (previousVariant.id != nextVariant.id ||
+          previousVariant.name != nextVariant.name ||
+          previousVariant.price != nextVariant.price) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void _selectVariant(MenuItemVariant variant) {
+    if (_selectedVariant?.id == variant.id) {
+      return;
+    }
+
+    setState(() => _selectedVariant = variant);
+  }
 
   void _animateAdd() {
     if (!mounted) {
@@ -863,100 +902,7 @@ class _ItemCardState extends State<ItemCard> {
       },
     );
 
-    widget.onAdd();
-  }
-
-  Future<void> _showVariantPicker() async {
-    final selectedVariant = widget.selectedVariant;
-    if (selectedVariant == null || widget.variants.length <= 1) {
-      return;
-    }
-
-    final result = await showModalBottomSheet<MenuItemVariant>(
-      context: context,
-      useSafeArea: true,
-      showDragHandle: true,
-      builder: (sheetContext) {
-        return SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  sheetContext.tr('menu.select_variant'),
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(
-                    color: AppTheme.text,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.52,
-                  ),
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    physics: AppTheme.bouncingScrollPhysics,
-                    itemCount: widget.variants.length,
-                    separatorBuilder: (_, __) =>
-                        const Divider(height: 1, color: Color(0xFFEDE5DA)),
-                    itemBuilder: (_, index) {
-                      final variant = widget.variants[index];
-                      final selected = variant.id == selectedVariant.id;
-                      return ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        onTap: () => Navigator.pop(sheetContext, variant),
-                        leading: selected
-                            ? const Icon(
-                                Icons.check_circle_rounded,
-                                color: AppTheme.primary,
-                              )
-                            : const Icon(
-                                Icons.circle_outlined,
-                                color: Color(0xFF98A2B3),
-                              ),
-                        title: Text(
-                          variant.name,
-                          textAlign: TextAlign.right,
-                          style: const TextStyle(
-                            color: AppTheme.text,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        subtitle: Text(
-                          _localizedVariantPrice(sheetContext, variant.price),
-                          textAlign: TextAlign.right,
-                          style: const TextStyle(
-                            color: Color(0xFF667085),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-
-    if (!mounted || result == null) {
-      return;
-    }
-    widget.onVariantSelected?.call(result);
-  }
-
-  String _localizedVariantPrice(BuildContext context, double value) {
-    final normalized =
-        value % 1 == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(2);
-    return context.tr('common.currency', args: {'value': normalized});
+    widget.onAdd(_effectiveVariant);
   }
 
   @override
@@ -999,6 +945,13 @@ class _ItemCardState extends State<ItemCard> {
         final addSemanticLabel = Directionality.of(context) == TextDirection.rtl
             ? 'إضافة إلى السلة'
             : 'Add to cart';
+        final selectedVariant = _effectiveVariant;
+        final selectedPrice = selectedVariant?.price ?? widget.basePrice;
+        final quantity = CartProvider.maybeOf(context)?.getQuantity(
+              widget.itemId,
+              variantId: selectedVariant?.id,
+            ) ??
+            0;
 
         return AnimatedScale(
           scale: _pressed && !kIsWeb ? 0.972 : 1,
@@ -1048,10 +1001,10 @@ class _ItemCardState extends State<ItemCard> {
                                 ),
                         ),
                       ),
-                      if (widget.quantity > 0)
-                        PositionedDirectional(
+                      if (quantity > 0)
+                        Positioned(
                           top: compact ? 4 : 6,
-                          start: compact ? 4 : 6,
+                          left: compact ? 4 : 6,
                           child: Container(
                             height: badgeHeight,
                             padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -1061,7 +1014,7 @@ class _ItemCardState extends State<ItemCard> {
                             ),
                             alignment: Alignment.center,
                             child: Text(
-                              widget.quantity.toString(),
+                              quantity.toString(),
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: badgeFontSize,
@@ -1070,15 +1023,16 @@ class _ItemCardState extends State<ItemCard> {
                             ),
                           ),
                         ),
-                      if (widget.variants.length > 1 &&
-                          widget.selectedVariant != null)
-                        PositionedDirectional(
+                      if (widget.variants.length > 1)
+                        Positioned(
                           top: compact ? 4 : 6,
-                          end: compact ? 4 : 6,
-                          child: _VariantOverlayButton(
-                            label: widget.selectedVariant!.name,
+                          right: compact ? 4 : 6,
+                          child: _VariantMenuAnchor(
+                            variants: widget.variants,
+                            selectedVariant:
+                                selectedVariant ?? widget.variants.first,
                             compact: compact,
-                            onTap: () => unawaited(_showVariantPicker()),
+                            onSelected: _selectVariant,
                           ),
                         ),
                     ],
@@ -1107,7 +1061,7 @@ class _ItemCardState extends State<ItemCard> {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              widget.priceText,
+                              _localizedMenuCurrency(context, selectedPrice),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
@@ -1176,6 +1130,157 @@ class _ItemCardState extends State<ItemCard> {
           ),
         );
       },
+    );
+  }
+}
+
+class _VariantMenuAnchor extends StatelessWidget {
+  const _VariantMenuAnchor({
+    required this.variants,
+    required this.selectedVariant,
+    required this.compact,
+    required this.onSelected,
+  });
+
+  final List<MenuItemVariant> variants;
+  final MenuItemVariant selectedVariant;
+  final bool compact;
+  final ValueChanged<MenuItemVariant> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final menuWidth = compact ? 162.0 : 178.0;
+
+    return MenuAnchor(
+      alignmentOffset: const Offset(0, 4),
+      clipBehavior: Clip.antiAlias,
+      style: MenuStyle(
+        alignment: AlignmentDirectional.topEnd,
+        backgroundColor: const WidgetStatePropertyAll<Color>(Colors.white),
+        surfaceTintColor:
+            const WidgetStatePropertyAll<Color>(Colors.transparent),
+        shadowColor: const WidgetStatePropertyAll<Color>(Color(0x33000000)),
+        elevation: const WidgetStatePropertyAll<double>(8),
+        padding: const WidgetStatePropertyAll<EdgeInsetsGeometry>(
+          EdgeInsets.symmetric(vertical: 4),
+        ),
+        minimumSize: WidgetStatePropertyAll<Size>(Size(menuWidth, 0)),
+        maximumSize: WidgetStatePropertyAll<Size>(
+          Size(menuWidth, compact ? 188 : 220),
+        ),
+        shape: WidgetStatePropertyAll<OutlinedBorder>(
+          RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: const BorderSide(color: Color(0xFFEDE5DA)),
+          ),
+        ),
+      ),
+      menuChildren: [
+        for (final variant in variants)
+          _VariantMenuItem(
+            variant: variant,
+            selected: variant.id == selectedVariant.id,
+            compact: compact,
+            width: menuWidth,
+            onSelected: onSelected,
+          ),
+      ],
+      builder: (context, controller, child) {
+        return _VariantOverlayButton(
+          label: selectedVariant.name,
+          compact: compact,
+          onTap: () {
+            if (controller.isOpen) {
+              controller.close();
+            } else {
+              controller.open();
+            }
+          },
+        );
+      },
+    );
+  }
+}
+
+class _VariantMenuItem extends StatelessWidget {
+  const _VariantMenuItem({
+    required this.variant,
+    required this.selected,
+    required this.compact,
+    required this.width,
+    required this.onSelected,
+  });
+
+  final MenuItemVariant variant;
+  final bool selected;
+  final bool compact;
+  final double width;
+  final ValueChanged<MenuItemVariant> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final rowHeight = compact ? 34.0 : 38.0;
+
+    return MenuItemButton(
+      closeOnActivate: true,
+      onPressed: () => onSelected(variant),
+      style: ButtonStyle(
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+        minimumSize: WidgetStatePropertyAll<Size>(Size(width, rowHeight)),
+        maximumSize: WidgetStatePropertyAll<Size>(Size(width, rowHeight)),
+        padding: WidgetStatePropertyAll<EdgeInsetsGeometry>(
+          EdgeInsetsDirectional.symmetric(horizontal: compact ? 8 : 10),
+        ),
+        backgroundColor: WidgetStatePropertyAll<Color>(
+          selected ? const Color(0xFFFFF6EE) : Colors.white,
+        ),
+        overlayColor: WidgetStatePropertyAll<Color>(
+          AppTheme.primary.withValues(alpha: 0.08),
+        ),
+        foregroundColor: const WidgetStatePropertyAll<Color>(AppTheme.text),
+      ),
+      child: SizedBox(
+        width: width - (compact ? 16 : 20),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              selected
+                  ? Icons.check_circle_rounded
+                  : Icons.radio_button_unchecked_rounded,
+              color: selected ? AppTheme.primary : const Color(0xFF98A2B3),
+              size: compact ? 15 : 16,
+            ),
+            SizedBox(width: compact ? 5 : 6),
+            Expanded(
+              child: Text(
+                variant.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.start,
+                style: TextStyle(
+                  color: AppTheme.text,
+                  fontSize: compact ? 10.6 : 11.2,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            SizedBox(width: compact ? 6 : 8),
+            Text(
+              _localizedMenuCurrency(context, variant.price),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color:
+                    selected ? AppTheme.primaryDeep : const Color(0xFF667085),
+                fontSize: compact ? 10.2 : 10.8,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

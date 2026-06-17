@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:restaurant_customer/core/localization/app_localizations.dart';
 import 'package:restaurant_customer/pages/home_page.dart';
 import 'package:restaurant_customer/pages/restaurant_menu_page.dart';
 
@@ -43,6 +45,22 @@ Widget _buildMenuHost({
           ),
         ),
       ),
+    ),
+  );
+}
+
+Widget _buildItemCardHost(Widget child) {
+  return MaterialApp(
+    locale: const Locale('ar'),
+    localizationsDelegates: const [
+      AppLocalizations.delegate,
+      GlobalMaterialLocalizations.delegate,
+      GlobalCupertinoLocalizations.delegate,
+      GlobalWidgetsLocalizations.delegate,
+    ],
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: Scaffold(
+      body: Center(child: child),
     ),
   );
 }
@@ -91,20 +109,16 @@ void main() {
     var addTapCount = 0;
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: Center(
-            child: SizedBox(
-              width: 176,
-              height: 212,
-              child: ItemCard(
-                name: 'Burger',
-                priceText: '99',
-                imageUrl: '',
-                quantity: 0,
-                onAdd: () => addTapCount += 1,
-              ),
-            ),
+      _buildItemCardHost(
+        SizedBox(
+          width: 176,
+          height: 212,
+          child: ItemCard(
+            itemId: 'burger',
+            name: 'Burger',
+            basePrice: 99,
+            imageUrl: '',
+            onAdd: (_) => addTapCount += 1,
           ),
         ),
       ),
@@ -117,7 +131,7 @@ void main() {
     expect(addSize.width >= 44, isTrue);
     expect(addSize.height >= 44, isTrue);
 
-    final priceCenter = tester.getCenter(find.text('99'));
+    final priceCenter = tester.getCenter(find.text('99 ج'));
     final addCenter = tester.getCenter(addButton);
     expect((priceCenter.dy - addCenter.dy).abs() < 30, isTrue);
 
@@ -125,5 +139,74 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(addTapCount, 1);
+  });
+
+  testWidgets('ItemCard opens inline variant menu and updates selected variant',
+      (tester) async {
+    MenuItemVariant? addedVariant;
+
+    await tester.pumpWidget(
+      _buildItemCardHost(
+        SizedBox(
+          width: 176,
+          height: 212,
+          child: ItemCard(
+            itemId: 'burger',
+            name: 'Burger',
+            basePrice: 10,
+            imageUrl: '',
+            variants: const [
+              MenuItemVariant(id: 'regular', name: 'Regular', price: 10),
+              MenuItemVariant(id: 'large', name: 'Large', price: 12),
+            ],
+            onAdd: (variant) => addedVariant = variant,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Regular'), findsOneWidget);
+    expect(find.text('10 ج'), findsOneWidget);
+
+    await tester.tap(find.text('Regular'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Large'), findsOneWidget);
+
+    await tester.tap(find.text('Large'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Large'), findsOneWidget);
+    expect(find.text('12 ج'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('menu-item-add-button')));
+    await tester.pumpAndSettle();
+
+    expect(addedVariant?.id, 'large');
+  });
+
+  testWidgets('ItemCard hides variant overlay for a single variant',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildItemCardHost(
+        SizedBox(
+          width: 176,
+          height: 212,
+          child: ItemCard(
+            itemId: 'burger',
+            name: 'Burger',
+            basePrice: 10,
+            imageUrl: '',
+            variants: const [
+              MenuItemVariant(id: 'regular', name: 'Regular', price: 10),
+            ],
+            onAdd: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Regular'), findsNothing);
+    expect(find.text('10 ج'), findsOneWidget);
   });
 }

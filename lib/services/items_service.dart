@@ -9,6 +9,8 @@ class ItemsService {
   static const Duration _cacheTtl = Duration(minutes: 5);
   static final Map<String, _ItemsCacheEntry> _itemsCache = {};
   static const int _defaultPageSize = 80;
+  static const String _variantSelectColumns =
+      'id, item_id, name, price, sort_order, created_at';
 
   static void _ensureManager() {
     final role = _client.auth.currentUser?.userMetadata?['role'];
@@ -395,7 +397,12 @@ class ItemsService {
         .toSet()
         .toList(growable: false);
     if (itemIds.isEmpty) {
-      return items;
+      final itemsWithEmptyVariants = _itemsWithAttachedVariants(
+        items: items,
+        groupedVariants: const {},
+      );
+      _logAttachedVariants(itemsWithEmptyVariants);
+      return itemsWithEmptyVariants;
     }
 
     try {
@@ -403,31 +410,44 @@ class ItemsService {
           await SessionManager.instance.runWithValidSession<List<dynamic>>(
         () => _client
             .from('item_variants')
-            .select('*')
+            .select(_variantSelectColumns)
             .inFilter('item_id', itemIds),
       );
       if (rows == null || rows.isEmpty) {
-        return items;
+        final itemsWithEmptyVariants = _itemsWithAttachedVariants(
+          items: items,
+          groupedVariants: const {},
+        );
+        _logAttachedVariants(itemsWithEmptyVariants);
+        return itemsWithEmptyVariants;
       }
 
       final grouped = <String, List<Map<String, dynamic>>>{};
       for (final row in rows.whereType<Map>()) {
-        final variant = Map<String, dynamic>.from(row);
-        final itemId = _stringValue(
-              variant['item_id'] ??
-                  variant['itemId'] ??
-                  variant['menu_item_id'],
-            ) ??
-            '';
+        final source = Map<String, dynamic>.from(row);
+        final itemId = _stringValue(source['item_id']) ?? '';
         if (itemId.isEmpty) {
           continue;
         }
+        final variant = <String, dynamic>{
+          'id': source['id'],
+          'item_id': itemId,
+          'name': _stringValue(source['name']) ?? '',
+          'price': source['price'],
+          'sort_order': source['sort_order'],
+          'created_at': source['created_at'],
+        };
         grouped
             .putIfAbsent(itemId, () => <Map<String, dynamic>>[])
             .add(variant);
       }
       if (grouped.isEmpty) {
-        return items;
+        final itemsWithEmptyVariants = _itemsWithAttachedVariants(
+          items: items,
+          groupedVariants: const {},
+        );
+        _logAttachedVariants(itemsWithEmptyVariants);
+        return itemsWithEmptyVariants;
       }
 
       grouped.updateAll((_, variants) {
@@ -442,35 +462,85 @@ class ItemsService {
         return indexed.map((entry) => entry.$2).toList(growable: false);
       });
 
-      return items.map((item) {
-        final itemId = _stringValue(item['id']) ?? '';
-        final variants = grouped[itemId];
-        if (variants == null || variants.isEmpty) {
-          return item;
-        }
-        return {
-          ...item,
-          'variants': variants,
-        };
-      }).toList(growable: false);
+      final itemsWithVariants = _itemsWithAttachedVariants(
+        items: items,
+        groupedVariants: grouped,
+      );
+      _logAttachedVariants(itemsWithVariants);
+      return itemsWithVariants;
     } on PostgrestException catch (error, stack) {
       if (_isOptionalVariantsSourceMissing(error)) {
-        return items;
+        final itemsWithEmptyVariants = _itemsWithAttachedVariants(
+          items: items,
+          groupedVariants: const {},
+        );
+        _logAttachedVariants(itemsWithEmptyVariants);
+        return itemsWithEmptyVariants;
       }
       await ErrorLogger.logError(
         module: 'items_service.attachVariants',
         error: error,
         stack: stack,
       );
-      return items;
+      final itemsWithEmptyVariants = _itemsWithAttachedVariants(
+        items: items,
+        groupedVariants: const {},
+      );
+      _logAttachedVariants(itemsWithEmptyVariants);
+      return itemsWithEmptyVariants;
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'items_service.attachVariants',
         error: error,
         stack: stack,
       );
-      return items;
+      final itemsWithEmptyVariants = _itemsWithAttachedVariants(
+        items: items,
+        groupedVariants: const {},
+      );
+      _logAttachedVariants(itemsWithEmptyVariants);
+      return itemsWithEmptyVariants;
     }
+  }
+
+  static List<Map<String, dynamic>> _itemsWithAttachedVariants({
+    required List<Map<String, dynamic>> items,
+    required Map<String, List<Map<String, dynamic>>> groupedVariants,
+  }) {
+    return items.map((item) {
+      final itemId = _stringValue(item['id']) ?? '';
+      final variants =
+          groupedVariants[itemId] ?? const <Map<String, dynamic>>[];
+      return {
+        ...item,
+        'variants': variants,
+      };
+    }).toList(growable: false);
+  }
+
+  static void _logAttachedVariants(List<Map<String, dynamic>> items) {
+    var multiVariantItemsCount = 0;
+    for (final item in items) {
+      final itemId = _stringValue(item['id']) ?? '';
+      final variants = (item['variants'] as List?)
+              ?.whereType<Map>()
+              .toList(growable: false) ??
+          const <Map>[];
+      if (variants.length > 1) {
+        multiVariantItemsCount += 1;
+      }
+      final variantNames = variants
+          .map((variant) => _stringValue(variant['name']) ?? '<empty>')
+          .join(', ');
+      debugPrint(
+        '[ItemsService.attachVariants] item_id=$itemId '
+        'variants_count=${variants.length} variant_names=[$variantNames]',
+      );
+    }
+    debugPrint(
+      '[ItemsService.attachVariants] multi_variant_items_count=$multiVariantItemsCount '
+      'total_items=${items.length}',
+    );
   }
 
   static bool _isOptionalVariantsSourceMissing(PostgrestException error) {
