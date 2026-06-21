@@ -299,10 +299,6 @@ class OrdersService {
     awaitingCustomerConfirmationStatus,
   ];
 
-  static const List<String> _orderOwnerColumns = [
-    'customer_id',
-    'user_id',
-  ];
   static const List<String> _customerRelationTables = [
     'customers',
     'profiles',
@@ -323,17 +319,14 @@ class OrdersService {
         return cached;
       }
 
-      final rows = await _runOrderListQueryWithOwnerFallback(
-        userId: userId,
-        query: (ownerColumn) =>
-            SessionManager.instance.runWithValidSession<List<dynamic>>(
-          () => _client
-              .from('orders')
-              .select(_orderSelect)
-              .eq(ownerColumn, userId)
-              .order('created_at', ascending: false),
-          requireSession: true,
-        ),
+      final rows =
+          await SessionManager.instance.runWithValidSession<List<dynamic>>(
+        () => _client
+            .from('orders')
+            .select(_orderSelect)
+            .eq('customer_id', userId)
+            .order('created_at', ascending: false),
+        requireSession: true,
       );
 
       final orders = await _hydrateOrders(_mapRows(rows));
@@ -429,17 +422,14 @@ class OrdersService {
   }
 
   static Future<int> getActiveOrdersCount(String userId) async {
-    final rows = await _runOrderListQueryWithOwnerFallback(
-      userId: userId,
-      query: (ownerColumn) =>
-          SessionManager.instance.runWithValidSession<List<dynamic>>(
-        () => _client
-            .from('orders')
-            .select('id')
-            .eq(ownerColumn, userId)
-            .inFilter('status', activeStatuses),
-        requireSession: true,
-      ),
+    final rows =
+        await SessionManager.instance.runWithValidSession<List<dynamic>>(
+      () => _client
+          .from('orders')
+          .select('id')
+          .eq('customer_id', userId)
+          .inFilter('status', activeStatuses),
+      requireSession: true,
     );
 
     return rows?.length ?? 0;
@@ -983,38 +973,26 @@ class OrdersService {
     required String userId,
     required String orderRequestToken,
   }) async {
-    for (final ownerColumn in _orderOwnerColumns) {
-      try {
-        final row = await SessionManager.instance
-            .runWithValidSession<Map<String, dynamic>?>(
-          () async {
-            final data = await _client
-                .from('orders')
-                .select('id')
-                .eq('order_request_token', orderRequestToken)
-                .eq(ownerColumn, userId)
-                .order('created_at', ascending: false)
-                .limit(1)
-                .maybeSingle();
-            if (data == null) {
-              return null;
-            }
-            return Map<String, dynamic>.from(data);
-          },
-          requireSession: true,
-        );
-        final resolved = _stringValue(row?['id']);
-        if (resolved != null && resolved.isNotEmpty) {
-          return resolved;
+    final row = await SessionManager.instance
+        .runWithValidSession<Map<String, dynamic>?>(
+      () async {
+        final data = await _client
+            .from('orders')
+            .select('id')
+            .eq('order_request_token', orderRequestToken)
+            .eq('customer_id', userId)
+            .order('created_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+        if (data == null) {
+          return null;
         }
-      } on PostgrestException catch (error) {
-        if (_isSchemaMismatchError(error)) {
-          continue;
-        }
-        rethrow;
-      }
-    }
-    return null;
+        return Map<String, dynamic>.from(data);
+      },
+      requireSession: true,
+    );
+    final resolved = _stringValue(row?['id']);
+    return resolved == null || resolved.isEmpty ? null : resolved;
   }
 
   static String idOf(Map<String, dynamic> order) {
@@ -1137,7 +1115,7 @@ class OrdersService {
   }
 
   static String? customerIdOf(Map<String, dynamic> order) {
-    return _stringValue(order['customer_id']) ?? _stringValue(order['user_id']);
+    return _stringValue(order['customer_id']);
   }
 
   static Map<String, dynamic>? customerDataOf(Map<String, dynamic> order) {
@@ -1734,38 +1712,6 @@ class OrdersService {
             message.contains('function'));
   }
 
-  static Future<List<dynamic>?> _runOrderListQueryWithOwnerFallback({
-    required String userId,
-    required Future<List<dynamic>?> Function(String ownerColumn) query,
-  }) async {
-    List<dynamic>? fallbackResult;
-    PostgrestException? lastSchemaError;
-
-    for (final ownerColumn in _orderOwnerColumns) {
-      try {
-        final result = await query(ownerColumn);
-        if (result != null && result.isNotEmpty) {
-          return result;
-        }
-        fallbackResult ??= result;
-      } on PostgrestException catch (error) {
-        if (_isSchemaMismatchError(error)) {
-          lastSchemaError = error;
-          continue;
-        }
-        rethrow;
-      }
-    }
-
-    if (fallbackResult != null) {
-      return fallbackResult;
-    }
-    if (lastSchemaError != null) {
-      throw lastSchemaError;
-    }
-    return const [];
-  }
-
   static Future<Map<String, dynamic>?> _fetchOrderRow({
     required String orderId,
     String? userId,
@@ -1773,48 +1719,6 @@ class OrdersService {
     final effectiveUserId =
         _stringValue(userId) ?? _client.auth.currentUser?.id;
     if (effectiveUserId == null || effectiveUserId.isEmpty) {
-      return SessionManager.instance.runWithValidSession<Map<String, dynamic>?>(
-        () async {
-          final row = await _client
-              .from('orders')
-              .select(_orderSelect)
-              .eq('id', orderId)
-              .maybeSingle();
-          return row == null ? null : Map<String, dynamic>.from(row);
-        },
-        requireSession: true,
-      );
-    }
-
-    var hadScopedQuery = false;
-    for (final ownerColumn in _orderOwnerColumns) {
-      try {
-        final row = await SessionManager.instance
-            .runWithValidSession<Map<String, dynamic>?>(
-          () async {
-            final data = await _client
-                .from('orders')
-                .select(_orderSelect)
-                .eq('id', orderId)
-                .eq(ownerColumn, effectiveUserId)
-                .maybeSingle();
-            return data == null ? null : Map<String, dynamic>.from(data);
-          },
-          requireSession: true,
-        );
-        hadScopedQuery = true;
-        if (row != null) {
-          return row;
-        }
-      } on PostgrestException catch (error) {
-        if (_isSchemaMismatchError(error)) {
-          continue;
-        }
-        rethrow;
-      }
-    }
-
-    if (hadScopedQuery) {
       return null;
     }
 
@@ -1824,8 +1728,9 @@ class OrdersService {
             .from('orders')
             .select(_orderSelect)
             .eq('id', orderId)
-            .maybeSingle();
-        return row == null ? null : Map<String, dynamic>.from(row);
+            .eq('customer_id', effectiveUserId)
+            .single();
+        return Map<String, dynamic>.from(row);
       },
       requireSession: true,
     );
@@ -1867,20 +1772,6 @@ class OrdersService {
         'total': input.totalPrice,
         'lat': input.customerLat,
         'lng': input.customerLng,
-      },
-      {
-        ...basePayload,
-        'user_id': input.userId,
-        'total': input.totalPrice,
-        'lat': input.customerLat,
-        'lng': input.customerLng,
-      },
-      {
-        ...basePayload,
-        'user_id': input.userId,
-        'total_price': input.totalPrice,
-        'customer_lat': input.customerLat,
-        'customer_lng': input.customerLng,
       },
     ];
 
@@ -1960,16 +1851,6 @@ class OrdersService {
       },
       {
         'customer_id': input.userId,
-        'total': input.totalPrice,
-        'delivery_cost': input.deliveryCost,
-      },
-      {
-        'user_id': input.userId,
-        'total_price': input.totalPrice,
-        'delivery_cost': input.deliveryCost,
-      },
-      {
-        'user_id': input.userId,
         'total': input.totalPrice,
         'delivery_cost': input.deliveryCost,
       },

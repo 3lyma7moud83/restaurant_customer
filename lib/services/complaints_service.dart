@@ -7,11 +7,6 @@ class ComplaintsService {
   ComplaintsService._();
 
   static final SupabaseClient _client = Supabase.instance.client;
-  static const List<String> _orderOwnerColumns = [
-    'customer_id',
-    'user_id',
-  ];
-
   static Future<void> submitComplaint({
     required String userId,
     required String title,
@@ -123,18 +118,16 @@ class ComplaintsService {
       return null;
     }
 
-    for (final ownerColumn in _orderOwnerColumns) {
-      final row = await _client
-          .from('orders')
-          .select('id, restaurant_id')
-          .eq('id', normalizedOrderId)
-          .eq(ownerColumn, userId)
-          .maybeSingle();
-      if (row is Map<String, dynamic>) {
-        final target = _targetFromOrderRow(row);
-        if (target != null) {
-          return target;
-        }
+    final row = await _client
+        .from('orders')
+        .select('id, restaurant_id')
+        .eq('id', normalizedOrderId)
+        .eq('customer_id', userId)
+        .maybeSingle();
+    if (row is Map<String, dynamic>) {
+      final target = _targetFromOrderRow(row);
+      if (target != null) {
+        return target;
       }
     }
     return null;
@@ -143,19 +136,17 @@ class ComplaintsService {
   static Future<_ComplaintTarget?> _loadLatestOrderTarget({
     required String userId,
   }) async {
-    for (final ownerColumn in _orderOwnerColumns) {
-      final row = await _client
-          .from('orders')
-          .select('id, restaurant_id, created_at')
-          .eq(ownerColumn, userId)
-          .order('created_at', ascending: false)
-          .limit(1)
-          .maybeSingle();
-      if (row is Map<String, dynamic>) {
-        final target = _targetFromOrderRow(row);
-        if (target != null) {
-          return target;
-        }
+    final row = await _client
+        .from('orders')
+        .select('id, restaurant_id, created_at')
+        .eq('customer_id', userId)
+        .order('created_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+    if (row is Map<String, dynamic>) {
+      final target = _targetFromOrderRow(row);
+      if (target != null) {
+        return target;
       }
     }
     return null;
