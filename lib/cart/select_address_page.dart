@@ -37,7 +37,7 @@ class SelectAddressPage extends StatefulWidget {
 
 class _SelectAddressPageState extends State<SelectAddressPage>
     with TickerProviderStateMixin {
-  static const double _goodAccuracyThresholdMeters = 50;
+  static const double _goodAccuracyThresholdMeters = 150;
   static const Duration _mapIdleDebounce = Duration(milliseconds: 250);
   static const Duration _fastFixTimeout = Duration(seconds: 4);
   static const Duration _streamFixTimeout = Duration(seconds: 6);
