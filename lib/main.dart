@@ -196,13 +196,13 @@ Future<BootstrapResult> _bootstrap() async {
           autoRefreshToken: true,
           detectSessionInUri: true,
         ),
-      );
-      clearOAuthCallbackParameters();
-      _bootstrapLog('Supabase initialized.');
-    } else {
-      clearOAuthCallbackParameters();
-      _bootstrapLog('Supabase already initialized.');
-    }
+     );
+ // clearOAuthCallbackParameters();
+ _bootstrapLog('Supabase initialized.');
+} else {
+ // clearOAuthCallbackParameters();
+ _bootstrapLog('Supabase already initialized.');
+}
   } catch (error, stack) {
     _bootstrapLog('Supabase initialization failed: $error');
     await ErrorLogger.logError(

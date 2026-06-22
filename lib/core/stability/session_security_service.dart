@@ -304,7 +304,9 @@ class SessionSecurityService {
           );
           return const SessionSecurityVerdict.denied('high_suspicion_score');
         }
-
+StabilityLogger.session(
+  'LOCAL_SESSION_ID=${_sessionIdOf(session.accessToken)}',
+);
         final localSessionId = _sessionIdOf(session.accessToken);
         if (remoteSessionId.isNotEmpty && remoteSessionId != localSessionId) {
           await markSuspicious(
@@ -533,6 +535,9 @@ class SessionSecurityService {
         final row = payload.newRecord;
         final globalRevoke = _toBool(row['global_revoke']) ?? false;
         final remoteSessionId = row['session_id']?.toString().trim() ?? '';
+        StabilityLogger.session(
+  'REMOTE_SESSION_ID=$remoteSessionId',
+);
         final remoteFingerprint =
             row['device_fingerprint']?.toString().trim() ?? '';
 
