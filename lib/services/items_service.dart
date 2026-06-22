@@ -244,37 +244,18 @@ class ItemsService {
   static Future<_ItemInsertContext> _resolveInsertContext(
     String categoryId,
   ) async {
-    Map<String, dynamic>? categoryRow;
-    try {
-      categoryRow = await SessionManager.instance
-          .runWithValidSession<Map<String, dynamic>?>(
-        () async {
-          final data = await _client
-              .from('categories')
-              .select('id, manager_id, restaurant_id')
-              .eq('id', categoryId)
-              .maybeSingle();
-          return data == null ? null : Map<String, dynamic>.from(data);
-        },
-        requireSession: true,
-      );
-    } on PostgrestException catch (error) {
-      if (!_isSchemaMismatchError(error)) {
-        rethrow;
-      }
-      categoryRow = await SessionManager.instance
-          .runWithValidSession<Map<String, dynamic>?>(
-        () async {
-          final data = await _client
-              .from('categories')
-              .select('id, manager_id')
-              .eq('id', categoryId)
-              .maybeSingle();
-          return data == null ? null : Map<String, dynamic>.from(data);
-        },
-        requireSession: true,
-      );
-    }
+    final categoryRow = await SessionManager.instance
+        .runWithValidSession<Map<String, dynamic>?>(
+      () async {
+        final data = await _client
+            .from('categories')
+            .select('id, manager_id')
+            .eq('id', categoryId)
+            .maybeSingle();
+        return data == null ? null : Map<String, dynamic>.from(data);
+      },
+      requireSession: true,
+    );
 
     if (categoryRow == null) {
       throw Exception('نوع الصنف غير موجود.');
@@ -292,22 +273,19 @@ class ItemsService {
       throw Exception('نوع الصنف لا يتبع هذا الحساب.');
     }
 
-    var restaurantId = _stringValue(categoryRow['restaurant_id']);
-    if (restaurantId == null || restaurantId.isEmpty) {
-      final managerRow = await SessionManager.instance
-          .runWithValidSession<Map<String, dynamic>?>(
-        () async {
-          final data = await _client
-              .from('managers')
-              .select('restaurant_id, user_id')
-              .eq('user_id', managerId)
-              .maybeSingle();
-          return data == null ? null : Map<String, dynamic>.from(data);
-        },
-        requireSession: true,
-      );
-      restaurantId = _stringValue(managerRow?['restaurant_id']);
-    }
+    final managerRow = await SessionManager.instance
+        .runWithValidSession<Map<String, dynamic>?>(
+      () async {
+        final data = await _client
+            .from('managers')
+            .select('restaurant_id, user_id')
+            .eq('user_id', managerId)
+            .maybeSingle();
+        return data == null ? null : Map<String, dynamic>.from(data);
+      },
+      requireSession: true,
+    );
+    final restaurantId = _stringValue(managerRow?['restaurant_id']);
     if (restaurantId == null || restaurantId.isEmpty) {
       throw Exception('تعذر تحديد restaurant_id المرتبط بنوع الصنف.');
     }

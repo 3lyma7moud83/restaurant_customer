@@ -56,44 +56,30 @@ class CategoriesService {
         'manager_id=$normalizedManagerId, range=$from:$to',
       );
 
+      final managerIds = await _resolveManagerIdsForCategoryLookup(
+        restaurantId: normalizedRestaurantId,
+        managerId: normalizedManagerId,
+      );
+      if (managerIds.isEmpty) {
+        debugPrint(
+          '[CategoriesService.getByRestaurantCached] no manager_id could be resolved '
+          'for restaurant_id=$normalizedRestaurantId manager_id=$normalizedManagerId',
+        );
+        return const [];
+      }
+
       final res =
           await SessionManager.instance.runWithValidSession<List<dynamic>>(
-        () async {
-          try {
-            var query = _client
-                .from('categories')
-                .select('id, name, image_url, sort_order');
-
-            if (normalizedManagerId.isNotEmpty) {
-              query = query.or(
-                'restaurant_id.eq.$normalizedRestaurantId,manager_id.eq.$normalizedManagerId',
-              );
-            } else {
-              query = query.eq('restaurant_id', normalizedRestaurantId);
-            }
-            return await query
-                .order('sort_order', ascending: true)
-                .range(from, to);
-          } on PostgrestException catch (e) {
-            final message = e.message.toLowerCase();
-            final isRestaurantSchemaIssue =
-                (e.code == '42703' || e.code == 'PGRST204') &&
-                    message.contains('restaurant_id');
-            if (!isRestaurantSchemaIssue) rethrow;
-
-            var legacyQuery = _client
-                .from('categories')
-                .select('id, name, image_url, sort_order');
-            if (normalizedManagerId.isNotEmpty) {
-              legacyQuery = legacyQuery.eq('manager_id', normalizedManagerId);
-            } else {
-              legacyQuery =
-                  legacyQuery.eq('manager_id', normalizedRestaurantId);
-            }
-            return await legacyQuery
-                .order('sort_order', ascending: true)
-                .range(from, to);
-          }
+        () {
+          final query = _client
+              .from('categories')
+              .select('id, name, image_url, sort_order');
+          final filteredQuery = managerIds.length == 1
+              ? query.eq('manager_id', managerIds.first)
+              : query.inFilter('manager_id', managerIds);
+          return filteredQuery
+              .order('sort_order', ascending: true)
+              .range(from, to);
         },
       );
       if (res == null) {
@@ -129,6 +115,55 @@ class CategoriesService {
       );
       throw Exception(ErrorLogger.userMessage);
     }
+  }
+
+  static Future<List<String>> _resolveManagerIdsForCategoryLookup({
+    required String restaurantId,
+    required String managerId,
+  }) async {
+    final resolved = <String>{};
+    if (managerId.isNotEmpty) {
+      resolved.add(managerId);
+    }
+
+    if (restaurantId.isNotEmpty) {
+      resolved.add(restaurantId);
+    }
+
+    if (managerId.isNotEmpty) {
+      return resolved.toList(growable: false);
+    }
+
+    final managerRows =
+        await SessionManager.instance.runWithValidSession<List<dynamic>>(
+      () => _client
+          .from('managers')
+          .select('user_id, restaurant_id')
+          .or('restaurant_id.eq.$restaurantId,user_id.eq.$restaurantId')
+          .limit(2),
+    );
+
+    if (managerRows != null) {
+      for (final rawRow in managerRows.whereType<Map>()) {
+        final row = Map<String, dynamic>.from(rawRow);
+        final resolvedManagerId = _stringValue(row['user_id']);
+        if (resolvedManagerId != null && resolvedManagerId.isNotEmpty) {
+          resolved.add(resolvedManagerId);
+        }
+      }
+    }
+
+    return resolved.toList(growable: false);
+  }
+
+  static String? _stringValue(dynamic value) {
+    final normalized = value?.toString().trim();
+    if (normalized == null ||
+        normalized.isEmpty ||
+        normalized.toLowerCase() == 'null') {
+      return null;
+    }
+    return normalized;
   }
 }
 

@@ -37,6 +37,11 @@ class GoogleAuthService {
 
   Future<GoogleAuthResult> signIn() async {
     if (kIsWeb) {
+      if (hasOAuthCallbackParameters()) {
+        return const GoogleAuthResult(
+          status: GoogleAuthStatus.redirecting,
+        );
+      }
       await _client.auth.signInWithOAuth(
         OAuthProvider.google,
         redirectTo: cleanOAuthRedirectUrl(),

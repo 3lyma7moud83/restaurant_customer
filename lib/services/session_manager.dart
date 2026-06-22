@@ -33,6 +33,7 @@ class SessionManager {
 
   StreamSubscription<AuthState>? _authSubscription;
   Future<Session?>? _refreshFuture;
+  Future<void>? _pendingSecuritySync;
 
   bool _initialized = false;
   bool _hadAuthenticatedSession = false;
@@ -42,15 +43,11 @@ class SessionManager {
     if (_initialized) return;
     _initialized = true;
     await SessionSecurityService.instance.initialize();
-    _hadAuthenticatedSession = _client.auth.currentSession != null;
+    final initialSession = _client.auth.currentSession;
+    _hadAuthenticatedSession = initialSession != null;
 
     _authSubscription = _client.auth.onAuthStateChange.listen((data) {
-      unawaited(
-        SessionSecurityService.instance.recordAuthState(
-          event: data.event,
-          session: data.session,
-        ),
-      );
+      unawaited(_syncSecurityState(event: data.event, session: data.session));
       if (data.event == AuthChangeEvent.signedOut) {
         _hadAuthenticatedSession = false;
         return;
@@ -60,6 +57,13 @@ class SessionManager {
         _hadAuthenticatedSession = true;
       }
     });
+
+    if (initialSession != null) {
+      await _syncSecurityState(
+        event: AuthChangeEvent.initialSession,
+        session: initialSession,
+      );
+    }
   }
 
   Future<void> dispose() async {
@@ -80,6 +84,7 @@ class SessionManager {
     }
 
     _hadAuthenticatedSession = true;
+    await _waitForPendingSecuritySync();
 
     if (!_shouldRefreshSession(session)) {
       return _enforceSessionSecurity(
@@ -209,6 +214,8 @@ class SessionManager {
       return null;
     }
 
+    await _waitForPendingSecuritySync();
+
     final verdict =
         await SessionSecurityService.instance.validateCurrentSession(
       session: session,
@@ -273,6 +280,10 @@ class SessionManager {
       }
 
       _hadAuthenticatedSession = true;
+      await _syncSecurityState(
+        event: AuthChangeEvent.tokenRefreshed,
+        session: session,
+      );
       return session;
     } on AuthException catch (error) {
       if (_isTransientAuthError(error.message)) {
@@ -376,6 +387,33 @@ class SessionManager {
         normalized.contains('status code 429') ||
         normalized.contains('status code 500') ||
         normalized.contains('status code 503');
+  }
+
+  Future<void> _syncSecurityState({
+    required AuthChangeEvent event,
+    required Session? session,
+  }) {
+    final future = SessionSecurityService.instance.recordAuthState(
+      event: event,
+      session: session,
+    );
+    _pendingSecuritySync = future;
+    future.whenComplete(() {
+      if (identical(_pendingSecuritySync, future)) {
+        _pendingSecuritySync = null;
+      }
+    });
+    return future;
+  }
+
+  Future<void> _waitForPendingSecuritySync() async {
+    final pending = _pendingSecuritySync;
+    if (pending == null) {
+      return;
+    }
+    try {
+      await pending;
+    } catch (_) {}
   }
 }
 

@@ -441,13 +441,18 @@ class _CartPageState extends State<CartPage> {
     }
     _setControllerValue(addressCtrl, fullAddress);
     _setControllerValue(houseNumberCtrl, houseNumber);
-    await _calculateDeliveryFromServer(cart);
+    unawaited(_calculateDeliveryFromServer(cart));
   }
 
   Future<void> _calculateDeliveryFromServer(CartController cart) async {
     if (!cart.hasLocation || cart.isLocked) {
       return;
     }
+    final timer = Stopwatch()..start();
+    debugPrint(
+      '[CartPage] phase=calculate_delivery_cost.started '
+      'restaurant_id=${widget.restaurantId}',
+    );
 
     try {
       final response =
@@ -471,6 +476,10 @@ class _CartPageState extends State<CartPage> {
           ? (response['delivery_cost'] as num?)?.toDouble() ?? 0.0
           : 0.0;
       cart.updateDeliveryCost(cost);
+      debugPrint(
+        '[CartPage] phase=calculate_delivery_cost.finished '
+        'elapsed_ms=${timer.elapsedMilliseconds} cost=$cost',
+      );
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'cart_page.calculateDeliveryFromServer',
@@ -478,6 +487,10 @@ class _CartPageState extends State<CartPage> {
         stack: stack,
       );
       cart.updateDeliveryCost(0);
+      debugPrint(
+        '[CartPage] phase=calculate_delivery_cost.failed '
+        'elapsed_ms=${timer.elapsedMilliseconds}',
+      );
     }
   }
 

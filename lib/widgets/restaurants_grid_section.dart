@@ -207,6 +207,19 @@ class _RestaurantGrid extends StatelessWidget {
     final physics = AppTheme.bouncingScrollPhysics;
     final cacheExtent = constraints.maxHeight.clamp(520.0, 1200.0).toDouble();
 
+    if (crossAxisCount == 1) {
+      return ListView.separated(
+        physics: physics,
+        padding: EdgeInsets.only(bottom: gridMetrics.bottomPadding),
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        cacheExtent: cacheExtent,
+        itemCount: restaurants.length,
+        separatorBuilder: (_, __) =>
+            SizedBox(height: gridMetrics.mainAxisSpacing),
+        itemBuilder: (context, index) => _buildAnimatedCard(context, index),
+      );
+    }
+
     return GridView.builder(
       physics: physics,
       padding: EdgeInsets.only(bottom: gridMetrics.bottomPadding),
@@ -220,51 +233,54 @@ class _RestaurantGrid extends StatelessWidget {
         mainAxisSpacing: gridMetrics.mainAxisSpacing,
       ),
       itemBuilder: (context, index) {
-        final restaurant = restaurants[index];
-        final restaurantId = RestaurantsService.restaurantIdOf(restaurant);
-        final presentation = _RestaurantCardPresentation.fromRestaurant(
-          context: context,
-          restaurant: restaurant,
-          customerLat: customerLat,
-          customerLng: customerLng,
-        );
+        return _buildAnimatedCard(context, index);
+      },
+    );
+  }
 
-        final card = RepaintBoundary(
-          key: ValueKey(
-            restaurantId.isEmpty ? 'restaurant-index-$index' : restaurantId,
-          ),
-          child: RestaurantListCard(
-            name: RestaurantsService.cardNameOf(restaurant),
-            imageUrl: RestaurantsService.cardImageOf(restaurant),
-            deliveryMinutes: presentation.deliveryMinutes,
-            categoryLabel: presentation.categoryLabel,
-            distanceLabel: presentation.distanceLabel,
-            statusLabel: presentation.statusLabel,
-            statusPositive: presentation.statusPositive,
-            onInfoTap: onInfoTap == null
-                ? null
-                : () => onInfoTap!(context, restaurant),
-            onTap: () => onTap(context, restaurant),
-          ),
-        );
+  Widget _buildAnimatedCard(BuildContext context, int index) {
+    final restaurant = restaurants[index];
+    final restaurantId = RestaurantsService.restaurantIdOf(restaurant);
+    final presentation = _RestaurantCardPresentation.fromRestaurant(
+      context: context,
+      restaurant: restaurant,
+      customerLat: customerLat,
+      customerLng: customerLng,
+    );
 
-        final animationDuration = Duration(
-          milliseconds: 220 + (index.clamp(0, 8) * 24),
-        );
-        return TweenAnimationBuilder<double>(
-          tween: Tween(begin: 0, end: 1),
-          duration: kIsWeb ? Duration.zero : animationDuration,
-          curve: Curves.easeOutBack,
-          child: card,
-          builder: (context, value, child) {
-            return Opacity(
-              opacity: value.clamp(0, 1).toDouble(),
-              child: Transform.translate(
-                offset: Offset(0, (1 - value) * 14),
-                child: child,
-              ),
-            );
-          },
+    final card = RepaintBoundary(
+      key: ValueKey(
+        restaurantId.isEmpty ? 'restaurant-index-$index' : restaurantId,
+      ),
+      child: RestaurantListCard(
+        name: RestaurantsService.cardNameOf(restaurant),
+        imageUrl: RestaurantsService.cardImageOf(restaurant),
+        deliveryMinutes: presentation.deliveryMinutes,
+        categoryLabel: presentation.categoryLabel,
+        distanceLabel: presentation.distanceLabel,
+        statusLabel: presentation.statusLabel,
+        statusPositive: presentation.statusPositive,
+        onInfoTap:
+            onInfoTap == null ? null : () => onInfoTap!(context, restaurant),
+        onTap: () => onTap(context, restaurant),
+      ),
+    );
+
+    final animationDuration = Duration(
+      milliseconds: 220 + (index.clamp(0, 8) * 24),
+    );
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: kIsWeb ? Duration.zero : animationDuration,
+      curve: Curves.easeOutBack,
+      child: card,
+      builder: (context, value, child) {
+        return Opacity(
+          opacity: value.clamp(0, 1).toDouble(),
+          child: Transform.translate(
+            offset: Offset(0, (1 - value) * 14),
+            child: child,
+          ),
         );
       },
     );

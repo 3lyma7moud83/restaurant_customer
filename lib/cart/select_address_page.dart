@@ -38,7 +38,10 @@ class SelectAddressPage extends StatefulWidget {
 class _SelectAddressPageState extends State<SelectAddressPage>
     with TickerProviderStateMixin {
   static const double _goodAccuracyThresholdMeters = 50;
-  static const Duration _mapIdleDebounce = Duration(milliseconds: 500);
+  static const Duration _mapIdleDebounce = Duration(milliseconds: 250);
+  static const Duration _fastFixTimeout = Duration(seconds: 4);
+  static const Duration _streamFixTimeout = Duration(seconds: 6);
+  static const Duration _lastKnownLocationMaxAge = Duration(minutes: 3);
   static const LatLng _fallbackCenter = LatLng(30.0444, 31.2357);
 
   final MapController _controller = MapController();
@@ -58,6 +61,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
   bool _satelliteMode = false;
   bool _mapIsMoving = false;
   int _addressRequestId = 0;
+  int _locationSelectionNonce = 0;
 
   LatLng? _selectedPoint;
   LatLng? _currentLocationPoint;
@@ -164,6 +168,9 @@ class _SelectAddressPageState extends State<SelectAddressPage>
     if (locatingUser) {
       return;
     }
+    final timer = Stopwatch()..start();
+    final selectionNonce = ++_locationSelectionNonce;
+    _logLocationPhase('center_on_user_location.started');
 
     setState(() {
       locatingUser = true;
@@ -176,6 +183,12 @@ class _SelectAddressPageState extends State<SelectAddressPage>
       if (!mounted) {
         return;
       }
+      _logLocationPhase(
+        'center_on_user_location.position_ready',
+        stopwatch: timer,
+        details: 'accuracy=${position?.accuracy.toStringAsFixed(1) ?? 'null'} '
+            'timestamp=${position?.timestamp.toUtc().toIso8601String() ?? 'null'}',
+      );
 
       if (position == null) {
         setState(() {
@@ -205,6 +218,15 @@ class _SelectAddressPageState extends State<SelectAddressPage>
             ? 'جارٍ تحميل عنوان موقعك الحالي...'
             : 'جاري تحسين دقة الموقع...',
       );
+
+      if (_shouldRequestLocationRefinement(position)) {
+        unawaited(
+          _refineLocationFix(
+            selectionNonce: selectionNonce,
+            baseline: position,
+          ),
+        );
+      }
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'select_address_page.centerOnUserLocation',
@@ -215,6 +237,10 @@ class _SelectAddressPageState extends State<SelectAddressPage>
         _showSnack(ErrorLogger.userMessage);
       }
     } finally {
+      _logLocationPhase(
+        'center_on_user_location.finished',
+        stopwatch: timer,
+      );
       if (mounted) {
         setState(() => locatingUser = false);
       }
@@ -222,8 +248,10 @@ class _SelectAddressPageState extends State<SelectAddressPage>
   }
 
   Future<Position?> _getBestCurrentPosition() async {
+    final timer = Stopwatch()..start();
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
+      _logLocationPhase('get_best_current_position.service_disabled');
       return null;
     }
 
@@ -234,29 +262,51 @@ class _SelectAddressPageState extends State<SelectAddressPage>
 
     if (permission == LocationPermission.denied ||
         permission == LocationPermission.deniedForever) {
+      _logLocationPhase('get_best_current_position.permission_denied');
       return null;
     }
 
-    Position? best;
+    final lastKnown = await _safeGetLastKnownPosition();
+    if (lastKnown != null) {
+      _logLocationPhase(
+        'get_best_current_position.last_known',
+        stopwatch: timer,
+        details: 'accuracy=${lastKnown.accuracy.toStringAsFixed(1)} '
+            'age_ms=${DateTime.now().toUtc().difference(lastKnown.timestamp.toUtc()).inMilliseconds}',
+      );
+      if (_isGoodPosition(lastKnown) && _isRecentPosition(lastKnown)) {
+        return lastKnown;
+      }
+      return lastKnown;
+    }
 
+    Position? best;
     try {
       best = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.bestForNavigation,
-        timeLimit: const Duration(seconds: 12),
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: _fastFixTimeout,
+      );
+      _logLocationPhase(
+        'get_best_current_position.current_fix',
+        stopwatch: timer,
+        details: 'accuracy=${best.accuracy.toStringAsFixed(1)}',
       );
       if (_isGoodPosition(best)) {
         return best;
       }
     } catch (_) {
-      // Continue to the live stream below to avoid relying on a stale fix.
+      _logLocationPhase(
+        'get_best_current_position.current_fix_failed',
+        stopwatch: timer,
+      );
     }
 
     try {
       final stream = Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.bestForNavigation,
+        locationSettings: LocationSettings(
+          accuracy: LocationAccuracy.high,
           distanceFilter: 0,
-          timeLimit: Duration(seconds: 18),
+          timeLimit: _streamFixTimeout,
         ),
       );
 
@@ -264,6 +314,11 @@ class _SelectAddressPageState extends State<SelectAddressPage>
         if (best == null || position.accuracy < best.accuracy) {
           best = position;
         }
+        _logLocationPhase(
+          'get_best_current_position.stream_fix',
+          stopwatch: timer,
+          details: 'accuracy=${position.accuracy.toStringAsFixed(1)}',
+        );
         if (_isGoodPosition(position)) {
           return position;
         }
@@ -282,11 +337,21 @@ class _SelectAddressPageState extends State<SelectAddressPage>
         position.accuracy <= _goodAccuracyThresholdMeters;
   }
 
+  bool _isRecentPosition(Position position) {
+    final age = DateTime.now().toUtc().difference(position.timestamp.toUtc());
+    return age <= _lastKnownLocationMaxAge;
+  }
+
+  bool _shouldRequestLocationRefinement(Position position) {
+    return !_isGoodPosition(position) || !_isRecentPosition(position);
+  }
+
   Future<void> _selectCenter(
     LatLng point, {
     bool animate = false,
     String statusMessage = 'جارٍ تحديد العنوان...',
   }) async {
+    final timer = Stopwatch()..start();
     _mapIdleTimer?.cancel();
     _centerNotifier.value = point;
 
@@ -298,9 +363,15 @@ class _SelectAddressPageState extends State<SelectAddressPage>
     });
 
     if (animate) {
-      await _animateTo(point, zoom: 17);
+      unawaited(_animateTo(point, zoom: 17));
     }
     await _resolveAddress(point);
+    _logLocationPhase(
+      'select_center.finished',
+      stopwatch: timer,
+      details:
+          'lat=${point.latitude.toStringAsFixed(6)} lng=${point.longitude.toStringAsFixed(6)}',
+    );
   }
 
   Future<void> _animateTo(
@@ -372,6 +443,12 @@ class _SelectAddressPageState extends State<SelectAddressPage>
     }
 
     final requestId = ++_addressRequestId;
+    final timer = Stopwatch()..start();
+    _logLocationPhase(
+      'resolve_address.started',
+      details:
+          'lat=${point.latitude.toStringAsFixed(6)} lng=${point.longitude.toStringAsFixed(6)}',
+    );
     final details = await LocationService.getAddressDetails(
       lat: point.latitude,
       lng: point.longitude,
@@ -394,6 +471,10 @@ class _SelectAddressPageState extends State<SelectAddressPage>
         _statusMessage =
             'تعذر تحديد العنوان تلقائيًا. يمكنك كتابة العنوان يدويًا بعد ثبات الموقع.';
       });
+      _logLocationPhase(
+        'resolve_address.empty_result',
+        stopwatch: timer,
+      );
       return;
     }
 
@@ -418,6 +499,11 @@ class _SelectAddressPageState extends State<SelectAddressPage>
           ? 'تم تحديد الموقع. راجع العنوان ثم اضغط تأكيد الموقع.'
           : 'جاري تحسين دقة الموقع...';
     });
+    _logLocationPhase(
+      'resolve_address.finished',
+      stopwatch: timer,
+      details: 'address_length=${details.address.length}',
+    );
   }
 
   void _handlePositionChanged(MapCamera camera, bool hasGesture) {
@@ -510,6 +596,114 @@ class _SelectAddressPageState extends State<SelectAddressPage>
 
   void _showSnack(String message) {
     AppSnackBar.show(context, message: message);
+  }
+
+  Future<Position?> _safeGetLastKnownPosition() async {
+    try {
+      return await Geolocator.getLastKnownPosition();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _refineLocationFix({
+    required int selectionNonce,
+    required Position baseline,
+  }) async {
+    final timer = Stopwatch()..start();
+    _logLocationPhase(
+      'refine_location_fix.started',
+      details: 'accuracy=${baseline.accuracy.toStringAsFixed(1)}',
+    );
+
+    Position? improved;
+    try {
+      improved = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.bestForNavigation,
+        timeLimit: _streamFixTimeout,
+      );
+    } catch (_) {
+      try {
+        improved = await Geolocator.getPositionStream(
+          locationSettings: LocationSettings(
+            accuracy: LocationAccuracy.bestForNavigation,
+            distanceFilter: 0,
+            timeLimit: _streamFixTimeout,
+          ),
+        ).first.timeout(_streamFixTimeout);
+      } on TimeoutException {
+        improved = null;
+      } catch (_) {
+        improved = null;
+      }
+    }
+
+    if (!mounted ||
+        improved == null ||
+        selectionNonce != _locationSelectionNonce ||
+        _mapIsMoving) {
+      _logLocationPhase(
+        'refine_location_fix.skipped',
+        stopwatch: timer,
+      );
+      return;
+    }
+
+    final baselineAccuracy =
+        baseline.accuracy.isFinite ? baseline.accuracy : double.infinity;
+    final improvedAccuracy =
+        improved.accuracy.isFinite ? improved.accuracy : double.infinity;
+    if (improvedAccuracy >= baselineAccuracy - 5) {
+      _logLocationPhase(
+        'refine_location_fix.not_better',
+        stopwatch: timer,
+        details:
+            'baseline=${baselineAccuracy.toStringAsFixed(1)} improved=${improvedAccuracy.toStringAsFixed(1)}',
+      );
+      return;
+    }
+
+    final currentSelected = _selectedPoint;
+    if (currentSelected != null) {
+      final drift = Geolocator.distanceBetween(
+        baseline.latitude,
+        baseline.longitude,
+        currentSelected.latitude,
+        currentSelected.longitude,
+      );
+      if (drift > 40) {
+        _logLocationPhase(
+          'refine_location_fix.cancelled_after_manual_move',
+          stopwatch: timer,
+          details: 'drift_m=${drift.toStringAsFixed(1)}',
+        );
+        return;
+      }
+    }
+
+    final improvedPoint = LatLng(improved.latitude, improved.longitude);
+    _currentLocationPoint = improvedPoint;
+    _gpsAccuracyMeters = improvedAccuracy;
+    await _selectCenter(
+      improvedPoint,
+      statusMessage: 'تم تحسين دقة الموقع. جارٍ تحديث العنوان...',
+    );
+    _logLocationPhase(
+      'refine_location_fix.finished',
+      stopwatch: timer,
+      details: 'accuracy=${improvedAccuracy.toStringAsFixed(1)}',
+    );
+  }
+
+  void _logLocationPhase(
+    String phase, {
+    Stopwatch? stopwatch,
+    String? details,
+  }) {
+    final elapsed =
+        stopwatch == null ? '' : ' elapsed_ms=${stopwatch.elapsedMilliseconds}';
+    final suffix = details == null || details.trim().isEmpty ? '' : ' $details';
+    debugPrint('[SelectAddressPage] phase=$phase$elapsed$suffix');
   }
 
   @override

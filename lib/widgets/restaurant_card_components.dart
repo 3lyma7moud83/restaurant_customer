@@ -450,6 +450,17 @@ class RestaurantGridSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (crossAxisCount == 1) {
+      return ListView.separated(
+        padding: padding,
+        physics: physics ?? const NeverScrollableScrollPhysics(),
+        cacheExtent: 360,
+        itemCount: itemCount,
+        separatorBuilder: (_, __) => SizedBox(height: mainAxisSpacing),
+        itemBuilder: (_, __) => const _RestaurantSkeletonCard(),
+      );
+    }
+
     return GridView.builder(
       padding: padding,
       physics: physics ?? const NeverScrollableScrollPhysics(),

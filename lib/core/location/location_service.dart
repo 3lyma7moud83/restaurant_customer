@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../services/error_logger.dart';
@@ -25,10 +26,15 @@ class LocationService {
     required double lng,
     required String token,
   }) async {
+    final timer = Stopwatch()..start();
     final cacheKey = _cacheKey(lat, lng);
     final now = DateTime.now();
     final cached = _addressCache[cacheKey];
     if (cached != null && now.difference(cached.savedAt) <= _addressCacheTtl) {
+      debugPrint(
+        '[LocationService] phase=get_address_details.cache_hit '
+        'elapsed_ms=${timer.elapsedMilliseconds} key=$cacheKey',
+      );
       return cached.details;
     }
 
@@ -42,6 +48,11 @@ class LocationService {
       final res =
           await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
       if (res.statusCode != 200) {
+        debugPrint(
+          '[LocationService] phase=get_address_details.http_error '
+          'elapsed_ms=${timer.elapsedMilliseconds} '
+          'status=${res.statusCode} key=$cacheKey',
+        );
         return null;
       }
 
@@ -96,6 +107,10 @@ class LocationService {
           _stringValue(place['place_name']);
       final address = parts.isEmpty ? fallbackAddress : parts.join(' - ');
       if (address == null || address.isEmpty) {
+        debugPrint(
+          '[LocationService] phase=get_address_details.empty_address '
+          'elapsed_ms=${timer.elapsedMilliseconds} key=$cacheKey',
+        );
         return null;
       }
 
@@ -110,12 +125,20 @@ class LocationService {
       if (_addressCache.length > _addressCacheMaxEntries) {
         _addressCache.remove(_addressCache.keys.first);
       }
+      debugPrint(
+        '[LocationService] phase=get_address_details.success '
+        'elapsed_ms=${timer.elapsedMilliseconds} key=$cacheKey',
+      );
       return details;
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'location_service.getAddressDetails',
         error: error,
         stack: stack,
+      );
+      debugPrint(
+        '[LocationService] phase=get_address_details.failed '
+        'elapsed_ms=${timer.elapsedMilliseconds} key=$cacheKey',
       );
       return null;
     }
