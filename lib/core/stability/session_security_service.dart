@@ -654,10 +654,9 @@ StabilityLogger.session(
     return sha256.convert(utf8.encode(source)).toString();
   }
 
-  String _sessionIdOf(String accessToken) {
-    return _hash(accessToken).substring(0, 48);
-  }
-
+ String _sessionIdOf(String accessToken) {
+  return _deviceFingerprint ?? 'unknown';
+}
   String _generateDeviceSeed() {
     final random = Random.secure();
     final bytes = List<int>.generate(16, (_) => random.nextInt(256));
