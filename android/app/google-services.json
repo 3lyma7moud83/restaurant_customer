@@ -7,9 +7,104 @@
   "client": [
     {
       "client_info": {
+        "mobilesdk_app_id": "1:647981866689:android:b131dd0f7173b380bdfe40",
+        "android_client_info": {
+          "package_name": "com.example.management_admin"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDVWEzicNiT8oy-_qA2MTEUgYQ-IZ9FvqY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:647981866689:android:ff01031c581ac218bdfe40",
+        "android_client_info": {
+          "package_name": "com.example.restaurant_admin"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDVWEzicNiT8oy-_qA2MTEUgYQ-IZ9FvqY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:647981866689:android:e14302905fdd0ed3bdfe40",
+        "android_client_info": {
+          "package_name": "com.example.restaurant_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDVWEzicNiT8oy-_qA2MTEUgYQ-IZ9FvqY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
         "mobilesdk_app_id": "1:647981866689:android:de09ff80be4471c1bdfe40",
         "android_client_info": {
           "package_name": "com.example.restaurant_customer"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDVWEzicNiT8oy-_qA2MTEUgYQ-IZ9FvqY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:647981866689:android:3b506456c03cff8ebdfe40",
+        "android_client_info": {
+          "package_name": "com.example.restaurant_driver"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDVWEzicNiT8oy-_qA2MTEUgYQ-IZ9FvqY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:647981866689:android:ac413fc05242f230bdfe40",
+        "android_client_info": {
+          "package_name": "com.example.restaurant_manager"
         }
       },
       "oauth_client": [],

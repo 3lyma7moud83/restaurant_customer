@@ -124,7 +124,6 @@ class _SelectAddressPageState extends State<SelectAddressPage>
       !loadingAddress &&
       !locatingUser &&
       !_mapIsMoving &&
-      _hasGoodGpsFix &&
       _addressController.text.trim().isNotEmpty;
 
   @override
@@ -536,8 +535,29 @@ class _SelectAddressPageState extends State<SelectAddressPage>
 
   Future<void> _confirm() async {
     if (!_hasGoodGpsFix) {
-      _showSnack('جاري تحسين دقة الموقع...');
-      return;
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('دقة الموقع ضعيفة'),
+          content: Text(
+            'دقة الموقع الحالية ${_gpsAccuracyMeters?.round() ?? '-'} متر.\n\nهل تريد متابعة حفظ الموقع الحالي؟',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('متابعة'),
+            ),
+          ],
+        ),
+      );
+
+      if (proceed != true) {
+        return;
+      }
     }
     if (_selectedPoint == null || loadingAddress || _mapIsMoving) {
       return;
