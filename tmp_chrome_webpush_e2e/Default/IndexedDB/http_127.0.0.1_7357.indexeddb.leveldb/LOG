@@ -1,0 +1,19 @@
+2026/06/25-16:16:49.989 628c Reusing MANIFEST C:\Users\saudi\Desktop\delivery\restaurant_customer\tmp_chrome_webpush_e2e\Default\IndexedDB\http_127.0.0.1_7357.indexeddb.leveldb/MANIFEST-000001
+2026/06/25-16:16:49.990 628c Recovering log #4
+2026/06/25-16:16:49.990 628c Reusing old log C:\Users\saudi\Desktop\delivery\restaurant_customer\tmp_chrome_webpush_e2e\Default\IndexedDB\http_127.0.0.1_7357.indexeddb.leveldb/000004.log 
+2026/06/25-16:16:49.996 5f84 Manual compaction at level-0 from '\x00\x04\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x05\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/06/25-16:17:01.255 628c Level-0 table #8: started
+2026/06/25-16:17:01.257 628c Level-0 table #8: 1879 bytes OK
+2026/06/25-16:17:01.259 628c Delete type=0 #4
+2026/06/25-16:17:01.260 628c Manual compaction at level-0 from '\x00\x05\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x06\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/06/25-16:17:01.488 5f84 Level-0 table #10: started
+2026/06/25-16:17:01.491 5f84 Level-0 table #10: 638 bytes OK
+2026/06/25-16:17:01.492 5f84 Delete type=0 #7
+2026/06/25-16:17:01.493 628c Manual compaction at level-0 from '\x00\x06\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x07\x00\x00\x00' @ 0 : 0; will stop at '\x00\x06\x00\x00\x05' @ 186 : 1
+2026/06/25-16:17:01.493 628c Compacting 1@0 + 1@1 files
+2026/06/25-16:17:01.495 628c Generated table #11@0: 48 keys, 1299 bytes
+2026/06/25-16:17:01.495 628c Compacted 1@0 + 1@1 files => 1299 bytes
+2026/06/25-16:17:01.497 628c compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/06/25-16:17:01.497 628c Delete type=2 #10
+2026/06/25-16:17:01.498 628c Manual compaction at level-0 from '\x00\x06\x00\x00\x05' @ 186 : 1 .. '\x00\x07\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/06/25-16:17:13.282 6320 Manual compaction at level-0 from '\x00\x09\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x0a\x00\x00\x00' @ 0 : 0; will stop at (end)

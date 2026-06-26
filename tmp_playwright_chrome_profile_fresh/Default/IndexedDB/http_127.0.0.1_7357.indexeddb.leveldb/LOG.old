@@ -1,0 +1,14 @@
+2026/06/25-15:51:36.280 2e30 Reusing MANIFEST c:\Users\saudi\Desktop\delivery\restaurant_customer\tmp_playwright_chrome_profile_fresh\Default\IndexedDB\http_127.0.0.1_7357.indexeddb.leveldb/MANIFEST-000001
+2026/06/25-15:51:36.281 2e30 Recovering log #44
+2026/06/25-15:51:36.281 2e30 Reusing old log c:\Users\saudi\Desktop\delivery\restaurant_customer\tmp_playwright_chrome_profile_fresh\Default\IndexedDB\http_127.0.0.1_7357.indexeddb.leveldb/000044.log 
+2026/06/25-15:51:36.281 2e30 Delete type=2 #42
+2026/06/25-15:51:36.293 605c Level-0 table #49: started
+2026/06/25-15:51:36.295 605c Level-0 table #49: 647 bytes OK
+2026/06/25-15:51:36.297 605c Delete type=0 #44
+2026/06/25-15:51:36.298 2e30 Manual compaction at level-0 from '\x00\x13\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x14\x00\x00\x00' @ 0 : 0; will stop at '\x00\x13\x00\x00\x05' @ 583 : 1
+2026/06/25-15:51:36.298 2e30 Compacting 1@0 + 1@1 files
+2026/06/25-15:51:36.300 2e30 Generated table #50@0: 155 keys, 5064 bytes
+2026/06/25-15:51:36.301 2e30 Compacted 1@0 + 1@1 files => 5064 bytes
+2026/06/25-15:51:36.301 2e30 compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/06/25-15:51:36.302 2e30 Delete type=2 #49
+2026/06/25-15:51:36.303 2e30 Manual compaction at level-0 from '\x00\x13\x00\x00\x05' @ 583 : 1 .. '\x00\x14\x00\x00\x00' @ 0 : 0; will stop at (end)

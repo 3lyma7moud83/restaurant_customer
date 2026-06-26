@@ -1,0 +1,59 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="flutter.session_security_state.v1">{&quot;device_fingerprint&quot;:&quot;f2632391a896ba5fad3bab39dfc2655ea596e8ea&quot;,&quot;device_seed&quot;:&quot;96894ea97091eecc849992b735db17eb&quot;,&quot;last_user_id&quot;:null,&quot;refresh_token_hash&quot;:null,&quot;same_refresh_hash_hits&quot;:0,&quot;session_trust_score&quot;:100,&quot;last_remote_validation_at&quot;:null}</string>
+    <string name="flutter.supabase.auth.token">{
+    &quot;access_token&quot;:  &quot;eyJhbGciOiJFUzI1NiIsImtpZCI6ImY4MGVkNmVhLTg0NTctNDM5Yy05OWM0LThjNjM1NTBiZTI2NSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL21qYXVldWxrdG54c2dwcGl3aW1iLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiJmNWQxN2M2My1mOTI1LTQ0OTgtYmZkNy1jOWM2MWRmZjJjMDIiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzgyMzY1MDgxLCJpYXQiOjE3ODIzNjE0ODEsImVtYWlsIjoiZTJlY3VzdG9tZXIwNjI1YkBleGFtcGxlLmNvbSIsInBob25lIjoiIiwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiZW1haWwiLCJwcm92aWRlcnMiOlsiZW1haWwiXX0sInVzZXJfbWV0YWRhdGEiOnsiZW1haWwiOiJlMmVjdXN0b21lcjA2MjViQGV4YW1wbGUuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJFMkUgQ3VzdG9tZXIiLCJwaG9uZSI6IjAxMDEyMzQ1Njc4IiwicGhvbmVfdmVyaWZpZWQiOmZhbHNlLCJzdWIiOiJmNWQxN2M2My1mOTI1LTQ0OTgtYmZkNy1jOWM2MWRmZjJjMDIifSwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJwYXNzd29yZCIsInRpbWVzdGFtcCI6MTc4MjM2MTQ4MX1dLCJzZXNzaW9uX2lkIjoiMTc2M2Q2NjktMWUzOS00MmIyLTllMWItZjAwMjIyMWRmNmY5IiwiaXNfYW5vbnltb3VzIjpmYWxzZX0.l5vx4WviDKoZ7-yCrPgY7cy0eX6bEGg-E4HUWBhKugkByliaHu7CY4ndYKFlXcYM4kRe4_BXbJ_cztr3S295_w&quot;,
+    &quot;token_type&quot;:  &quot;bearer&quot;,
+    &quot;expires_in&quot;:  3600,
+    &quot;expires_at&quot;:  1782365081,
+    &quot;refresh_token&quot;:  &quot;j7hu2xiwp3ka&quot;,
+    &quot;user&quot;:  {
+                 &quot;id&quot;:  &quot;f5d17c63-f925-4498-bfd7-c9c61dff2c02&quot;,
+                 &quot;aud&quot;:  &quot;authenticated&quot;,
+                 &quot;role&quot;:  &quot;authenticated&quot;,
+                 &quot;email&quot;:  &quot;e2ecustomer0625b@example.com&quot;,
+                 &quot;email_confirmed_at&quot;:  &quot;2026-06-25T04:23:35.912726Z&quot;,
+                 &quot;phone&quot;:  &quot;&quot;,
+                 &quot;confirmed_at&quot;:  &quot;2026-06-25T04:23:35.912726Z&quot;,
+                 &quot;last_sign_in_at&quot;:  &quot;2026-06-25T04:24:41.573084658Z&quot;,
+                 &quot;app_metadata&quot;:  {
+                                      &quot;provider&quot;:  &quot;email&quot;,
+                                      &quot;providers&quot;:  [
+                                                        &quot;email&quot;
+                                                    ]
+                                  },
+                 &quot;user_metadata&quot;:  {
+                                       &quot;email&quot;:  &quot;e2ecustomer0625b@example.com&quot;,
+                                       &quot;email_verified&quot;:  true,
+                                       &quot;name&quot;:  &quot;E2E Customer&quot;,
+                                       &quot;phone&quot;:  &quot;01012345678&quot;,
+                                       &quot;phone_verified&quot;:  false,
+                                       &quot;sub&quot;:  &quot;f5d17c63-f925-4498-bfd7-c9c61dff2c02&quot;
+                                   },
+                 &quot;identities&quot;:  [
+                                    {
+                                        &quot;identity_id&quot;:  &quot;7051d189-f716-4887-845e-1e7b73ecc0e4&quot;,
+                                        &quot;id&quot;:  &quot;f5d17c63-f925-4498-bfd7-c9c61dff2c02&quot;,
+                                        &quot;user_id&quot;:  &quot;f5d17c63-f925-4498-bfd7-c9c61dff2c02&quot;,
+                                        &quot;identity_data&quot;:  {
+                                                              &quot;email&quot;:  &quot;e2ecustomer0625b@example.com&quot;,
+                                                              &quot;email_verified&quot;:  false,
+                                                              &quot;name&quot;:  &quot;E2E Customer&quot;,
+                                                              &quot;phone&quot;:  &quot;01012345678&quot;,
+                                                              &quot;phone_verified&quot;:  false,
+                                                              &quot;sub&quot;:  &quot;f5d17c63-f925-4498-bfd7-c9c61dff2c02&quot;
+                                                          },
+                                        &quot;provider&quot;:  &quot;email&quot;,
+                                        &quot;last_sign_in_at&quot;:  &quot;2026-06-25T04:23:35.899724Z&quot;,
+                                        &quot;created_at&quot;:  &quot;2026-06-25T04:23:35.899774Z&quot;,
+                                        &quot;updated_at&quot;:  &quot;2026-06-25T04:23:35.899774Z&quot;,
+                                        &quot;email&quot;:  &quot;e2ecustomer0625b@example.com&quot;
+                                    }
+                                ],
+                 &quot;created_at&quot;:  &quot;2026-06-25T04:23:35.843267Z&quot;,
+                 &quot;updated_at&quot;:  &quot;2026-06-25T04:24:41.597216Z&quot;,
+                 &quot;is_anonymous&quot;:  false
+             },
+    &quot;weak_password&quot;:  null
+}</string>
+</map>

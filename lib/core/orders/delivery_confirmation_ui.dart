@@ -81,7 +81,7 @@ class DeliveryConfirmationBanner extends StatelessWidget {
               SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'بانتظار تأكيد استلام الطلب',
+                  'يرجى تأكيد استلام الطلب لإكمال العملية.',
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     color: Color(0xFF3B1B7A),
@@ -98,7 +98,14 @@ class DeliveryConfirmationBanner extends StatelessWidget {
             child: FilledButton.icon(
               onPressed: onOpenConfirmation,
               icon: const Icon(Icons.check_circle_outline_rounded),
-              label: const Text('تأكيد الاستلام'),
+              label: const Text('✅ تأكيد الاستلام'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                textStyle: const TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 15,
+                ),
+              ),
             ),
           ),
         ],

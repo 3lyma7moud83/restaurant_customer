@@ -511,9 +511,16 @@ function buildValidatedNotificationPresentation(payload) {
       tag,
       requireInteraction: true,
       renotify: true,
-      vibrate: NOTIFICATION_VIBRATION_PATTERN,
+      ...(shouldUseNotificationVibration()
+        ? { vibrate: NOTIFICATION_VIBRATION_PATTERN }
+        : {}),
     },
   };
+}
+
+function shouldUseNotificationVibration() {
+  const userAgent = self.navigator?.userAgent || '';
+  return /android/i.test(userAgent);
 }
 
 function buildBackgroundNotificationData(payload) {
@@ -1123,6 +1130,11 @@ function normalizeBrandingText(value) {
 }
 
 function resolveTargetPath(data) {
+  const inferredOrderId =
+    typeof data.order_id === 'string' ? data.order_id.trim() : '';
+  const trackingPath = inferredOrderId
+    ? `/?screen=order_tracking&order_id=${encodeURIComponent(inferredOrderId)}`
+    : '';
   const explicitCandidates = [
     data.click_action,
     data.link,
@@ -1131,18 +1143,71 @@ function resolveTargetPath(data) {
   ];
   for (const candidate of explicitCandidates) {
     const normalized = normalizeTargetPath(candidate);
-    if (normalized) {
-      return normalized;
+    if (!normalized) {
+      continue;
     }
+    if (trackingPath && isGenericOrdersTarget(normalized)) {
+      return trackingPath;
+    }
+    return normalized;
   }
 
   const rawScreen =
     typeof data.screen === 'string' ? data.screen.trim().toLowerCase() : '';
   if (rawScreen) {
-    return `/?screen=${encodeURIComponent(rawScreen)}`;
+    if (trackingPath && isGenericOrdersScreen(rawScreen)) {
+      return trackingPath;
+    }
+    const query = new URLSearchParams({
+      screen: rawScreen,
+    });
+    if (inferredOrderId) {
+      query.set('order_id', inferredOrderId);
+    }
+    return `/?${query.toString()}`;
+  }
+
+  if (trackingPath) {
+    return trackingPath;
   }
 
   return '/';
+}
+
+function isGenericOrdersScreen(screen) {
+  return (
+    screen === 'orders' ||
+    screen === 'order' ||
+    screen === 'my_orders'
+  );
+}
+
+function isGenericOrdersTarget(pathOrUrl) {
+  try {
+    const url = new URL(pathOrUrl, self.location.origin);
+    const screen = sanitizeTextValue(url.searchParams.get('screen'));
+    if (url.searchParams.has('order_id')) {
+      return false;
+    }
+    if (screen && !isGenericOrdersScreen(screen.toLowerCase())) {
+      return false;
+    }
+
+    const normalizedPath = (url.pathname || '/').toLowerCase();
+    return (
+      isGenericOrdersScreen((screen || '').toLowerCase()) ||
+      normalizedPath === '/orders' ||
+      normalizedPath.endsWith('/orders')
+    );
+  } catch (_) {
+    const normalized = pathOrUrl.trim().toLowerCase();
+    return (
+      normalized === '/orders' ||
+      normalized === 'orders' ||
+      normalized === '/?screen=orders' ||
+      normalized === '?screen=orders'
+    );
+  }
 }
 
 function normalizeTargetPath(candidate) {
@@ -1155,8 +1220,22 @@ function normalizeTargetPath(candidate) {
     return null;
   }
 
-  if (/^https?:\/\//i.test(trimmed)) {
-    return trimmed;
+  if (/^(?:https?:)?\/\//i.test(trimmed)) {
+    try {
+      const absolute = new URL(trimmed, self.location.origin);
+      if (absolute.origin !== self.location.origin) {
+        console.warn('[FCM][sw] Ignoring external notification URL:', trimmed);
+        return null;
+      }
+      return `${absolute.pathname || '/'}${absolute.search || ''}${absolute.hash || ''}`;
+    } catch (_) {
+      console.warn('[FCM][sw] Ignoring invalid notification URL:', trimmed);
+      return null;
+    }
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
+    console.warn('[FCM][sw] Ignoring unsupported notification target:', trimmed);
+    return null;
   }
   if (trimmed.startsWith('/')) {
     return trimmed;

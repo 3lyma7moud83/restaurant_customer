@@ -13,6 +13,18 @@ enum OrderStatusStage {
 const String awaitingCustomerConfirmationStatus =
     'awaiting_customer_confirmation';
 
+const Set<String> blockingActiveOrderStatuses = <String>{
+  'pending',
+  'pending_cashier',
+  'accepted',
+  'prepared',
+  'ready',
+  'assigned',
+  'ready_for_delivery',
+  'delivered',
+  awaitingCustomerConfirmationStatus,
+};
+
 class OrderStatusInfo {
   const OrderStatusInfo({
     required this.stage,
@@ -30,7 +42,8 @@ class OrderStatusInfo {
 
   bool get canTrack {
     return stage == OrderStatusStage.accepted ||
-        stage == OrderStatusStage.onTheWay;
+        stage == OrderStatusStage.onTheWay ||
+        stage == OrderStatusStage.awaitingCustomerConfirmation;
   }
 
   bool get shouldTrackDriver => stage == OrderStatusStage.onTheWay;
@@ -80,6 +93,10 @@ OrderStatusInfo resolveOrderStatus(String? rawStatus) {
       );
     case 'accepted':
     case 'confirmed':
+    case 'prepared':
+    case 'ready':
+    case 'assigned':
+    case 'ready_for_delivery':
       return const OrderStatusInfo(
         stage: OrderStatusStage.accepted,
         text: 'قيد التحضير',
@@ -103,7 +120,7 @@ OrderStatusInfo resolveOrderStatus(String? rawStatus) {
     case awaitingCustomerConfirmationStatus:
       return const OrderStatusInfo(
         stage: OrderStatusStage.awaitingCustomerConfirmation,
-        text: 'بانتظار تأكيد الاستلام',
+        text: 'تم التسليم - بانتظار تأكيد الاستلام',
         color: Color(0xFF7C3AED),
         icon: Icons.fact_check_rounded,
         rawValue: awaitingCustomerConfirmationStatus,
@@ -116,7 +133,7 @@ OrderStatusInfo resolveOrderStatus(String? rawStatus) {
     case 'received':
       return const OrderStatusInfo(
         stage: OrderStatusStage.completed,
-        text: 'تم التسليم',
+        text: 'اكتمل الطلب',
         color: Color(0xFF2E7D32),
         icon: Icons.task_alt_rounded,
         rawValue: 'completed',
@@ -126,7 +143,7 @@ OrderStatusInfo resolveOrderStatus(String? rawStatus) {
     case 'rejected':
       return const OrderStatusInfo(
         stage: OrderStatusStage.cancelled,
-        text: 'ملغي',
+        text: 'تم إلغاء الطلب',
         color: Color(0xFFC62828),
         icon: Icons.cancel_rounded,
         rawValue: 'cancelled',
@@ -170,4 +187,12 @@ String normalizeOrderStatus(String? rawStatus) {
 
 bool isAwaitingCustomerConfirmationStatus(String? rawStatus) {
   return normalizeOrderStatus(rawStatus) == awaitingCustomerConfirmationStatus;
+}
+
+bool isBlockingActiveOrderStatus(String? rawStatus) {
+  return blockingActiveOrderStatuses.contains(normalizeOrderStatus(rawStatus));
+}
+
+bool shouldOpenTrackingPageForOrderStatus(String? rawStatus) {
+  return isBlockingActiveOrderStatus(rawStatus);
 }

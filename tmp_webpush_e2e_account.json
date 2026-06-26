@@ -1,0 +1,59 @@
+{
+    "email":  "webpush-e2e-1782393220@example.com",
+    "password":  "WebPushE2E!2026",
+    "session":  {
+                    "access_token":  "eyJhbGciOiJFUzI1NiIsImtpZCI6ImY4MGVkNmVhLTg0NTctNDM5Yy05OWM0LThjNjM1NTBiZTI2NSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL21qYXVldWxrdG54c2dwcGl3aW1iLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiIyNmQ3ZjgxZC00M2JmLTQ4YjUtYjkzMi04NDU4YzAxN2I1YjgiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzgyMzk2ODYwLCJpYXQiOjE3ODIzOTMyNjAsImVtYWlsIjoid2VicHVzaC1lMmUtMTc4MjM5MzIyMEBleGFtcGxlLmNvbSIsInBob25lIjoiIiwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiZW1haWwiLCJwcm92aWRlcnMiOlsiZW1haWwiXX0sInVzZXJfbWV0YWRhdGEiOnsiZW1haWwiOiJ3ZWJwdXNoLWUyZS0xNzgyMzkzMjIwQGV4YW1wbGUuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJXZWIgUHVzaCBFMkUiLCJwaG9uZSI6IjAxMDEwMDAwMDAwIiwicGhvbmVfdmVyaWZpZWQiOmZhbHNlLCJzdWIiOiIyNmQ3ZjgxZC00M2JmLTQ4YjUtYjkzMi04NDU4YzAxN2I1YjgifSwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJwYXNzd29yZCIsInRpbWVzdGFtcCI6MTc4MjM5MzI2MH1dLCJzZXNzaW9uX2lkIjoiNjJkODcxOTMtNzBkNS00MGEwLWJiMzgtZGJhOTI4ODM4M2E5IiwiaXNfYW5vbnltb3VzIjpmYWxzZX0.-TqlIHmaCd-dSx5G65qopuYulXK9RfxjMTFksN_fLZYaY0zyC4IPruyepZW0ghVXq0hUGU3fG0VQlcxxBicjzQ",
+                    "token_type":  "bearer",
+                    "expires_in":  3600,
+                    "expires_at":  1782396860,
+                    "refresh_token":  "cr3ymfuoqpwd",
+                    "user":  {
+                                 "id":  "26d7f81d-43bf-48b5-b932-8458c017b5b8",
+                                 "aud":  "authenticated",
+                                 "role":  "authenticated",
+                                 "email":  "webpush-e2e-1782393220@example.com",
+                                 "email_confirmed_at":  "2026-06-25T13:13:40.908512Z",
+                                 "phone":  "",
+                                 "confirmed_at":  "2026-06-25T13:13:40.908512Z",
+                                 "last_sign_in_at":  "2026-06-25T13:14:20.208740127Z",
+                                 "app_metadata":  {
+                                                      "provider":  "email",
+                                                      "providers":  [
+                                                                        "email"
+                                                                    ]
+                                                  },
+                                 "user_metadata":  {
+                                                       "email":  "webpush-e2e-1782393220@example.com",
+                                                       "email_verified":  true,
+                                                       "name":  "Web Push E2E",
+                                                       "phone":  "01010000000",
+                                                       "phone_verified":  false,
+                                                       "sub":  "26d7f81d-43bf-48b5-b932-8458c017b5b8"
+                                                   },
+                                 "identities":  [
+                                                    {
+                                                        "identity_id":  "c11d14fa-bb75-4de2-a0b9-40252d8dd159",
+                                                        "id":  "26d7f81d-43bf-48b5-b932-8458c017b5b8",
+                                                        "user_id":  "26d7f81d-43bf-48b5-b932-8458c017b5b8",
+                                                        "identity_data":  {
+                                                                              "email":  "webpush-e2e-1782393220@example.com",
+                                                                              "email_verified":  false,
+                                                                              "name":  "Web Push E2E",
+                                                                              "phone":  "01010000000",
+                                                                              "phone_verified":  false,
+                                                                              "sub":  "26d7f81d-43bf-48b5-b932-8458c017b5b8"
+                                                                          },
+                                                        "provider":  "email",
+                                                        "last_sign_in_at":  "2026-06-25T13:13:40.897489Z",
+                                                        "created_at":  "2026-06-25T13:13:40.89754Z",
+                                                        "updated_at":  "2026-06-25T13:13:40.89754Z",
+                                                        "email":  "webpush-e2e-1782393220@example.com"
+                                                    }
+                                                ],
+                                 "created_at":  "2026-06-25T13:13:40.8229Z",
+                                 "updated_at":  "2026-06-25T13:14:20.220469Z",
+                                 "is_anonymous":  false
+                             },
+                    "weak_password":  null
+                }
+}

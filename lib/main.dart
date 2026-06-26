@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'core/auth/oauth_callback_cleaner.dart';
 import 'core/config/mapbox_setup.dart';
 import 'core/errors/global_error_handler.dart';
 import 'core/localization/app_localizations.dart';
@@ -33,8 +32,6 @@ Future<void> main() async {
   await GlobalErrorHandler.run(
     appName: ErrorLogger.appName,
     appRunner: () async {
-      WidgetsFlutterBinding.ensureInitialized();
-      _bootstrapLog('Widgets binding initialized.');
       final bootstrapResult = await _bootstrap();
       _bootstrapLog(
         'Bootstrap completed. ok=${bootstrapResult.ok}, '
@@ -77,6 +74,7 @@ class _CustomerAppState extends State<CustomerApp> {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(_lifecycleObserver);
+    unawaited(AppNotificationService.instance.dispose());
     unawaited(PaymentReconciliationService.instance.dispose());
     unawaited(OfflineOrderQueueService.instance.dispose());
     unawaited(AnalyticsIntegrityService.instance.dispose());
@@ -196,13 +194,13 @@ Future<BootstrapResult> _bootstrap() async {
           autoRefreshToken: true,
           detectSessionInUri: true,
         ),
-     );
- // clearOAuthCallbackParameters();
- _bootstrapLog('Supabase initialized.');
-} else {
- // clearOAuthCallbackParameters();
- _bootstrapLog('Supabase already initialized.');
-}
+      );
+      // clearOAuthCallbackParameters();
+      _bootstrapLog('Supabase initialized.');
+    } else {
+      // clearOAuthCallbackParameters();
+      _bootstrapLog('Supabase already initialized.');
+    }
   } catch (error, stack) {
     _bootstrapLog('Supabase initialization failed: $error');
     await ErrorLogger.logError(

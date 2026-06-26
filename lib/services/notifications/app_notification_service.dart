@@ -12,6 +12,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/config/app_firebase_options.dart';
+import '../../core/orders/order_status_utils.dart';
+import '../../core/realtime/realtime_channel_controller.dart';
 import '../../core/services/error_logger.dart';
 import '../../core/stability/notification_dedupe_service.dart';
 import '../../core/stability/rpc_security_service.dart';
@@ -19,6 +21,9 @@ import '../../core/stability/stability_metrics_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/ui/input_focus_guard.dart';
 import '../../pages/orders_page.dart';
+import '../../pages/order_details_page.dart';
+import '../../pages/order_tracking_page.dart';
+import '../orders_service.dart';
 import '../session_manager.dart';
 import 'web_push_bridge.dart';
 
@@ -40,12 +45,19 @@ const String _registerTokenRpc = 'upsert_customer_device_token';
 const String _deactivateTokenRpc = 'deactivate_customer_device_token';
 const String _installationIdStorageKey =
     'customer_notification_installation_id';
+const String _webPermissionPromptRequestedStorageKey =
+    'customer_web_notification_permission_requested';
 const String _backgroundTapPayloadsStorageKey =
     'customer_pending_notification_tap_payloads';
 const int _maxPersistedBackgroundTapPayloads = 10;
 const int _maxTokenSyncRetries = 12;
 const Duration _foregroundMessageDedupWindow = Duration(seconds: 8);
 const Duration _interactionDedupWindow = Duration(seconds: 3);
+const Duration _redundantTokenSyncWindow = Duration(seconds: 5);
+const Duration _awaitingConfirmationReminderInterval = Duration(minutes: 10);
+const String _awaitingConfirmationNotificationTitle = '📦 تم تسليم طلبك';
+const String _awaitingConfirmationNotificationBody =
+    'يرجى تأكيد استلام الطلب لإكمال الطلب.';
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -101,7 +113,7 @@ Future<void> _persistBackgroundNotificationTapPayload(String payload) async {
   }
 }
 
-class AppNotificationService {
+class AppNotificationService with WidgetsBindingObserver {
   AppNotificationService._();
 
   static final AppNotificationService instance = AppNotificationService._();
@@ -116,6 +128,8 @@ class AppNotificationService {
   StreamSubscription<RemoteMessage>? _foregroundSubscription;
   StreamSubscription<RemoteMessage>? _openedAppSubscription;
   Timer? _tokenSyncRetryTimer;
+  RealtimeChannelController? _orderEventsChannelController;
+  Timer? _webAwaitingConfirmationReminderTimer;
 
   bool _initialized = false;
   bool _available = false;
@@ -124,10 +138,20 @@ class AppNotificationService {
   bool _webPermissionPromptAttached = false;
   bool _drainInteractionScheduled = false;
   bool _messagingListenersAttached = false;
+  bool _widgetsBindingObserverAttached = false;
+  bool _webPermissionPromptRequested = false;
+  Future<void>? _orderEventSubscriptionSync;
   String? _lastKnownToken;
   String? _lastKnownUserId;
+  String? _lastSuccessfulTokenSyncSignature;
   String? _installationId;
+  String? _orderEventsUserId;
+  String? _awaitingConfirmationOrderId;
+  String? _awaitingConfirmationStateKey;
+  Map<String, String>? _awaitingConfirmationPayload;
+  DateTime? _lastSuccessfulTokenSyncAt;
   int _tokenSyncRetryAttempt = 0;
+  bool _webPushEndpointUnavailable = false;
   final List<_NotificationTapIntent> _pendingNotificationTaps =
       <_NotificationTapIntent>[];
   final Map<String, DateTime> _recentForegroundMessages = <String, DateTime>{};
@@ -169,6 +193,8 @@ class AppNotificationService {
       return;
     }
     _initialized = true;
+    _attachWidgetsBindingObserver();
+    await _restoreWebPermissionPromptState();
 
     if (kIsWeb) {
       final webConfigError = AppFirebaseOptions.configurationError;
@@ -222,9 +248,12 @@ class AppNotificationService {
         if (user == null) {
           _lastKnownUserId = null;
           _resetTokenSyncRetry();
+          unawaited(_disposeOrderEventSubscription());
+          unawaited(_clearAwaitingCustomerConfirmationState());
           return;
         }
         _lastKnownUserId = user.id;
+        unawaited(_syncOrderEventSubscriptionForUser(user.id));
         unawaited(syncTokenIfPossible());
       });
 
@@ -257,10 +286,21 @@ class AppNotificationService {
           '[FCM] startup token sync deferred until Supabase authentication is available.',
         );
       } else {
-        final token = await _loadCurrentToken();
-        debugPrint('[FCM] startup token: ${_maskToken(token)}');
-        _logWebTokenDebug(token, reason: 'startup');
-        await _safeSyncToken(token, reason: 'startup');
+        await _syncOrderEventSubscriptionForUser(currentUser.id);
+        if (kIsWeb) {
+          debugPrint(
+            '[FCM] startup token sync skipped on web; permission bootstrap already handles token sync.',
+          );
+        } else {
+          final token = await _loadCurrentToken();
+          debugPrint('[FCM] startup token: ${_maskToken(token)}');
+          _logWebTokenDebug(token, reason: 'startup');
+          await _safeSyncToken(token, reason: 'startup');
+        }
+      }
+
+      if (kIsWeb) {
+        _queueInitialWebLaunchNotificationTap();
       }
     } catch (error, stack) {
       await ErrorLogger.logError(
@@ -290,6 +330,19 @@ class AppNotificationService {
 
     try {
       final token = await _loadCurrentToken();
+      final normalizedToken = token?.trim();
+      if (normalizedToken != null &&
+          normalizedToken.isNotEmpty &&
+          _wasTokenSyncedRecently(
+            userId: user.id,
+            token: normalizedToken,
+          )) {
+        debugPrint(
+          '[FCM] token sync skipped because the current token was synced recently.',
+        );
+        _resetTokenSyncRetry();
+        return;
+      }
       await _safeSyncToken(token, reason: 'manual_sync');
     } catch (error, stack) {
       await ErrorLogger.logError(
@@ -321,15 +374,12 @@ class AppNotificationService {
 
     final currentPermission = currentWebNotificationPermission();
     if (currentPermission != null && currentPermission != 'granted') {
-      final permission = await ensureWebNotificationPermission();
-      _logWebPermissionState(
-        permission ?? currentPermission,
-        source: 'token_load_guard',
-      );
-      if (permission != 'granted') {
-        debugPrint('[FCM][web] notification permission is not granted.');
-        return null;
+      _logWebPermissionState(currentPermission, source: 'token_load_guard');
+      if (currentPermission == 'default') {
+        _scheduleWebPermissionPromptOnFirstGesture();
       }
+      debugPrint('[FCM][web] notification permission is not granted.');
+      return null;
     }
 
     await ensureWebMessagingServiceWorkerReady();
@@ -347,6 +397,7 @@ class AppNotificationService {
         final token = await _messagingInstance.getToken(vapidKey: vapidKey);
         final normalized = token?.trim();
         if (normalized != null && normalized.isNotEmpty) {
+          _webPushEndpointUnavailable = false;
           debugPrint(
             '[FCM][web] token generated (attempt ${attempt + 1}): '
             '${_maskToken(normalized)}',
@@ -359,6 +410,10 @@ class AppNotificationService {
         }
       } catch (error, stack) {
         if (attempt == 2) {
+          if (_isIgnorableWebPushEndpointError(error)) {
+            _markWebPushEndpointUnavailable(error);
+            return null;
+          }
           await ErrorLogger.logError(
             module: 'notification_service.load_current_token.web',
             error: error,
@@ -382,11 +437,80 @@ class AppNotificationService {
     await _tokenRefreshSubscription?.cancel();
     await _foregroundSubscription?.cancel();
     await _openedAppSubscription?.cancel();
+    await _disposeOrderEventSubscription();
     _resetTokenSyncRetry();
+    _cancelWebAwaitingReminderTimer();
     _pendingNotificationTaps.clear();
     _recentForegroundMessages.clear();
     _recentInteractionSignatures.clear();
     _messagingListenersAttached = false;
+    if (_widgetsBindingObserverAttached) {
+      WidgetsBinding.instance.removeObserver(this);
+      _widgetsBindingObserverAttached = false;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_awaitingConfirmationOrderId != null) {
+      if (_isAppInForeground) {
+        unawaited(_pauseAwaitingCustomerConfirmationReminders());
+      } else {
+        unawaited(_resumeAwaitingCustomerConfirmationReminders());
+      }
+    }
+
+    if (state == AppLifecycleState.resumed) {
+      if (kIsWeb) {
+        _queueInitialWebLaunchNotificationTap();
+      }
+      unawaited(syncTokenIfPossible());
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      if (userId != null && userId.isNotEmpty) {
+        unawaited(_syncAwaitingCustomerConfirmationStateFromServer(userId));
+      }
+    }
+  }
+
+  void _attachWidgetsBindingObserver() {
+    if (_widgetsBindingObserverAttached) {
+      return;
+    }
+    WidgetsBinding.instance.addObserver(this);
+    _widgetsBindingObserverAttached = true;
+  }
+
+  Future<void> _restoreWebPermissionPromptState() async {
+    if (!kIsWeb) {
+      return;
+    }
+    final preferences = await SharedPreferences.getInstance();
+    _webPermissionPromptRequested =
+        preferences.getBool(_webPermissionPromptRequestedStorageKey) ?? false;
+  }
+
+  Future<void> _persistWebPermissionPromptState() async {
+    if (!kIsWeb) {
+      return;
+    }
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(
+      _webPermissionPromptRequestedStorageKey,
+      _webPermissionPromptRequested,
+    );
+  }
+
+  bool get _isAppInForeground {
+    final lifecycleState = WidgetsBinding.instance.lifecycleState;
+    final lifecycleForeground =
+        lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
+    if (!lifecycleForeground) {
+      return false;
+    }
+    if (kIsWeb) {
+      return isWebDocumentVisible();
+    }
+    return true;
   }
 
   void _attachMessagingListeners() {
@@ -537,27 +661,23 @@ class AppNotificationService {
 
   Future<void> _requestNotificationPermissions() async {
     NotificationSettings? settings;
-    try {
-      final permissionRequest = _messagingInstance.requestPermission(
-        alert: true,
-        badge: true,
-        sound: true,
-        provisional: false,
-      );
-      settings = kIsWeb
-          ? await permissionRequest.timeout(const Duration(seconds: 12))
-          : await permissionRequest;
-    } on TimeoutException {
-      debugPrint(
-        '[FCM][web] permission request timed out while waiting for user action.',
-      );
-    } catch (error, stack) {
-      await ErrorLogger.logError(
-        module: 'notification_service.request_permission',
-        error: error,
-        stack: stack,
-      );
-      debugPrint('[FCM] permission request failed: $error');
+    if (!kIsWeb) {
+      try {
+        final permissionRequest = _messagingInstance.requestPermission(
+          alert: true,
+          badge: true,
+          sound: true,
+          provisional: false,
+        );
+        settings = await permissionRequest;
+      } catch (error, stack) {
+        await ErrorLogger.logError(
+          module: 'notification_service.request_permission',
+          error: error,
+          stack: stack,
+        );
+        debugPrint('[FCM] permission request failed: $error');
+      }
     }
     if (settings != null) {
       debugPrint(
@@ -592,26 +712,26 @@ class AppNotificationService {
         return;
       }
       try {
-        final webPermission = await ensureWebNotificationPermission();
-        if (webPermission != null) {
-          _logWebPermissionState(webPermission, source: 'request_permission');
-          debugPrint('[FCM][web] browser permission: $webPermission');
-          if (webPermission == 'default') {
-            _scheduleWebPermissionPromptOnFirstGesture();
-          } else if (webPermission == 'granted') {
-            final refreshedToken = await _loadCurrentToken();
-            await _safeSyncToken(
-              refreshedToken,
-              reason: 'web_permission_granted',
-            );
-          } else if (webPermission == 'denied') {
-            debugPrint(
-              '[FCM][web] browser permission is denied. Enable notifications '
-              'from browser site settings for this origin, then tap once '
-              'inside the app to retry token sync.',
-            );
-            _scheduleWebPermissionPromptOnFirstGesture(allowDenied: true);
-          }
+        final webPermission = currentWebNotificationPermission();
+        if (webPermission == null) {
+          return;
+        }
+        _logWebPermissionState(webPermission, source: 'request_permission');
+        debugPrint('[FCM][web] browser permission: $webPermission');
+        if (webPermission == 'granted') {
+          final refreshedToken = await _loadCurrentToken();
+          await _safeSyncToken(
+            refreshedToken,
+            reason: 'web_permission_granted',
+          );
+        } else if (webPermission == 'default') {
+          _scheduleWebPermissionPromptOnFirstGesture();
+        } else if (webPermission == 'denied') {
+          debugPrint(
+            '[FCM][web] browser permission is denied. Enable notifications '
+            'from browser site settings for this origin, then refresh the app '
+            'to retry token sync.',
+          );
         }
       } catch (error, stack) {
         await ErrorLogger.logError(
@@ -631,8 +751,8 @@ class AppNotificationService {
     }
 
     final permission = currentWebNotificationPermission();
-    final shouldAttach =
-        permission == 'default' || (allowDenied && permission == 'denied');
+    final shouldAttach = !_webPermissionPromptRequested &&
+        (permission == 'default' || (allowDenied && permission == 'denied'));
     if (!shouldAttach) {
       return;
     }
@@ -660,6 +780,11 @@ class AppNotificationService {
     }
 
     try {
+      if (_webPermissionPromptRequested) {
+        return;
+      }
+      _webPermissionPromptRequested = true;
+      await _persistWebPermissionPromptState();
       final permission = await ensureWebNotificationPermission();
       if (permission != null) {
         _logWebPermissionState(permission, source: 'after_gesture');
@@ -671,11 +796,8 @@ class AppNotificationService {
           refreshedToken,
           reason: 'web_permission_after_gesture',
         );
-      } else if (permission == 'default') {
-        _scheduleWebPermissionPromptOnFirstGesture();
       } else if (permission == 'denied') {
-        debugPrint('[FCM][web] browser permission still denied after gesture.');
-        _scheduleWebPermissionPromptOnFirstGesture(allowDenied: true);
+        debugPrint('[FCM][web] browser permission denied after gesture.');
       }
     } catch (error, stack) {
       await ErrorLogger.logError(
@@ -684,6 +806,394 @@ class AppNotificationService {
         stack: stack,
       );
     }
+  }
+
+  Future<void> _syncOrderEventSubscriptionForUser(String userId) async {
+    final normalizedUserId = userId.trim();
+    final pendingSync = _orderEventSubscriptionSync;
+    if (pendingSync != null) {
+      await pendingSync;
+    }
+
+    final syncCompleter = Completer<void>();
+    _orderEventSubscriptionSync = syncCompleter.future;
+    if (normalizedUserId.isEmpty) {
+      try {
+        await _disposeOrderEventSubscription();
+        return;
+      } finally {
+        syncCompleter.complete();
+        if (identical(_orderEventSubscriptionSync, syncCompleter.future)) {
+          _orderEventSubscriptionSync = null;
+        }
+      }
+    }
+
+    try {
+      if (_orderEventsUserId == normalizedUserId &&
+          _orderEventsChannelController != null) {
+        await _syncAwaitingCustomerConfirmationStateFromServer(
+          normalizedUserId,
+        );
+        return;
+      }
+
+      await _disposeOrderEventSubscription();
+      _orderEventsUserId = normalizedUserId;
+      _orderEventsChannelController = RealtimeChannelController(
+        client: Supabase.instance.client,
+        topicPrefix: 'customer-order-events-$normalizedUserId',
+        onSubscribed: (_) async {
+          await _syncAwaitingCustomerConfirmationStateFromServer(
+            normalizedUserId,
+          );
+        },
+      );
+
+      _orderEventsChannelController!.subscribe((client, channelName) {
+        return client.channel(channelName).onPostgresChanges(
+              event: PostgresChangeEvent.all,
+              schema: 'public',
+              table: 'orders',
+              filter: PostgresChangeFilter(
+                type: PostgresChangeFilterType.eq,
+                column: 'customer_id',
+                value: normalizedUserId,
+              ),
+              callback: _handleTrackedOrderRealtimeChange,
+            );
+      });
+
+      await _syncAwaitingCustomerConfirmationStateFromServer(normalizedUserId);
+    } finally {
+      syncCompleter.complete();
+      if (identical(_orderEventSubscriptionSync, syncCompleter.future)) {
+        _orderEventSubscriptionSync = null;
+      }
+    }
+  }
+
+  Future<void> _disposeOrderEventSubscription() async {
+    _orderEventsUserId = null;
+    final controller = _orderEventsChannelController;
+    _orderEventsChannelController = null;
+    if (controller != null) {
+      await controller.dispose();
+    }
+  }
+
+  Future<void> _syncAwaitingCustomerConfirmationStateFromServer(
+    String userId,
+  ) async {
+    final normalizedUserId = userId.trim();
+    if (normalizedUserId.isEmpty) {
+      return;
+    }
+
+    try {
+      final order = await OrdersService.getLatestActiveOrder(
+        normalizedUserId,
+        forceRefresh: true,
+      );
+      if (order == null ||
+          !isAwaitingCustomerConfirmationStatus(order['status'])) {
+        await _clearAwaitingCustomerConfirmationState();
+        return;
+      }
+      await _activateAwaitingCustomerConfirmationForOrder(
+        order,
+        notifyImmediately: false,
+        source: 'server_sync',
+      );
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'notification_service.sync_awaiting_confirmation_state',
+        error: error,
+        stack: stack,
+      );
+    }
+  }
+
+  void _handleTrackedOrderRealtimeChange(PostgresChangePayload payload) {
+    switch (payload.eventType) {
+      case PostgresChangeEvent.delete:
+        final deletedOrderId =
+            _normalizeDataValue(payload.oldRecord['id']?.toString());
+        if (deletedOrderId != null &&
+            deletedOrderId == _awaitingConfirmationOrderId) {
+          unawaited(_clearAwaitingCustomerConfirmationState());
+        }
+        return;
+      case PostgresChangeEvent.insert:
+      case PostgresChangeEvent.update:
+        final nextOrder = Map<String, dynamic>.from(payload.newRecord);
+        final previousOrder = payload.oldRecord.isEmpty
+            ? null
+            : Map<String, dynamic>.from(payload.oldRecord);
+        unawaited(
+          _handleTrackedOrderStateUpdate(
+            previousOrder: previousOrder,
+            nextOrder: nextOrder,
+            source: 'realtime_${payload.eventType.name}',
+          ),
+        );
+        return;
+      case PostgresChangeEvent.all:
+        return;
+    }
+  }
+
+  Future<void> _handleTrackedOrderStateUpdate({
+    required Map<String, dynamic>? previousOrder,
+    required Map<String, dynamic> nextOrder,
+    required String source,
+  }) async {
+    final nextOrderId = OrdersService.idOf(nextOrder);
+    if (nextOrderId.isEmpty) {
+      return;
+    }
+
+    final previousStatus = previousOrder == null
+        ? ''
+        : OrdersService.normalizedStatusOf(previousOrder);
+    final nextStatus = OrdersService.normalizedStatusOf(nextOrder);
+
+    if (nextStatus == awaitingCustomerConfirmationStatus) {
+      await _activateAwaitingCustomerConfirmationForOrder(
+        nextOrder,
+        notifyImmediately: previousStatus != awaitingCustomerConfirmationStatus,
+        source: source,
+      );
+      return;
+    }
+
+    if (_awaitingConfirmationOrderId == nextOrderId ||
+        previousStatus == awaitingCustomerConfirmationStatus) {
+      await _clearAwaitingCustomerConfirmationState();
+    }
+  }
+
+  Future<void> _activateAwaitingCustomerConfirmationForOrder(
+    Map<String, dynamic> order, {
+    required bool notifyImmediately,
+    required String source,
+  }) async {
+    final orderId = OrdersService.idOf(order);
+    if (orderId.isEmpty) {
+      return;
+    }
+
+    final nextStateKey = _awaitingConfirmationKeyForOrder(order);
+    final stateChanged = _awaitingConfirmationStateKey != nextStateKey ||
+        _awaitingConfirmationOrderId != orderId;
+
+    _awaitingConfirmationOrderId = orderId;
+    _awaitingConfirmationStateKey = nextStateKey;
+    _awaitingConfirmationPayload =
+        _buildAwaitingCustomerConfirmationPayload(order);
+
+    if (notifyImmediately && stateChanged) {
+      await _showAwaitingCustomerConfirmationNotification(
+        payload: _awaitingConfirmationPayload!,
+        isReminder: false,
+        source: source,
+      );
+    }
+
+    if (_isAppInForeground) {
+      await _pauseAwaitingCustomerConfirmationReminders();
+      return;
+    }
+    await _resumeAwaitingCustomerConfirmationReminders();
+  }
+
+  Future<void> _resumeAwaitingCustomerConfirmationReminders() async {
+    final orderId = _awaitingConfirmationOrderId;
+    final payload = _awaitingConfirmationPayload;
+    if (orderId == null || payload == null) {
+      return;
+    }
+
+    if (kIsWeb) {
+      _scheduleNextWebAwaitingReminder();
+      return;
+    }
+
+    await _localNotifications.cancel(_awaitingNotificationId(orderId));
+    await _localNotifications.periodicallyShowWithDuration(
+      _awaitingNotificationId(orderId),
+      _awaitingConfirmationNotificationTitle,
+      _awaitingConfirmationNotificationBody,
+      _awaitingConfirmationReminderInterval,
+      _awaitingCustomerConfirmationNotificationDetails(),
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      payload: _encodeNotificationPayload(payload),
+    );
+  }
+
+  Future<void> _pauseAwaitingCustomerConfirmationReminders() async {
+    final orderId = _awaitingConfirmationOrderId;
+    _cancelWebAwaitingReminderTimer();
+    if (!kIsWeb && orderId != null) {
+      await _localNotifications.cancel(_awaitingNotificationId(orderId));
+    }
+  }
+
+  Future<void> _clearAwaitingCustomerConfirmationState() async {
+    await _pauseAwaitingCustomerConfirmationReminders();
+    _awaitingConfirmationOrderId = null;
+    _awaitingConfirmationStateKey = null;
+    _awaitingConfirmationPayload = null;
+  }
+
+  void _scheduleNextWebAwaitingReminder() {
+    if (!kIsWeb || _awaitingConfirmationPayload == null) {
+      return;
+    }
+    _cancelWebAwaitingReminderTimer();
+    _webAwaitingConfirmationReminderTimer = Timer(
+      _awaitingConfirmationReminderInterval,
+      () {
+        final payload = _awaitingConfirmationPayload;
+        if (payload == null || _isAppInForeground) {
+          _cancelWebAwaitingReminderTimer();
+          return;
+        }
+        unawaited(
+          _showAwaitingCustomerConfirmationNotification(
+            payload: payload,
+            isReminder: true,
+            source: 'web_reminder_timer',
+          ),
+        );
+        _scheduleNextWebAwaitingReminder();
+      },
+    );
+  }
+
+  void _cancelWebAwaitingReminderTimer() {
+    _webAwaitingConfirmationReminderTimer?.cancel();
+    _webAwaitingConfirmationReminderTimer = null;
+  }
+
+  Future<void> _showAwaitingCustomerConfirmationNotification({
+    required Map<String, String> payload,
+    required bool isReminder,
+    required String source,
+  }) async {
+    final orderId = _normalizeDataValue(payload['order_id']);
+    if (orderId == null || orderId.isEmpty) {
+      return;
+    }
+
+    final title = _awaitingConfirmationNotificationTitle;
+    final body = _awaitingConfirmationNotificationBody;
+    final notificationId = _awaitingNotificationId(orderId);
+
+    if (kIsWeb) {
+      final shown = await showForegroundWebNotification(
+        title: title,
+        body: body,
+        data: payload,
+        tag: 'awaiting-confirmation-$orderId',
+      );
+      debugPrint(
+        '[FCM][web][$source] awaiting confirmation notification shown=$shown '
+        'order=$orderId reminder=$isReminder',
+      );
+      return;
+    }
+
+    await _localNotifications.show(
+      notificationId,
+      title,
+      body,
+      _awaitingCustomerConfirmationNotificationDetails(),
+      payload: _encodeNotificationPayload(payload),
+    );
+  }
+
+  NotificationDetails _awaitingCustomerConfirmationNotificationDetails() {
+    return NotificationDetails(
+      android: AndroidNotificationDetails(
+        _ordersNotificationChannel.id,
+        _ordersNotificationChannel.name,
+        channelDescription: _ordersNotificationChannel.description,
+        importance: Importance.max,
+        priority: Priority.high,
+        playSound: true,
+        enableVibration: true,
+        icon: _androidNotificationIcon,
+        visibility: NotificationVisibility.public,
+        channelShowBadge: true,
+      ),
+      iOS: const DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      ),
+    );
+  }
+
+  Map<String, String> _buildAwaitingCustomerConfirmationPayload(
+    Map<String, dynamic> order,
+  ) {
+    final orderId = OrdersService.idOf(order);
+    final stateKey = _awaitingConfirmationKeyForOrder(order);
+    final path = '/?screen=order_tracking&order_id=$orderId';
+    return <String, String>{
+      'screen': 'order_tracking',
+      'order_id': orderId,
+      'path': path,
+      'status': awaitingCustomerConfirmationStatus,
+      'notification_type': 'awaiting_customer_confirmation',
+      'notification_id': stateKey,
+      'title': _awaitingConfirmationNotificationTitle,
+      'body': _awaitingConfirmationNotificationBody,
+    };
+  }
+
+  String _awaitingConfirmationKeyForOrder(Map<String, dynamic> order) {
+    return [
+      OrdersService.idOf(order),
+      OrdersService.normalizedStatusOf(order),
+      OrdersService.authoritativeStateVersionOf(order)?.toString() ?? '-',
+      OrdersService.orderVersionOf(order)?.toString() ?? '-',
+    ].join(':');
+  }
+
+  int _awaitingNotificationId(String orderId) {
+    return orderId.codeUnits.fold<int>(
+          1171,
+          (hash, codeUnit) => ((hash * 31) + codeUnit) & 0x7fffffff,
+        ) ^
+        0x51A1A9;
+  }
+
+  void _queueInitialWebLaunchNotificationTap() {
+    if (!kIsWeb) {
+      return;
+    }
+
+    final query = Uri.base.queryParameters;
+    final screen = _normalizeDataValue(query['screen']);
+    final orderId = _normalizeDataValue(query['order_id']);
+    if (screen == null && orderId == null) {
+      return;
+    }
+
+    final payload = <String, String>{
+      for (final entry in query.entries)
+        if (_normalizeDataValue(entry.value) != null)
+          entry.key: _normalizeDataValue(entry.value)!,
+    };
+    if (payload.isEmpty) {
+      return;
+    }
+
+    _queueNotificationTap(payload, source: 'web_launch_url');
+    _scheduleNotificationTapDrain();
+    clearWebLaunchNotificationQueryParameters();
   }
 
   Future<void> _handleForegroundMessage(RemoteMessage message) async {
@@ -941,6 +1451,7 @@ class AppNotificationService {
       await _navigateToScreen(
         navigator,
         screen: screen,
+        data: intent.data,
         source: intent.source,
       );
     }
@@ -949,6 +1460,7 @@ class AppNotificationService {
   Future<void> _navigateToScreen(
     NavigatorState navigator, {
     required String screen,
+    required Map<String, String> data,
     required String source,
   }) async {
     final normalizedScreen = screen.trim().toLowerCase();
@@ -958,10 +1470,61 @@ class AppNotificationService {
       return;
     }
 
+    final orderId = _normalizeDataValue(data['order_id']);
     switch (normalizedScreen) {
+      case 'order_tracking':
+      case 'tracking':
+        if (orderId == null) {
+          break;
+        }
+        debugPrint(
+          '[FCM][tap:$source] opening OrderTrackingPage order=$orderId.',
+        );
+        await InputFocusGuard.prepareForUiTransition();
+        if (!navigator.mounted) {
+          return;
+        }
+        await navigator.push(
+          AppTheme.platformPageRoute<void>(
+            builder: (_) => OrderTrackingPage(orderId: orderId),
+          ),
+        );
+        return;
+      case 'order_details':
+        if (orderId == null) {
+          break;
+        }
+        debugPrint(
+          '[FCM][tap:$source] opening OrderDetailsPage order=$orderId.',
+        );
+        await InputFocusGuard.prepareForUiTransition();
+        if (!navigator.mounted) {
+          return;
+        }
+        await navigator.push(
+          AppTheme.platformPageRoute<void>(
+            builder: (_) => OrderDetailsPage(orderId: orderId),
+          ),
+        );
+        return;
       case 'orders':
       case 'order':
       case 'my_orders':
+        if (orderId != null) {
+          debugPrint(
+            '[FCM][tap:$source] opening OrderTrackingPage order=$orderId via orders fallback.',
+          );
+          await InputFocusGuard.prepareForUiTransition();
+          if (!navigator.mounted) {
+            return;
+          }
+          await navigator.push(
+            AppTheme.platformPageRoute<void>(
+              builder: (_) => OrderTrackingPage(orderId: orderId),
+            ),
+          );
+          return;
+        }
         debugPrint('[FCM][tap:$source] opening OrdersPage.');
         await InputFocusGuard.prepareForUiTransition();
         if (!navigator.mounted) {
@@ -1002,6 +1565,13 @@ class AppNotificationService {
         continue;
       }
       final normalizedPath = candidatePath.toLowerCase();
+      if (normalizedPath.contains('order_tracking') ||
+          normalizedPath.contains('tracking')) {
+        return 'order_tracking';
+      }
+      if (normalizedPath.contains('order_details')) {
+        return 'order_details';
+      }
       if (normalizedPath == '/orders' ||
           normalizedPath == 'orders' ||
           normalizedPath.contains('/orders')) {
@@ -1012,6 +1582,9 @@ class AppNotificationService {
     final typeHint = _normalizeDataValue(data['type']) ??
         _normalizeDataValue(data['notification_type']) ??
         _normalizeDataValue(data['event']);
+    if (_normalizeDataValue(data['order_id']) != null) {
+      return 'order_tracking';
+    }
     if (typeHint != null && typeHint.toLowerCase().contains('order')) {
       return 'orders';
     }
@@ -1144,7 +1717,7 @@ class AppNotificationService {
     final normalizedToken = token?.trim();
     if (normalizedToken == null || normalizedToken.isEmpty) {
       debugPrint('[FCM] token sync skipped because no token is available.');
-      if (Supabase.instance.client.auth.currentUser != null) {
+      if (_shouldRetryTokenSyncWhenTokenUnavailable()) {
         _scheduleTokenSyncRetry(reason: 'token_unavailable');
       }
       return;
@@ -1167,6 +1740,22 @@ class AppNotificationService {
     final previousToken = _lastKnownToken?.trim();
     final nowIso = DateTime.now().toUtc().toIso8601String();
     final platformName = _platformName;
+    final syncSignature = _tokenSyncSignature(
+      userId: user.id,
+      platformName: platformName,
+      token: normalizedToken,
+    );
+    if (_wasTokenSyncedRecently(
+      userId: user.id,
+      token: normalizedToken,
+      platformName: platformName,
+    )) {
+      debugPrint(
+        '[FCM] token sync skipped because the same token was synced recently.',
+      );
+      _resetTokenSyncRetry();
+      return;
+    }
     final installationId = await _resolveInstallationId();
     final deviceInfo = _buildDeviceInfo(
       installationId: installationId,
@@ -1210,6 +1799,8 @@ class AppNotificationService {
 
     _lastKnownToken = normalizedToken;
     _lastKnownUserId = user.id;
+    _lastSuccessfulTokenSyncSignature = syncSignature;
+    _lastSuccessfulTokenSyncAt = DateTime.now();
     _resetTokenSyncRetry();
     debugPrint(
       '[FCM][$reason] FCM token synced successfully: '
@@ -1303,6 +1894,53 @@ class AppNotificationService {
     _tokenSyncRetryAttempt = 0;
   }
 
+  bool _shouldRetryTokenSyncWhenTokenUnavailable() {
+    if (Supabase.instance.client.auth.currentUser == null) {
+      return false;
+    }
+    if (!kIsWeb) {
+      return true;
+    }
+    if (_webPushEndpointUnavailable) {
+      debugPrint(
+        '[FCM][web] token retry skipped because the optional push endpoint '
+        'is unavailable or misconfigured.',
+      );
+      return false;
+    }
+
+    final permission = currentWebNotificationPermission();
+    if (permission == 'granted') {
+      return true;
+    }
+
+    debugPrint(
+      '[FCM][web] token retry skipped until notification permission is granted.',
+    );
+    return false;
+  }
+
+  void _markWebPushEndpointUnavailable(Object error) {
+    if (_webPushEndpointUnavailable) {
+      return;
+    }
+    _webPushEndpointUnavailable = true;
+    debugPrint(
+      '[FCM][web] optional push endpoint unavailable; token generation '
+      'skipped. $error',
+    );
+  }
+
+  bool _isIgnorableWebPushEndpointError(Object error) {
+    final normalized = error.toString().toLowerCase();
+    return normalized.contains('err_name_not_resolved') ||
+        normalized.contains('name_not_resolved') ||
+        normalized.contains('name not resolved') ||
+        normalized.contains('failed-service-worker-registration') ||
+        normalized.contains('failed to register a serviceworker') ||
+        normalized.contains('fetching the script');
+  }
+
   Future<void> _upsertTokenFallback({
     required String userId,
     required String token,
@@ -1338,6 +1976,11 @@ class AppNotificationService {
     await _deactivateTokenByValue(token, reason: reason);
     if (_lastKnownToken == token) {
       _lastKnownToken = null;
+    }
+    if (_lastSuccessfulTokenSyncSignature != null &&
+        _lastSuccessfulTokenSyncSignature!.endsWith('|$token')) {
+      _lastSuccessfulTokenSyncSignature = null;
+      _lastSuccessfulTokenSyncAt = null;
     }
   }
 
@@ -1391,6 +2034,34 @@ class AppNotificationService {
           .eq('user_id', userId)
           .eq(_notificationTokenColumn, normalizedToken);
     }
+  }
+
+  String _tokenSyncSignature({
+    required String userId,
+    required String platformName,
+    required String token,
+  }) {
+    return '$userId|$platformName|$token';
+  }
+
+  bool _wasTokenSyncedRecently({
+    required String userId,
+    required String token,
+    String? platformName,
+  }) {
+    final lastSuccessfulSyncAt = _lastSuccessfulTokenSyncAt;
+    if (lastSuccessfulSyncAt == null) {
+      return false;
+    }
+
+    final signature = _tokenSyncSignature(
+      userId: userId,
+      platformName: platformName ?? _platformName,
+      token: token,
+    );
+    return _lastSuccessfulTokenSyncSignature == signature &&
+        DateTime.now().difference(lastSuccessfulSyncAt) <
+            _redundantTokenSyncWindow;
   }
 
   Future<String> _resolveInstallationId() async {

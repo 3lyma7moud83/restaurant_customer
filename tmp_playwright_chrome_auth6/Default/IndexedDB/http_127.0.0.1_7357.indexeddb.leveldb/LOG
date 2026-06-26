@@ -1,0 +1,20 @@
+2026/06/25-16:03:22.606 2d58 Creating DB C:\Users\saudi\Desktop\delivery\restaurant_customer\tmp_playwright_chrome_auth6\Default\IndexedDB\http_127.0.0.1_7357.indexeddb.leveldb since it was missing.
+2026/06/25-16:03:22.616 2d58 Reusing MANIFEST C:\Users\saudi\Desktop\delivery\restaurant_customer\tmp_playwright_chrome_auth6\Default\IndexedDB\http_127.0.0.1_7357.indexeddb.leveldb/MANIFEST-000001
+2026/06/25-16:03:22.653 55dc Level-0 table #5: started
+2026/06/25-16:03:22.656 55dc Level-0 table #5: 1682 bytes OK
+2026/06/25-16:03:22.675 55dc Delete type=0 #3
+2026/06/25-16:03:22.676 2d58 Manual compaction at level-0 from '\x00\x02\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x03\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/06/25-16:03:24.598 2d58 Level-0 table #7: started
+2026/06/25-16:03:24.601 2d58 Level-0 table #7: 1604 bytes OK
+2026/06/25-16:03:24.602 2d58 Delete type=0 #4
+2026/06/25-16:03:24.603 2d58 Manual compaction at level-0 from '\x00\x04\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x05\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/06/25-16:03:24.785 55dc Level-0 table #9: started
+2026/06/25-16:03:24.788 55dc Level-0 table #9: 638 bytes OK
+2026/06/25-16:03:24.790 55dc Delete type=0 #6
+2026/06/25-16:03:24.791 2d58 Manual compaction at level-0 from '\x00\x05\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x06\x00\x00\x00' @ 0 : 0; will stop at '\x00\x05\x00\x00\x05' @ 167 : 1
+2026/06/25-16:03:24.791 2d58 Compacting 1@0 + 1@1 files
+2026/06/25-16:03:24.793 2d58 Generated table #10@0: 42 keys, 1245 bytes
+2026/06/25-16:03:24.793 2d58 Compacted 1@0 + 1@1 files => 1245 bytes
+2026/06/25-16:03:24.794 2d58 compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/06/25-16:03:24.795 2d58 Delete type=2 #9
+2026/06/25-16:03:24.795 2d58 Manual compaction at level-0 from '\x00\x05\x00\x00\x05' @ 167 : 1 .. '\x00\x06\x00\x00\x00' @ 0 : 0; will stop at (end)

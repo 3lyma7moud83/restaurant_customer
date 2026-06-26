@@ -113,7 +113,10 @@ class SessionSecurityService {
     );
 
     final refreshHash = _hash(currentSession.refreshToken ?? '');
-    if (_lastRefreshTokenHash != null && _lastRefreshTokenHash == refreshHash) {
+    final shouldTrackRefreshReuse = event == AuthChangeEvent.tokenRefreshed;
+    if (_lastRefreshTokenHash != null &&
+        _lastRefreshTokenHash == refreshHash &&
+        shouldTrackRefreshReuse) {
       _sameRefreshHashHits += 1;
       if (_sameRefreshHashHits >= 4) {
         StabilityMetricsService.instance.increment(

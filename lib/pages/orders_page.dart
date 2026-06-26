@@ -343,10 +343,10 @@ class _OrdersPageState extends State<OrdersPage> {
       return;
     }
 
-    final status = OrdersService.statusStageOf(order);
     final route = AppTheme.platformPageRoute<void>(
-      builder: (_) => status == OrderStatusStage.accepted ||
-              status == OrderStatusStage.onTheWay
+      builder: (_) => shouldOpenTrackingPageForOrderStatus(
+        order['status']?.toString(),
+      )
           ? OrderTrackingPage(orderId: orderId)
           : OrderDetailsPage(orderId: orderId),
     );

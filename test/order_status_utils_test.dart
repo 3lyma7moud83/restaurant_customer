@@ -5,6 +5,10 @@ void main() {
   group('resolveOrderStatus', () {
     test('maps server status aliases to the expected stage', () {
       expect(parseOrderStatus('accepted'), OrderStatusStage.accepted);
+      expect(parseOrderStatus('prepared'), OrderStatusStage.accepted);
+      expect(parseOrderStatus('ready'), OrderStatusStage.accepted);
+      expect(parseOrderStatus('assigned'), OrderStatusStage.accepted);
+      expect(parseOrderStatus('ready_for_delivery'), OrderStatusStage.accepted);
       expect(parseOrderStatus('on_the_way'), OrderStatusStage.onTheWay);
       expect(parseOrderStatus('on-way'), OrderStatusStage.onTheWay);
       expect(parseOrderStatus('delivered'), OrderStatusStage.onTheWay);
@@ -37,6 +41,25 @@ void main() {
         isFalse,
       );
       expect(orderStatusInfo(OrderStatusStage.cancelled).canTrack, isFalse);
+    });
+
+    test('exposes customer-facing labels and active-order helpers', () {
+      expect(resolveOrderStatus('accepted').text, 'قيد التحضير');
+      expect(resolveOrderStatus('delivered').text, 'في الطريق');
+      expect(
+        resolveOrderStatus('awaiting_customer_confirmation').text,
+        'تم التسليم - بانتظار تأكيد الاستلام',
+      );
+      expect(resolveOrderStatus('completed').text, 'اكتمل الطلب');
+      expect(resolveOrderStatus('rejected').text, 'تم إلغاء الطلب');
+      expect(isBlockingActiveOrderStatus('pending_cashier'), isTrue);
+      expect(isBlockingActiveOrderStatus('ready_for_delivery'), isTrue);
+      expect(isBlockingActiveOrderStatus('completed'), isFalse);
+      expect(
+        shouldOpenTrackingPageForOrderStatus('awaiting_customer_confirmation'),
+        isTrue,
+      );
+      expect(shouldOpenTrackingPageForOrderStatus('rejected'), isFalse);
     });
   });
 }

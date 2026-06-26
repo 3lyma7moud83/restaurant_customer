@@ -559,6 +559,9 @@ class _SelectAddressPageState extends State<SelectAddressPage>
         return;
       }
     }
+    if (!mounted) {
+      return;
+    }
     if (_selectedPoint == null || loadingAddress || _mapIsMoving) {
       return;
     }

@@ -1,0 +1,11 @@
+2026/06/25-15:56:04.616 53f8 Creating DB C:\Users\saudi\Desktop\delivery\restaurant_customer\tmp_playwright_chrome_login8\Default\IndexedDB\http_127.0.0.1_7357.indexeddb.leveldb since it was missing.
+2026/06/25-15:56:04.626 53f8 Reusing MANIFEST C:\Users\saudi\Desktop\delivery\restaurant_customer\tmp_playwright_chrome_login8\Default\IndexedDB\http_127.0.0.1_7357.indexeddb.leveldb/MANIFEST-000001
+2026/06/25-15:56:04.640 6310 Level-0 table #5: started
+2026/06/25-15:56:04.646 6310 Level-0 table #5: 1676 bytes OK
+2026/06/25-15:56:04.649 6310 Delete type=0 #3
+2026/06/25-15:56:04.651 2da4 Manual compaction at level-0 from '\x00\x01\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x02\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/06/25-15:56:25.528 53f8 Level-0 table #7: started
+2026/06/25-15:56:25.533 53f8 Level-0 table #7: 1606 bytes OK
+2026/06/25-15:56:25.536 53f8 Delete type=0 #4
+2026/06/25-15:56:25.537 6310 Manual compaction at level-0 from '\x00\x04\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x05\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/06/25-15:56:25.770 189c Manual compaction at level-0 from '\x00\x05\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x06\x00\x00\x00' @ 0 : 0; will stop at (end)

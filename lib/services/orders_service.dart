@@ -24,6 +24,20 @@ class OrderLimitExceededException implements Exception {
   String toString() => message;
 }
 
+class ActiveOrderInProgressException implements Exception {
+  const ActiveOrderInProgressException({
+    required this.orderId,
+    this.message =
+        'لديك طلب جاري بالفعل، لا يمكنك إنشاء طلب جديد حتى يتم إنهاؤه.',
+  });
+
+  final String orderId;
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class DuplicateOrderBlockedException implements Exception {
   const DuplicateOrderBlockedException([
     this.message =
@@ -291,13 +305,8 @@ class OrdersService {
       <String, DateTime>{};
   static bool _offlineQueueInitialized = false;
 
-  static const List<String> activeStatuses = [
-    'pending',
-    'accepted',
-    'on_the_way',
-    'delivered',
-    awaitingCustomerConfirmationStatus,
-  ];
+  static final List<String> activeStatuses =
+      blockingActiveOrderStatuses.toList(growable: false);
 
   static const List<String> _customerRelationTables = [
     'customers',
@@ -435,6 +444,47 @@ class OrdersService {
     return rows?.length ?? 0;
   }
 
+  static Future<Map<String, dynamic>?> getLatestActiveOrder(
+    String userId, {
+    bool forceRefresh = false,
+  }) async {
+    try {
+      final row = await SessionManager.instance
+          .runWithValidSession<Map<String, dynamic>?>(() async {
+        final result = await _client
+            .from('orders')
+            .select(_orderSelect)
+            .eq('customer_id', userId)
+            .inFilter('status', activeStatuses)
+            .order('created_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+        if (result == null) {
+          return null;
+        }
+        return Map<String, dynamic>.from(result);
+      }, requireSession: true);
+
+      if (row == null) {
+        return null;
+      }
+
+      final hydrated = await _hydrateOrder(row);
+      _writeOrderCache(hydrated);
+      if (forceRefresh) {
+        _customerOrdersCache.remove(userId.trim());
+      }
+      return hydrated;
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'orders_service.getLatestActiveOrder',
+        error: error,
+        stack: stack,
+      );
+      throw Exception(ErrorLogger.userMessage);
+    }
+  }
+
   static Future<void> confirmDeliveryReceived(
     Map<String, dynamic> order,
   ) async {
@@ -558,14 +608,19 @@ class OrdersService {
 
       await _reserveOrderRequestToken(input, requestToken);
 
-      final activeCount = await getActiveOrdersCount(input.userId);
-      if (activeCount >= 2) {
+      final blockingOrder = await getLatestActiveOrder(
+        input.userId,
+        forceRefresh: true,
+      );
+      if (blockingOrder != null) {
         await _markOrderRequestTokenFailed(
           userId: userId,
           orderRequestToken: requestToken,
-          reason: 'active_order_limit',
+          reason: 'active_order_exists',
         );
-        throw const OrderLimitExceededException();
+        throw ActiveOrderInProgressException(
+          orderId: idOf(blockingOrder),
+        );
       }
 
       final effectiveInput = input.orderRequestToken == requestToken
@@ -617,6 +672,8 @@ class OrdersService {
         rethrow;
       }
     } on OrderLimitExceededException {
+      rethrow;
+    } on ActiveOrderInProgressException {
       rethrow;
     } on DuplicateOrderBlockedException {
       rethrow;
@@ -1525,19 +1582,19 @@ class OrdersService {
         )
         .toList(growable: false);
     final variants = [
-      fullPayloads,
-      _orderItemPayloadsWithout(fullPayloads, const {'quantity'}),
-      _orderItemPayloadsWithout(fullPayloads, const {'notes'}),
-      _orderItemPayloadsWithout(fullPayloads, const {'quantity', 'notes'}),
+      _orderItemPayloadsWithout(payloadsWithoutVariantColumns, const {
+        'quantity',
+        'notes',
+      }),
       payloadsWithoutVariantColumns,
       _orderItemPayloadsWithout(payloadsWithoutVariantColumns, const {
         'quantity',
       }),
       _orderItemPayloadsWithout(payloadsWithoutVariantColumns, const {'notes'}),
-      _orderItemPayloadsWithout(payloadsWithoutVariantColumns, const {
-        'quantity',
-        'notes',
-      }),
+      fullPayloads,
+      _orderItemPayloadsWithout(fullPayloads, const {'quantity'}),
+      _orderItemPayloadsWithout(fullPayloads, const {'notes'}),
+      _orderItemPayloadsWithout(fullPayloads, const {'quantity', 'notes'}),
     ];
 
     PostgrestException? lastSchemaError;
@@ -1611,6 +1668,13 @@ class OrdersService {
         final row = existingRows.removeAt(fallbackIndex);
         final itemId = itemIdOf(row);
         if (itemId.isEmpty) {
+          continue;
+        }
+
+        final hasSynchronizableDetails = item.note.trim().isNotEmpty ||
+            item.variantId.trim().isNotEmpty ||
+            item.variantName.trim().isNotEmpty;
+        if (!hasSynchronizableDetails) {
           continue;
         }
 
@@ -1729,7 +1793,11 @@ class OrdersService {
             .select(_orderSelect)
             .eq('id', orderId)
             .eq('customer_id', effectiveUserId)
-            .single();
+            .limit(1)
+            .maybeSingle();
+        if (row == null) {
+          return null;
+        }
         return Map<String, dynamic>.from(row);
       },
       requireSession: true,
@@ -1749,7 +1817,16 @@ class OrdersService {
       'customer_name': input.customerName,
       'customer_phone': input.customerPhone,
     };
-    final detailPayload = _orderAddressColumnPayload(input);
+    final legacyDetailPayload = _orderAddressColumnPayload(input);
+    final currentSchemaPayload = {
+      ...basePayload,
+      'customer_id': input.userId,
+      'total': input.totalPrice,
+      'items_total': max(0, input.totalPrice - input.deliveryCost),
+      'lat': input.customerLat,
+      'lng': input.customerLng,
+      'items': input.items.map((item) => item.toRpcJson()).toList(),
+    };
 
     final normalizedPayloads = [
       {
@@ -1776,10 +1853,12 @@ class OrdersService {
     ];
 
     return [
+      currentSchemaPayload,
+      Map<String, dynamic>.from(currentSchemaPayload)..remove('items_total'),
       ...normalizedPayloads.map(
         (payload) => {
           ...payload,
-          ...detailPayload,
+          ...legacyDetailPayload,
         },
       ),
       ...normalizedPayloads,
@@ -1842,6 +1921,16 @@ class OrdersService {
       if (input.paymentMethod != null && input.paymentMethod!.trim().isNotEmpty)
         'payment_method': input.paymentMethod!.trim(),
     };
+    final metadataPayloadWithoutPaymentMethod = Map<String, dynamic>.from(
+      metadataPayload,
+    )..remove('payment_method');
+    final currentSchemaPayload = <String, dynamic>{
+      'customer_id': input.userId,
+      'total': input.totalPrice,
+      'items_total': max(0, input.totalPrice - input.deliveryCost),
+      'delivery_cost': input.deliveryCost,
+      'items': input.items.map((item) => item.toRpcJson()).toList(),
+    };
 
     final normalizedPayloads = [
       {
@@ -1857,6 +1946,11 @@ class OrdersService {
     ];
 
     return [
+      {
+        ...currentSchemaPayload,
+        ...metadataPayloadWithoutPaymentMethod,
+      },
+      currentSchemaPayload,
       ...normalizedPayloads.map(
         (base) => {
           ...base,

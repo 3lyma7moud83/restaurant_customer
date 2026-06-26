@@ -4,6 +4,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -18,6 +20,7 @@ import '../core/theme/app_theme.dart';
 import '../core/ui/app_snackbar.dart';
 import '../core/ui/input_focus_guard.dart';
 import '../services/orders_service.dart';
+import '../services/session_manager.dart';
 import 'delivery_issue_page.dart';
 import 'order_chat_page.dart';
 
@@ -38,22 +41,29 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
 
   late final RealtimeChannelController _orderChannelController;
   late final RealtimeChannelController _itemsChannelController;
+  late final RealtimeChannelController _driverPresenceChannelController;
   Timer? _orderRefreshDebounce;
   Timer? _itemsRefreshDebounce;
+  Timer? _driverPresenceRefreshDebounce;
 
   bool _loading = true;
   String? _errorMessage;
   Map<String, dynamic>? _order;
+  Map<String, dynamic>? _driverPresence;
   List<Map<String, dynamic>> _items = const [];
   int _loadDataRequestId = 0;
   int _loadItemsRequestId = 0;
   int _loadOrderOnlyRequestId = 0;
+  int _loadDriverPresenceRequestId = 0;
   bool _isLoadingItems = false;
   bool _pendingItemsRefresh = false;
   bool _isLoadingOrderOnly = false;
   bool _pendingOrderRefresh = false;
+  bool _isLoadingDriverPresence = false;
+  bool _pendingDriverPresenceRefresh = false;
   bool _deliveryConfirmationDialogOpen = false;
   String? _lastPromptedDeliveryConfirmationKey;
+  String? _driverPresenceDriverId;
 
   @override
   void initState() {
@@ -79,6 +89,16 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
       },
     );
 
+    _driverPresenceChannelController = RealtimeChannelController(
+      client: _supabase,
+      topicPrefix: 'tracking-driver-${widget.orderId}',
+      onSubscribed: (didReconnect) async {
+        if (didReconnect) {
+          await _loadDriverPresence(forceRefresh: true);
+        }
+      },
+    );
+
     _listenToRealtime();
     unawaited(_loadData(showLoader: true));
   }
@@ -87,8 +107,10 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
   void dispose() {
     _orderRefreshDebounce?.cancel();
     _itemsRefreshDebounce?.cancel();
+    _driverPresenceRefreshDebounce?.cancel();
     unawaited(_orderChannelController.dispose());
     unawaited(_itemsChannelController.dispose());
+    unawaited(_driverPresenceChannelController.dispose());
     super.dispose();
   }
 
@@ -120,6 +142,52 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
             callback: _handleItemsChange,
           );
     });
+  }
+
+  Map<String, dynamic>? get _presentedOrder {
+    return _mergeDriverPresenceIntoOrder(_order);
+  }
+
+  Map<String, dynamic>? _mergeDriverPresenceIntoOrder(
+    Map<String, dynamic>? order,
+  ) {
+    if (order == null) {
+      return null;
+    }
+
+    final presence = _driverPresence;
+    if (presence == null) {
+      return order;
+    }
+
+    final orderDriverId = OrdersService.driverIdOf(order);
+    final presenceDriverId = presence['driver_id']?.toString().trim() ?? '';
+    if (orderDriverId == null ||
+        orderDriverId.isEmpty ||
+        presenceDriverId != orderDriverId) {
+      return order;
+    }
+
+    final lat = OrdersService.toDouble(presence['lat']);
+    final lng = OrdersService.toDouble(presence['lng']);
+    return {
+      ...order,
+      if (lat != null) 'driver_lat': lat,
+      if (lng != null) 'driver_lng': lng,
+      if (lat != null || lng != null)
+        'driver_location': <String, dynamic>{
+          if (lat != null) 'lat': lat,
+          if (lng != null) 'lng': lng,
+        },
+      'driver_presence': presence,
+      if (presence['updated_at'] != null)
+        'driver_presence_updated_at': presence['updated_at'],
+      if (presence['heading'] != null) 'driver_heading': presence['heading'],
+      if (presence['speed_kmh'] != null)
+        'driver_speed_kmh': presence['speed_kmh'],
+      if (presence['accuracy_m'] != null)
+        'driver_accuracy_m': presence['accuracy_m'],
+    };
   }
 
   Future<void> _loadData({
@@ -278,7 +346,16 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
         widget.orderId,
         forceRefresh: forceRefresh,
       );
-      if (!mounted || requestId != _loadOrderOnlyRequestId || order == null) {
+      if (!mounted || requestId != _loadOrderOnlyRequestId) {
+        return;
+      }
+      if (order == null) {
+        _applySnapshot(
+          order: null,
+          items: const [],
+          isLoading: false,
+          errorMessage: 'تعذر العثور على الطلب.',
+        );
         return;
       }
       CartProvider.maybeOf(context)?.syncOrderStatusFromRow(order);
@@ -351,7 +428,136 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
       _errorMessage = errorMessage;
     });
 
+    unawaited(_syncDriverPresenceSubscription(nextOrder));
     _handleDeliveryConfirmationStateChange(previousOrder, nextOrder);
+  }
+
+  Future<void> _syncDriverPresenceSubscription(
+    Map<String, dynamic>? order,
+  ) async {
+    final driverId = OrdersService.driverIdOf(order ?? const {})?.trim();
+    if (driverId == null || driverId.isEmpty) {
+      _driverPresenceDriverId = null;
+      _driverPresenceRefreshDebounce?.cancel();
+      await _driverPresenceChannelController.clear();
+      if (_driverPresence != null && mounted) {
+        setState(() {
+          _driverPresence = null;
+        });
+      }
+      return;
+    }
+
+    final didDriverChange = _driverPresenceDriverId != driverId;
+    _driverPresenceDriverId = driverId;
+    if (didDriverChange) {
+      if (_driverPresence != null && mounted) {
+        setState(() {
+          _driverPresence = null;
+        });
+      }
+      _driverPresenceChannelController.subscribe(
+        (client, channelName) {
+          return client.channel(channelName).onPostgresChanges(
+                event: PostgresChangeEvent.all,
+                schema: 'public',
+                table: 'driver_presence',
+                filter: PostgresChangeFilter(
+                  type: PostgresChangeFilterType.eq,
+                  column: 'driver_id',
+                  value: driverId,
+                ),
+                callback: _handleDriverPresenceChange,
+              );
+        },
+        resetConnectionState: true,
+      );
+    }
+
+    await _loadDriverPresence(forceRefresh: didDriverChange);
+  }
+
+  void _handleDriverPresenceChange(PostgresChangePayload payload) {
+    if (payload.eventType == PostgresChangeEvent.delete) {
+      if (_driverPresence == null || !mounted) {
+        return;
+      }
+      setState(() {
+        _driverPresence = null;
+      });
+      return;
+    }
+    _scheduleDriverPresenceRefresh();
+  }
+
+  void _scheduleDriverPresenceRefresh() {
+    _driverPresenceRefreshDebounce?.cancel();
+    final debounceDuration = kIsWeb
+        ? const Duration(milliseconds: 420)
+        : const Duration(milliseconds: 180);
+    _driverPresenceRefreshDebounce = Timer(
+      debounceDuration,
+      () {
+        if (!mounted) {
+          return;
+        }
+        unawaited(_loadDriverPresence(forceRefresh: true));
+      },
+    );
+  }
+
+  Future<void> _loadDriverPresence({bool forceRefresh = false}) async {
+    final driverId = _driverPresenceDriverId;
+    if (driverId == null || driverId.isEmpty) {
+      return;
+    }
+    if (_isLoadingDriverPresence) {
+      _pendingDriverPresenceRefresh = true;
+      return;
+    }
+    _isLoadingDriverPresence = true;
+    final requestId = ++_loadDriverPresenceRequestId;
+    try {
+      final row = await SessionManager.instance
+          .runWithValidSession<Map<String, dynamic>?>(() async {
+        final response = await _supabase
+            .from('driver_presence')
+            .select('*')
+            .eq('driver_id', driverId)
+            .order('updated_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+        if (response == null) {
+          return null;
+        }
+        return Map<String, dynamic>.from(response);
+      }, requireSession: true);
+      if (!mounted ||
+          requestId != _loadDriverPresenceRequestId ||
+          driverId != _driverPresenceDriverId) {
+        return;
+      }
+
+      if (mapEquals(_driverPresence, row)) {
+        return;
+      }
+
+      setState(() {
+        _driverPresence = row;
+      });
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'order_tracking_page.loadDriverPresence',
+        error: error,
+        stack: stack,
+      );
+    } finally {
+      _isLoadingDriverPresence = false;
+      if (_pendingDriverPresenceRefresh && mounted) {
+        _pendingDriverPresenceRefresh = false;
+        unawaited(_loadDriverPresence(forceRefresh: forceRefresh));
+      }
+    }
   }
 
   List<Map<String, dynamic>> _reuseItems(List<Map<String, dynamic>> nextItems) {
@@ -696,7 +902,7 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
 
   @override
   Widget build(BuildContext context) {
-    final order = _order;
+    final order = _presentedOrder;
     final switcherDuration =
         kIsWeb ? Duration.zero : const Duration(milliseconds: 220);
     final restaurantPhone =
@@ -764,6 +970,11 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
                           child: _TrackingStatusCard(
                             order: order,
                           ),
+                        ),
+                        const SizedBox(height: 16),
+                        _AnimatedTrackingSection(
+                          delay: const Duration(milliseconds: 55),
+                          child: _TrackingLiveMapCard(order: order),
                         ),
                         const SizedBox(height: 16),
                         if (isAwaitingCustomerConfirmationStatus(
@@ -866,6 +1077,527 @@ class _AnimatedTrackingSection extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _TrackingLiveMapCard extends StatefulWidget {
+  const _TrackingLiveMapCard({
+    required this.order,
+  });
+
+  final Map<String, dynamic> order;
+
+  @override
+  State<_TrackingLiveMapCard> createState() => _TrackingLiveMapCardState();
+}
+
+class _TrackingLiveMapCardState extends State<_TrackingLiveMapCard>
+    with SingleTickerProviderStateMixin {
+  final MapController _mapController = MapController();
+  late final AnimationController _driverMotionController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..addListener(_handleDriverMotionTick);
+
+  Timer? _clockRefreshTimer;
+  _TrackingRouteSnapshot? _snapshot;
+  _TrackingGeoPoint? _driverMotionStart;
+  _TrackingGeoPoint? _driverMotionEnd;
+  _TrackingGeoPoint? _stableDriverPoint;
+  String? _lastCameraSignature;
+
+  @override
+  void initState() {
+    super.initState();
+    _snapshot = _TrackingRouteSnapshot.fromOrder(widget.order);
+    _stableDriverPoint = _snapshot?.driverPoint;
+    _clockRefreshTimer = Timer.periodic(
+      const Duration(seconds: 20),
+      (_) {
+        if (mounted) {
+          setState(() {});
+        }
+      },
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _syncVisualState(initial: true);
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _TrackingLiveMapCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!mapEquals(oldWidget.order, widget.order)) {
+      _snapshot = _TrackingRouteSnapshot.fromOrder(widget.order);
+      _syncVisualState();
+    }
+  }
+
+  @override
+  void dispose() {
+    _clockRefreshTimer?.cancel();
+    _driverMotionController
+      ..removeListener(_handleDriverMotionTick)
+      ..dispose();
+    _mapController.dispose();
+    super.dispose();
+  }
+
+  void _handleDriverMotionTick() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _syncVisualState({bool initial = false}) {
+    final snapshot = _snapshot;
+    final nextDriverPoint = snapshot?.driverPoint;
+    final normalizedStatus =
+        normalizeOrderStatus(widget.order['status']?.toString());
+    final shouldAnimate = normalizedStatus == 'delivered' &&
+        nextDriverPoint != null &&
+        _stableDriverPoint != null &&
+        _TrackingGeoPoint.distanceMeters(_stableDriverPoint!, nextDriverPoint) >
+            2;
+
+    if (shouldAnimate) {
+      _driverMotionStart = _stableDriverPoint;
+      _driverMotionEnd = nextDriverPoint;
+      unawaited(_driverMotionController.forward(from: 0));
+    } else {
+      _driverMotionController.stop();
+      _driverMotionStart = null;
+      _driverMotionEnd = null;
+      _stableDriverPoint = nextDriverPoint;
+    }
+
+    if (mounted) {
+      setState(() {});
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _fitCameraToActiveRoute(force: initial);
+    });
+  }
+
+  _TrackingGeoPoint? get _visualDriverPoint {
+    final start = _driverMotionStart;
+    final end = _driverMotionEnd;
+    if (start == null || end == null || !_driverMotionController.isAnimating) {
+      return _stableDriverPoint;
+    }
+
+    final curveValue = Curves.easeOutCubic.transform(
+      _driverMotionController.value,
+    );
+    final interpolated = _TrackingGeoPoint.lerp(
+      start,
+      end,
+      curveValue,
+    );
+    if (_driverMotionController.isCompleted) {
+      _stableDriverPoint = end;
+      _driverMotionStart = null;
+      _driverMotionEnd = null;
+      return end;
+    }
+    return interpolated;
+  }
+
+  void _fitCameraToActiveRoute({bool force = false}) {
+    final points = <LatLng>[
+      ..._routeLatLngPoints(includeRestaurant: true),
+    ];
+    if (points.length < 2) {
+      return;
+    }
+
+    final signature = points
+        .map(
+          (point) =>
+              '${point.latitude.toStringAsFixed(4)},${point.longitude.toStringAsFixed(4)}',
+        )
+        .join('|');
+    if (!force && signature == _lastCameraSignature) {
+      return;
+    }
+    _lastCameraSignature = signature;
+
+    _mapController.fitCamera(
+      CameraFit.coordinates(
+        coordinates: points,
+        padding: const EdgeInsets.fromLTRB(34, 34, 34, 54),
+        maxZoom: 15.6,
+      ),
+    );
+  }
+
+  List<LatLng> _routeLatLngPoints({required bool includeRestaurant}) {
+    final snapshot = _snapshot;
+    if (snapshot == null) {
+      return const <LatLng>[];
+    }
+
+    return <LatLng>[
+      if (includeRestaurant && snapshot.restaurantPoint != null)
+        snapshot.restaurantPoint!.toLatLng(),
+      if (_visualDriverPoint != null) _visualDriverPoint!.toLatLng(),
+      snapshot.customerPoint.toLatLng(),
+    ];
+  }
+
+  String? _proximityBannerText(double? remainingDistanceMeters) {
+    if (remainingDistanceMeters == null) {
+      return null;
+    }
+    if (remainingDistanceMeters < 100) {
+      return '📦 السائق وصل تقريبًا.';
+    }
+    if (remainingDistanceMeters < 300) {
+      return '🚴 السائق أصبح قريبًا منك.';
+    }
+    return null;
+  }
+
+  String _etaLabel(double? remainingDistanceMeters) {
+    if (remainingDistanceMeters == null) {
+      return 'جارٍ احتساب وقت الوصول.';
+    }
+
+    const averageMetersPerMinute = 320.0;
+    final minutes =
+        math.max(1, (remainingDistanceMeters / averageMetersPerMinute).round());
+    if (minutes >= 60) {
+      final hours = minutes ~/ 60;
+      final remainingMinutes = minutes % 60;
+      if (remainingMinutes == 0) {
+        return 'حوالي $hours ساعة';
+      }
+      return 'حوالي $hours ساعة و$remainingMinutes دقيقة';
+    }
+    return 'حوالي $minutes دقيقة';
+  }
+
+  String _lastUpdatedLabel() {
+    final updatedAt =
+        DateTime.tryParse(widget.order['updated_at']?.toString() ?? '') ??
+            OrdersService.createdAtOf(widget.order);
+    final elapsed = DateTime.now().difference(updatedAt.toLocal());
+    if (elapsed.inSeconds < 60) {
+      return 'آخر تحديث الآن';
+    }
+    if (elapsed.inMinutes < 60) {
+      return 'آخر تحديث منذ ${elapsed.inMinutes} دقيقة';
+    }
+    return 'آخر تحديث ${formatOrderDate(updatedAt)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final snapshot = _snapshot;
+    if (snapshot == null) {
+      return const SizedBox.shrink();
+    }
+
+    final normalizedStatus =
+        normalizeOrderStatus(widget.order['status']?.toString());
+    final driverPoint = _visualDriverPoint;
+    final remainingDistanceMeters = driverPoint == null
+        ? snapshot.totalDistanceToCustomer
+        : _TrackingGeoPoint.distanceMeters(driverPoint, snapshot.customerPoint);
+    final totalDistance = snapshot.totalDistanceToCustomer;
+    final bannerText = normalizedStatus == 'delivered'
+        ? _proximityBannerText(remainingDistanceMeters)
+        : null;
+    final routePoints = _routeLatLngPoints(includeRestaurant: false);
+
+    return OrderSectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'التتبع الحي',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 10),
+          if (bannerText != null) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF3E0),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: const Color(0xFFFFD8A8)),
+              ),
+              child: Text(
+                bannerText,
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                  color: Color(0xFF9A3412),
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          Row(
+            children: [
+              Expanded(
+                child: _TrackingMetricPill(
+                  icon: Icons.route_rounded,
+                  label: 'المسافة المتبقية',
+                  value: remainingDistanceMeters == null
+                      ? 'جارٍ التحديث'
+                      : _TrackingDeliveryProgress._distanceLabel(
+                          remainingDistanceMeters,
+                        ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _TrackingMetricPill(
+                  icon: Icons.schedule_rounded,
+                  label: 'وقت الوصول',
+                  value: _etaLabel(remainingDistanceMeters),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: _TrackingMetricPill(
+                  icon: Icons.timelapse_rounded,
+                  label: 'وقت الطلب',
+                  value:
+                      formatOrderDate(OrdersService.createdAtOf(widget.order)),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _TrackingMetricPill(
+                  icon: Icons.sync_rounded,
+                  label: 'تحديث المسار',
+                  value: _lastUpdatedLabel(),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: SizedBox(
+              height: 250,
+              child: FlutterMap(
+                mapController: _mapController,
+                options: MapOptions(
+                  initialCenter: snapshot.customerPoint.toLatLng(),
+                  initialZoom: 13.5,
+                  interactionOptions: const InteractionOptions(
+                    flags: InteractiveFlag.drag |
+                        InteractiveFlag.pinchZoom |
+                        InteractiveFlag.doubleTapZoom,
+                  ),
+                ),
+                children: [
+                  TileLayer(
+                    urlTemplate:
+                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    userAgentPackageName: 'com.example.restaurant_customer',
+                  ),
+                  if (snapshot.restaurantPoint != null)
+                    PolylineLayer(
+                      polylines: [
+                        Polyline(
+                          points: [
+                            snapshot.restaurantPoint!.toLatLng(),
+                            snapshot.customerPoint.toLatLng(),
+                          ],
+                          strokeWidth: 4,
+                          color: const Color(0xFFD0D5DD),
+                        ),
+                      ],
+                    ),
+                  if (routePoints.length >= 2)
+                    PolylineLayer(
+                      polylines: [
+                        Polyline(
+                          points: routePoints,
+                          strokeWidth: 5,
+                          color: normalizedStatus == 'delivered'
+                              ? const Color(0xFFFB8C00)
+                              : const Color(0xFF1E88E5),
+                        ),
+                      ],
+                    ),
+                  MarkerLayer(
+                    markers: [
+                      if (snapshot.restaurantPoint != null)
+                        Marker(
+                          point: snapshot.restaurantPoint!.toLatLng(),
+                          width: 58,
+                          height: 58,
+                          child: const _TrackingMapMarker(
+                            icon: Icons.storefront_rounded,
+                            color: Color(0xFF7C4D2A),
+                            background: Color(0xFFFFF4E5),
+                          ),
+                        ),
+                      Marker(
+                        point: snapshot.customerPoint.toLatLng(),
+                        width: 62,
+                        height: 62,
+                        child: const _TrackingMapMarker(
+                          icon: Icons.home_rounded,
+                          color: Color(0xFF1565C0),
+                          background: Color(0xFFE3F2FD),
+                        ),
+                      ),
+                      if (driverPoint != null)
+                        Marker(
+                          point: driverPoint.toLatLng(),
+                          width: 64,
+                          height: 64,
+                          child: const _TrackingMapMarker(
+                            icon: Icons.delivery_dining_rounded,
+                            color: Color(0xFFEF6C00),
+                            background: Color(0xFFFFF3E0),
+                            elevated: true,
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            totalDistance == null
+                ? 'يتم تحديث موقع السائق والمسار مباشرة عند وصول بيانات جديدة.'
+                : 'المسافة الكلية للرحلة ${_TrackingDeliveryProgress._distanceLabel(totalDistance)} ويتم تحديثها لحظيًا.',
+            style: const TextStyle(
+              color: Color(0xFF667085),
+              fontWeight: FontWeight.w700,
+              height: 1.45,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrackingMetricPill extends StatelessWidget {
+  const _TrackingMetricPill({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFD9E2EC)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: AppTheme.primary.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, size: 18, color: AppTheme.primary),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: Color(0xFF667085),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF101828),
+                    fontWeight: FontWeight.w800,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrackingMapMarker extends StatelessWidget {
+  const _TrackingMapMarker({
+    required this.icon,
+    required this.color,
+    required this.background,
+    this.elevated = false,
+  });
+
+  final IconData icon;
+  final Color color;
+  final Color background;
+  final bool elevated;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.center,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        width: elevated ? 46 : 40,
+        height: elevated ? 46 : 40,
+        decoration: BoxDecoration(
+          color: background,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 3),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0x24000000),
+              blurRadius: elevated ? 18 : 10,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Icon(icon, color: color, size: elevated ? 22 : 20),
+      ),
     );
   }
 }
@@ -1371,14 +2103,7 @@ class _TrackingMetaRow extends StatelessWidget {
 }
 
 String _trackingStatusLabelForCustomer(String rawStatus) {
-  final normalized = normalizeOrderStatus(rawStatus);
-  if (normalized == 'accepted') {
-    return 'قيد التحضير';
-  }
-  if (normalized == awaitingCustomerConfirmationStatus) {
-    return 'بانتظار تأكيد استلام الطلب';
-  }
-  return rawStatus;
+  return resolveOrderStatus(rawStatus).text;
 }
 
 class _TrackingStatusCard extends StatelessWidget {
@@ -1428,7 +2153,8 @@ class _TrackingStatusCard extends StatelessWidget {
               ),
             ),
           ),
-          if (mappedRawStatus.isNotEmpty)
+          if (mappedRawStatus.isNotEmpty &&
+              mappedRawStatus != progressState.label)
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: Text(
@@ -1721,11 +2447,11 @@ class _TrackingDeliveryProgress {
         stage: _TrackingDeliveryStage.delivered,
         progress: 1,
         color: Color(0xFF2E7D32),
-        label: 'تم التسليم',
+        label: 'اكتمل الطلب',
         showMotorcycle: false,
         driverStatus: 'حالة السائق: تم إنهاء الطلب بنجاح.',
         distanceSummary: summary,
-        etaSummary: 'وقت الوصول المتوقع: تم التسليم.',
+        etaSummary: 'وقت الوصول المتوقع: اكتمل الطلب.',
       );
     }
 
@@ -1737,7 +2463,7 @@ class _TrackingDeliveryProgress {
         stage: _TrackingDeliveryStage.delivered,
         progress: 1,
         color: const Color(0xFF7C3AED),
-        label: 'بانتظار تأكيد استلام الطلب',
+        label: 'تم التسليم - بانتظار تأكيد الاستلام',
         showMotorcycle: false,
         driverStatus: 'حالة السائق: أكد تسليم الطلب وينتظر تأكيدك.',
         distanceSummary: summary,
@@ -1992,6 +2718,20 @@ class _TrackingGeoPoint {
 
   final double latitude;
   final double longitude;
+
+  LatLng toLatLng() => LatLng(latitude, longitude);
+
+  static _TrackingGeoPoint lerp(
+    _TrackingGeoPoint start,
+    _TrackingGeoPoint end,
+    double t,
+  ) {
+    final clamped = t.clamp(0.0, 1.0).toDouble();
+    return _TrackingGeoPoint(
+      start.latitude + ((end.latitude - start.latitude) * clamped),
+      start.longitude + ((end.longitude - start.longitude) * clamped),
+    );
+  }
 
   static double distanceMeters(_TrackingGeoPoint start, _TrackingGeoPoint end) {
     const earthRadius = 6371000.0;

@@ -500,7 +500,7 @@ class _CartPageState extends State<CartPage> {
     }
 
     if (cart.isLocked) {
-      await _openCurrentOrder();
+      await _showActiveOrderDialog();
       return;
     }
 
@@ -599,6 +599,12 @@ class _CartPageState extends State<CartPage> {
       );
     } on OrderLimitExceededException catch (error) {
       _showSnack(error.message);
+    } on ActiveOrderInProgressException catch (error) {
+      await cart.adoptActiveOrder(error.orderId);
+      if (mounted) {
+        await _loadActiveOrder(cart);
+      }
+      await _showActiveOrderDialog();
     } on DuplicateOrderBlockedException catch (error) {
       _showSnack(error.message);
     } catch (_) {
@@ -696,11 +702,10 @@ class _CartPageState extends State<CartPage> {
       return;
     }
 
-    final status =
-        order == null ? null : resolveOrderStatus(order['status']?.toString());
-
     final route = AppTheme.platformPageRoute<void>(
-      builder: (_) => status != null && status.canTrack
+      builder: (_) => shouldOpenTrackingPageForOrderStatus(
+        order?['status']?.toString(),
+      )
           ? OrderTrackingPage(orderId: orderId)
           : OrderDetailsPage(orderId: orderId),
     );
@@ -710,6 +715,37 @@ class _CartPageState extends State<CartPage> {
       return;
     }
     Navigator.push(context, route);
+  }
+
+  Future<void> _showActiveOrderDialog() async {
+    if (!mounted) {
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('طلب جاري بالفعل'),
+          content: const Text(
+            'لديك طلب جاري بالفعل، لا يمكنك إنشاء طلب جديد حتى يتم إنهاؤه.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('إغلاق'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await _openCurrentOrder();
+              },
+              child: const Text('الانتقال إلى الطلب الحالي'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   _CartPricingBreakdown _pricingFor(CartController cart) {

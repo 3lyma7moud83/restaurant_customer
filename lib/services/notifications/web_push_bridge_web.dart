@@ -146,7 +146,29 @@ Future<bool> showForegroundWebNotification({
   required Map<String, String> data,
   String? tag,
 }) async {
-  return false;
+  if (!html.Notification.supported ||
+      html.Notification.permission != 'granted') {
+    return false;
+  }
+
+  try {
+    final notification = html.Notification(
+      title,
+      body: body,
+      dir: 'rtl',
+      lang: 'ar',
+      tag: tag,
+      icon: 'icons/Icon-192.png',
+    );
+
+    notification.onClick.listen((_) {
+      notification.close();
+      _notificationTapHandler?.call(Map<String, String>.from(data));
+    });
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 void clearWebLaunchNotificationQueryParameters() {
@@ -158,7 +180,8 @@ void clearWebLaunchNotificationQueryParameters() {
   final nextQuery = Map<String, String>.from(uri.queryParameters);
   final removedScreen = nextQuery.remove('screen') != null;
   final removedClickAction = nextQuery.remove('click_action') != null;
-  if (!removedScreen && !removedClickAction) {
+  final removedOrderId = nextQuery.remove('order_id') != null;
+  if (!removedScreen && !removedClickAction && !removedOrderId) {
     return;
   }
 

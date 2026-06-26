@@ -576,6 +576,25 @@ class CartController extends ChangeNotifier {
     await _persistStateNow();
   }
 
+  Future<void> adoptActiveOrder(String orderId) async {
+    final normalizedOrderId = orderId.trim();
+    if (normalizedOrderId.isEmpty) {
+      return;
+    }
+
+    if (_activeOrderId == normalizedOrderId &&
+        _pendingOrderRequestToken == null &&
+        _checkoutSessionId == null) {
+      return;
+    }
+
+    _activeOrderId = normalizedOrderId;
+    _pendingOrderRequestToken = null;
+    _checkoutSessionId = null;
+    _notify();
+    await _persistStateNow();
+  }
+
   Future<void> clearPendingCheckout() async {
     if (!isCheckoutPending) {
       return;
@@ -591,7 +610,12 @@ class CartController extends ChangeNotifier {
       await _resolvePendingOrderFromToken();
     }
 
-    final orderId = _activeOrderId;
+    var orderId = _activeOrderId;
+    if (orderId == null || orderId.isEmpty) {
+      await _resolveLatestActiveOrderFromServer();
+      orderId = _activeOrderId;
+    }
+
     if (orderId == null || orderId.isEmpty) {
       return;
     }
@@ -599,6 +623,7 @@ class CartController extends ChangeNotifier {
     try {
       final order = await OrdersService.getOrderById(orderId);
       if (order == null) {
+        await _resolveLatestActiveOrderFromServer();
         return;
       }
 
@@ -606,6 +631,41 @@ class CartController extends ChangeNotifier {
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'cart_provider.refreshActiveOrderStatus',
+        error: error,
+        stack: stack,
+      );
+    }
+  }
+
+  Future<void> _resolveLatestActiveOrderFromServer() async {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null || userId.isEmpty) {
+      return;
+    }
+
+    try {
+      final order = await OrdersService.getLatestActiveOrder(
+        userId,
+        forceRefresh: true,
+      );
+      if (order == null) {
+        return;
+      }
+
+      final orderId = OrdersService.idOf(order);
+      if (orderId.isEmpty) {
+        return;
+      }
+
+      _activeOrderId = orderId;
+      syncOrderStatusFromRow(order);
+      if (_activeOrderId == orderId) {
+        _notify();
+        _schedulePersist();
+      }
+    } catch (error, stack) {
+      await ErrorLogger.logError(
+        module: 'cart_provider.resolveLatestActiveOrderFromServer',
         error: error,
         stack: stack,
       );

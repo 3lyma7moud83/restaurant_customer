@@ -1,0 +1,25 @@
+2026/06/25-08:58:50.422 555c Reusing MANIFEST C:\Users\saudi\Desktop\delivery\restaurant_customer\tmp_playwright_chrome_profile\Default\IndexedDB\http_127.0.0.1_7357.indexeddb.leveldb/MANIFEST-000001
+2026/06/25-08:58:50.423 555c Recovering log #43
+2026/06/25-08:58:50.425 555c Reusing old log C:\Users\saudi\Desktop\delivery\restaurant_customer\tmp_playwright_chrome_profile\Default\IndexedDB\http_127.0.0.1_7357.indexeddb.leveldb/000043.log 
+2026/06/25-08:58:50.428 555c Delete type=2 #42
+2026/06/25-08:58:50.446 5208 Level-0 table #48: started
+2026/06/25-08:58:50.451 5208 Level-0 table #48: 1944 bytes OK
+2026/06/25-08:58:50.453 5208 Delete type=0 #43
+2026/06/25-08:58:50.454 555c Manual compaction at level-0 from '\x00\x13\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x14\x00\x00\x00' @ 0 : 0; will stop at '\x00\x13\x00\x00\x05' @ 655 : 1
+2026/06/25-08:58:50.455 555c Compacting 1@0 + 1@1 files
+2026/06/25-08:58:50.459 555c Generated table #49@0: 172 keys, 6867 bytes
+2026/06/25-08:58:50.459 555c Compacted 1@0 + 1@1 files => 6867 bytes
+2026/06/25-08:58:50.460 555c compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/06/25-08:58:50.461 555c Delete type=2 #48
+2026/06/25-08:58:50.461 555c Manual compaction at level-0 from '\x00\x13\x00\x00\x05' @ 655 : 1 .. '\x00\x14\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/06/25-08:59:02.629 5208 Level-0 table #51: started
+2026/06/25-08:59:02.633 5208 Level-0 table #51: 638 bytes OK
+2026/06/25-08:59:02.636 5208 Delete type=2 #45
+2026/06/25-08:59:02.636 5208 Delete type=0 #47
+2026/06/25-08:59:02.639 3d10 Manual compaction at level-0 from '\x00\x14\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x15\x00\x00\x00' @ 0 : 0; will stop at '\x00\x14\x00\x00\x05' @ 674 : 1
+2026/06/25-08:59:02.639 3d10 Compacting 1@0 + 1@1 files
+2026/06/25-08:59:02.643 3d10 Generated table #52@0: 172 keys, 6869 bytes
+2026/06/25-08:59:02.644 3d10 Compacted 1@0 + 1@1 files => 6869 bytes
+2026/06/25-08:59:02.647 3d10 compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/06/25-08:59:02.649 3d10 Delete type=2 #51
+2026/06/25-08:59:02.650 3d10 Manual compaction at level-0 from '\x00\x14\x00\x00\x05' @ 674 : 1 .. '\x00\x15\x00\x00\x00' @ 0 : 0; will stop at (end)

@@ -15,11 +15,11 @@ class GlobalErrorHandler {
     required Future<void> Function() appRunner,
     required String appName,
   }) async {
-    await ErrorService.instance.initialize(appName: appName);
-    _configureGlobalHooks();
-
     await runZonedGuarded(
       () async {
+        WidgetsFlutterBinding.ensureInitialized();
+        await ErrorService.instance.initialize(appName: appName);
+        _configureGlobalHooks();
         await appRunner();
       },
       (error, stack) {
