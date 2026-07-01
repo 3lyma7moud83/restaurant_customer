@@ -4,8 +4,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -18,10 +16,8 @@ import '../core/services/error_logger.dart';
 import '../core/stability/stability_logger.dart';
 import '../core/theme/app_theme.dart';
 import '../core/ui/app_snackbar.dart';
-import '../core/ui/input_focus_guard.dart';
 import '../services/orders_service.dart';
 import '../services/session_manager.dart';
-import 'delivery_issue_page.dart';
 import 'order_chat_page.dart';
 
 class OrderTrackingPage extends StatefulWidget {
@@ -834,10 +830,7 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
         context: context,
         order: order,
         onConfirm: confirmDeliveryReceived,
-        onBeforeReportIssue: () {
-          _deliveryConfirmationDialogOpen = false;
-        },
-        onReportIssue: () => unawaited(_openDeliveryIssuePage(order)),
+        onContactDriver: () => unawaited(_callDriver()),
       );
     } finally {
       _deliveryConfirmationDialogOpen = false;
@@ -862,33 +855,41 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
     await OrdersService.confirmDeliveryReceived(order);
   }
 
-  Future<void> _openDeliveryIssuePage(
-      Map<String, dynamic> fallbackOrder) async {
-    await InputFocusGuard.prepareForUiTransition(context: context);
-    if (!mounted) {
-      return;
-    }
-    final order = _order ?? fallbackOrder;
-    await Navigator.push<bool>(
-      context,
-      AppTheme.platformPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => DeliveryIssuePage(order: order),
-      ),
-    );
-  }
-
-  Future<void> _callRestaurant(String phone) async {
-    final normalizedPhone = phone.trim();
+  Future<void> _callPhone(
+    String? phone, {
+    required String unavailableMessage,
+  }) async {
+    final normalizedPhone = phone?.trim() ?? '';
     if (normalizedPhone.isEmpty) {
+      AppSnackBar.show(context, message: unavailableMessage);
       return;
     }
 
     final uri = Uri.parse('tel:$normalizedPhone');
-    if (!await canLaunchUrl(uri)) {
+    final canLaunch = await canLaunchUrl(uri);
+    if (!mounted) {
+      return;
+    }
+    if (!canLaunch) {
+      AppSnackBar.show(context, message: unavailableMessage);
       return;
     }
     await launchUrl(uri);
+  }
+
+  Future<void> _callRestaurant(String phone) {
+    return _callPhone(
+      phone,
+      unavailableMessage: 'رقم المطعم غير متوفر حاليًا.',
+    );
+  }
+
+  Future<void> _callDriver() {
+    final order = _presentedOrder ?? _order;
+    return _callPhone(
+      order == null ? null : OrdersService.driverPhoneOf(order),
+      unavailableMessage: 'رقم السائق غير متوفر حاليًا.',
+    );
   }
 
   void _openChatPage() {
@@ -907,6 +908,9 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
         kIsWeb ? Duration.zero : const Duration(milliseconds: 220);
     final restaurantPhone =
         order == null ? null : OrdersService.restaurantPhoneOf(order);
+    final normalizedStatus =
+        order == null ? '' : normalizeOrderStatus(order['status']?.toString());
+    final showDriverRoute = normalizedStatus == 'delivered';
 
     return Scaffold(
       backgroundColor: const Color(0xFFF6F7FB),
@@ -971,15 +975,17 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
                             order: order,
                           ),
                         ),
-                        const SizedBox(height: 16),
-                        _AnimatedTrackingSection(
-                          delay: const Duration(milliseconds: 55),
-                          child: _TrackingLiveMapCard(order: order),
-                        ),
-                        const SizedBox(height: 16),
+                        if (showDriverRoute) ...[
+                          const SizedBox(height: 16),
+                          _AnimatedTrackingSection(
+                            delay: const Duration(milliseconds: 55),
+                            child: _TrackingLiveRouteCard(order: order),
+                          ),
+                        ],
                         if (isAwaitingCustomerConfirmationStatus(
                           order['status'],
                         )) ...[
+                          const SizedBox(height: 16),
                           _AnimatedTrackingSection(
                             delay: const Duration(milliseconds: 60),
                             child: DeliveryConfirmationBanner(
@@ -1081,37 +1087,26 @@ class _AnimatedTrackingSection extends StatelessWidget {
   }
 }
 
-class _TrackingLiveMapCard extends StatefulWidget {
-  const _TrackingLiveMapCard({
+class _TrackingLiveRouteCard extends StatefulWidget {
+  const _TrackingLiveRouteCard({
     required this.order,
   });
 
   final Map<String, dynamic> order;
 
   @override
-  State<_TrackingLiveMapCard> createState() => _TrackingLiveMapCardState();
+  State<_TrackingLiveRouteCard> createState() => _TrackingLiveRouteCardState();
 }
 
-class _TrackingLiveMapCardState extends State<_TrackingLiveMapCard>
-    with SingleTickerProviderStateMixin {
-  final MapController _mapController = MapController();
-  late final AnimationController _driverMotionController = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 900),
-  )..addListener(_handleDriverMotionTick);
-
+class _TrackingLiveRouteCardState extends State<_TrackingLiveRouteCard> {
   Timer? _clockRefreshTimer;
   _TrackingRouteSnapshot? _snapshot;
-  _TrackingGeoPoint? _driverMotionStart;
-  _TrackingGeoPoint? _driverMotionEnd;
-  _TrackingGeoPoint? _stableDriverPoint;
-  String? _lastCameraSignature;
+  bool _arrivalLocked = false;
 
   @override
   void initState() {
     super.initState();
-    _snapshot = _TrackingRouteSnapshot.fromOrder(widget.order);
-    _stableDriverPoint = _snapshot?.driverPoint;
+    _syncSnapshot();
     _clockRefreshTimer = Timer.periodic(
       const Duration(seconds: 20),
       (_) {
@@ -1120,153 +1115,54 @@ class _TrackingLiveMapCardState extends State<_TrackingLiveMapCard>
         }
       },
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
-      _syncVisualState(initial: true);
-    });
   }
 
   @override
-  void didUpdateWidget(covariant _TrackingLiveMapCard oldWidget) {
+  void didUpdateWidget(covariant _TrackingLiveRouteCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!mapEquals(oldWidget.order, widget.order)) {
-      _snapshot = _TrackingRouteSnapshot.fromOrder(widget.order);
-      _syncVisualState();
+      _syncSnapshot();
+      setState(() {});
     }
   }
 
   @override
   void dispose() {
     _clockRefreshTimer?.cancel();
-    _driverMotionController
-      ..removeListener(_handleDriverMotionTick)
-      ..dispose();
-    _mapController.dispose();
     super.dispose();
   }
 
-  void _handleDriverMotionTick() {
-    if (mounted) {
-      setState(() {});
-    }
-  }
-
-  void _syncVisualState({bool initial = false}) {
-    final snapshot = _snapshot;
-    final nextDriverPoint = snapshot?.driverPoint;
+  void _syncSnapshot() {
+    _snapshot = _TrackingRouteSnapshot.fromOrder(widget.order);
     final normalizedStatus =
         normalizeOrderStatus(widget.order['status']?.toString());
-    final shouldAnimate = normalizedStatus == 'delivered' &&
-        nextDriverPoint != null &&
-        _stableDriverPoint != null &&
-        _TrackingGeoPoint.distanceMeters(_stableDriverPoint!, nextDriverPoint) >
-            2;
-
-    if (shouldAnimate) {
-      _driverMotionStart = _stableDriverPoint;
-      _driverMotionEnd = nextDriverPoint;
-      unawaited(_driverMotionController.forward(from: 0));
-    } else {
-      _driverMotionController.stop();
-      _driverMotionStart = null;
-      _driverMotionEnd = null;
-      _stableDriverPoint = nextDriverPoint;
-    }
-
-    if (mounted) {
-      setState(() {});
-    }
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
-      _fitCameraToActiveRoute(force: initial);
-    });
-  }
-
-  _TrackingGeoPoint? get _visualDriverPoint {
-    final start = _driverMotionStart;
-    final end = _driverMotionEnd;
-    if (start == null || end == null || !_driverMotionController.isAnimating) {
-      return _stableDriverPoint;
-    }
-
-    final curveValue = Curves.easeOutCubic.transform(
-      _driverMotionController.value,
-    );
-    final interpolated = _TrackingGeoPoint.lerp(
-      start,
-      end,
-      curveValue,
-    );
-    if (_driverMotionController.isCompleted) {
-      _stableDriverPoint = end;
-      _driverMotionStart = null;
-      _driverMotionEnd = null;
-      return end;
-    }
-    return interpolated;
-  }
-
-  void _fitCameraToActiveRoute({bool force = false}) {
-    final points = <LatLng>[
-      ..._routeLatLngPoints(includeRestaurant: true),
-    ];
-    if (points.length < 2) {
+    if (normalizedStatus != 'delivered') {
+      _arrivalLocked = false;
       return;
     }
-
-    final signature = points
-        .map(
-          (point) =>
-              '${point.latitude.toStringAsFixed(4)},${point.longitude.toStringAsFixed(4)}',
-        )
-        .join('|');
-    if (!force && signature == _lastCameraSignature) {
-      return;
+    if (_snapshot?.isDriverArrived == true) {
+      _arrivalLocked = true;
     }
-    _lastCameraSignature = signature;
-
-    _mapController.fitCamera(
-      CameraFit.coordinates(
-        coordinates: points,
-        padding: const EdgeInsets.fromLTRB(34, 34, 34, 54),
-        maxZoom: 15.6,
-      ),
-    );
   }
 
-  List<LatLng> _routeLatLngPoints({required bool includeRestaurant}) {
-    final snapshot = _snapshot;
-    if (snapshot == null) {
-      return const <LatLng>[];
+  String? _progressBannerText(double progress) {
+    if (progress >= 1) {
+      return '📍 وصل السائق إلى موقعك.';
     }
-
-    return <LatLng>[
-      if (includeRestaurant && snapshot.restaurantPoint != null)
-        snapshot.restaurantPoint!.toLatLng(),
-      if (_visualDriverPoint != null) _visualDriverPoint!.toLatLng(),
-      snapshot.customerPoint.toLatLng(),
-    ];
-  }
-
-  String? _proximityBannerText(double? remainingDistanceMeters) {
-    if (remainingDistanceMeters == null) {
-      return null;
-    }
-    if (remainingDistanceMeters < 100) {
-      return '📦 السائق وصل تقريبًا.';
-    }
-    if (remainingDistanceMeters < 300) {
-      return '🚴 السائق أصبح قريبًا منك.';
+    if (progress >= 0.5) {
+      return '🚗 السائق أصبح قريبًا منك.';
     }
     return null;
   }
 
+  String _progressLabel(double progress) {
+    return '${(progress * 100).round()}%';
+  }
+
   String _etaLabel(double? remainingDistanceMeters) {
+    if (remainingDistanceMeters == 0) {
+      return 'وصل السائق';
+    }
     if (remainingDistanceMeters == null) {
       return 'جارٍ احتساب وقت الوصول.';
     }
@@ -1286,9 +1182,12 @@ class _TrackingLiveMapCardState extends State<_TrackingLiveMapCard>
   }
 
   String _lastUpdatedLabel() {
-    final updatedAt =
-        DateTime.tryParse(widget.order['updated_at']?.toString() ?? '') ??
-            OrdersService.createdAtOf(widget.order);
+    final updatedAt = DateTime.tryParse(
+          widget.order['driver_presence_updated_at']?.toString() ??
+              widget.order['updated_at']?.toString() ??
+              '',
+        ) ??
+        OrdersService.createdAtOf(widget.order);
     final elapsed = DateTime.now().difference(updatedAt.toLocal());
     if (elapsed.inSeconds < 60) {
       return 'آخر تحديث الآن';
@@ -1308,15 +1207,20 @@ class _TrackingLiveMapCardState extends State<_TrackingLiveMapCard>
 
     final normalizedStatus =
         normalizeOrderStatus(widget.order['status']?.toString());
-    final driverPoint = _visualDriverPoint;
-    final remainingDistanceMeters = driverPoint == null
-        ? snapshot.totalDistanceToCustomer
-        : _TrackingGeoPoint.distanceMeters(driverPoint, snapshot.customerPoint);
-    final totalDistance = snapshot.totalDistanceToCustomer;
-    final bannerText = normalizedStatus == 'delivered'
-        ? _proximityBannerText(remainingDistanceMeters)
-        : null;
-    final routePoints = _routeLatLngPoints(includeRestaurant: false);
+    final progress = _arrivalLocked
+        ? 1.0
+        : (snapshot.driverProgressFraction ?? 0.0).clamp(0.0, 1.0).toDouble();
+    final remainingDistanceMeters = _arrivalLocked
+        ? 0.0
+        : snapshot.remainingDriverDistanceToCustomer ??
+            snapshot.routeDistanceMeters ??
+            snapshot.totalDistanceToCustomer;
+    final totalDistance =
+        snapshot.routeDistanceMeters ?? snapshot.totalDistanceToCustomer;
+    final driverGpsAvailable = snapshot.driverPoint != null;
+    final bannerText =
+        normalizedStatus == 'delivered' ? _progressBannerText(progress) : null;
+    final bannerIsArrival = progress >= 1;
 
     return OrderSectionCard(
       child: Column(
@@ -1335,15 +1239,23 @@ class _TrackingLiveMapCardState extends State<_TrackingLiveMapCard>
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
-                color: const Color(0xFFFFF3E0),
+                color: bannerIsArrival
+                    ? const Color(0xFFE8F5E9)
+                    : const Color(0xFFFFF3E0),
                 borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: const Color(0xFFFFD8A8)),
+                border: Border.all(
+                  color: bannerIsArrival
+                      ? const Color(0xFFA5D6A7)
+                      : const Color(0xFFFFD8A8),
+                ),
               ),
               child: Text(
                 bannerText,
                 textAlign: TextAlign.right,
-                style: const TextStyle(
-                  color: Color(0xFF9A3412),
+                style: TextStyle(
+                  color: bannerIsArrival
+                      ? const Color(0xFF1F8A5B)
+                      : const Color(0xFF9A3412),
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -1354,21 +1266,21 @@ class _TrackingLiveMapCardState extends State<_TrackingLiveMapCard>
             children: [
               Expanded(
                 child: _TrackingMetricPill(
-                  icon: Icons.route_rounded,
-                  label: 'المسافة المتبقية',
-                  value: remainingDistanceMeters == null
-                      ? 'جارٍ التحديث'
-                      : _TrackingDeliveryProgress._distanceLabel(
-                          remainingDistanceMeters,
-                        ),
+                  icon: Icons.percent_rounded,
+                  label: 'نسبة التقدم',
+                  value: _progressLabel(progress),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: _TrackingMetricPill(
-                  icon: Icons.schedule_rounded,
-                  label: 'وقت الوصول',
-                  value: _etaLabel(remainingDistanceMeters),
+                  icon: Icons.route_rounded,
+                  label: 'المسافة المتبقية',
+                  value: remainingDistanceMeters == null
+                      ? 'جارٍ التحديث'
+                      : _TrackingDeliveryProgress.distanceLabel(
+                          remainingDistanceMeters,
+                        ),
                 ),
               ),
             ],
@@ -1378,10 +1290,9 @@ class _TrackingLiveMapCardState extends State<_TrackingLiveMapCard>
             children: [
               Expanded(
                 child: _TrackingMetricPill(
-                  icon: Icons.timelapse_rounded,
-                  label: 'وقت الطلب',
-                  value:
-                      formatOrderDate(OrdersService.createdAtOf(widget.order)),
+                  icon: Icons.schedule_rounded,
+                  label: 'وقت الوصول',
+                  value: _etaLabel(remainingDistanceMeters),
                 ),
               ),
               const SizedBox(width: 10),
@@ -1394,99 +1305,15 @@ class _TrackingLiveMapCardState extends State<_TrackingLiveMapCard>
               ),
             ],
           ),
-          const SizedBox(height: 14),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(22),
-            child: SizedBox(
-              height: 250,
-              child: FlutterMap(
-                mapController: _mapController,
-                options: MapOptions(
-                  initialCenter: snapshot.customerPoint.toLatLng(),
-                  initialZoom: 13.5,
-                  interactionOptions: const InteractionOptions(
-                    flags: InteractiveFlag.drag |
-                        InteractiveFlag.pinchZoom |
-                        InteractiveFlag.doubleTapZoom,
-                  ),
-                ),
-                children: [
-                  TileLayer(
-                    urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'com.example.restaurant_customer',
-                  ),
-                  if (snapshot.restaurantPoint != null)
-                    PolylineLayer(
-                      polylines: [
-                        Polyline(
-                          points: [
-                            snapshot.restaurantPoint!.toLatLng(),
-                            snapshot.customerPoint.toLatLng(),
-                          ],
-                          strokeWidth: 4,
-                          color: const Color(0xFFD0D5DD),
-                        ),
-                      ],
-                    ),
-                  if (routePoints.length >= 2)
-                    PolylineLayer(
-                      polylines: [
-                        Polyline(
-                          points: routePoints,
-                          strokeWidth: 5,
-                          color: normalizedStatus == 'delivered'
-                              ? const Color(0xFFFB8C00)
-                              : const Color(0xFF1E88E5),
-                        ),
-                      ],
-                    ),
-                  MarkerLayer(
-                    markers: [
-                      if (snapshot.restaurantPoint != null)
-                        Marker(
-                          point: snapshot.restaurantPoint!.toLatLng(),
-                          width: 58,
-                          height: 58,
-                          child: const _TrackingMapMarker(
-                            icon: Icons.storefront_rounded,
-                            color: Color(0xFF7C4D2A),
-                            background: Color(0xFFFFF4E5),
-                          ),
-                        ),
-                      Marker(
-                        point: snapshot.customerPoint.toLatLng(),
-                        width: 62,
-                        height: 62,
-                        child: const _TrackingMapMarker(
-                          icon: Icons.home_rounded,
-                          color: Color(0xFF1565C0),
-                          background: Color(0xFFE3F2FD),
-                        ),
-                      ),
-                      if (driverPoint != null)
-                        Marker(
-                          point: driverPoint.toLatLng(),
-                          width: 64,
-                          height: 64,
-                          child: const _TrackingMapMarker(
-                            icon: Icons.delivery_dining_rounded,
-                            color: Color(0xFFEF6C00),
-                            background: Color(0xFFFFF3E0),
-                            elevated: true,
-                          ),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
+          const SizedBox(height: 18),
+          _TrackingDriverRouteBar(progress: progress),
           const SizedBox(height: 12),
           Text(
             totalDistance == null
-                ? 'يتم تحديث موقع السائق والمسار مباشرة عند وصول بيانات جديدة.'
-                : 'المسافة الكلية للرحلة ${_TrackingDeliveryProgress._distanceLabel(totalDistance)} ويتم تحديثها لحظيًا.',
+                ? 'جارٍ تجهيز مسار الرحلة المباشر.'
+                : driverGpsAvailable
+                    ? 'المسافة الكلية للرحلة ${_TrackingDeliveryProgress.distanceLabel(totalDistance)} ويتم تحديث حركة السائق مباشرة حسب GPS الحقيقي.'
+                    : 'المسافة الكلية للرحلة ${_TrackingDeliveryProgress.distanceLabel(totalDistance)} وبانتظار أول تحديث مباشر من GPS السائق.',
             style: const TextStyle(
               color: Color(0xFF667085),
               fontWeight: FontWeight.w700,
@@ -1558,45 +1385,6 @@ class _TrackingMetricPill extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _TrackingMapMarker extends StatelessWidget {
-  const _TrackingMapMarker({
-    required this.icon,
-    required this.color,
-    required this.background,
-    this.elevated = false,
-  });
-
-  final IconData icon;
-  final Color color;
-  final Color background;
-  final bool elevated;
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.center,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        width: elevated ? 46 : 40,
-        height: elevated ? 46 : 40,
-        decoration: BoxDecoration(
-          color: background,
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 3),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0x24000000),
-              blurRadius: elevated ? 18 : 10,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: Icon(icon, color: color, size: elevated ? 22 : 20),
       ),
     );
   }
@@ -2120,12 +1908,6 @@ class _TrackingStatusCard extends StatelessWidget {
     final rawStatus = (order['status'] ?? '').toString().trim();
     final mappedRawStatus = _trackingStatusLabelForCustomer(rawStatus);
     final progressState = _TrackingDeliveryProgress.fromOrder(order);
-    const stages = [
-      ('قيد التحضير', _TrackingDeliveryStage.preparing),
-      ('في الطريق', _TrackingDeliveryStage.onTheWay),
-      ('قريب من العميل', _TrackingDeliveryStage.nearCustomer),
-      ('تم التسليم', _TrackingDeliveryStage.delivered),
-    ];
 
     return OrderSectionCard(
       child: Column(
@@ -2197,189 +1979,204 @@ class _TrackingStatusCard extends StatelessWidget {
               ),
             ),
           ],
-          const SizedBox(height: 14),
-          _TrackingPipeProgress(
-            value: progressState.progress,
-            color: progressState.color,
-            showMotorcycle: progressState.showMotorcycle,
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: stages
-                .map(
-                  (stage) => _ProgressHint(
-                    text: stage.$1,
-                    active: progressState.isStageReached(stage.$2),
-                  ),
-                )
-                .toList(growable: false),
-          ),
         ],
       ),
     );
   }
 }
 
-class _TrackingPipeProgress extends StatelessWidget {
-  const _TrackingPipeProgress({
-    required this.value,
-    required this.color,
-    required this.showMotorcycle,
+class _TrackingDriverRouteBar extends StatelessWidget {
+  const _TrackingDriverRouteBar({
+    required this.progress,
   });
 
-  final double value;
-  final Color color;
-  final bool showMotorcycle;
+  final double progress;
 
   @override
   Widget build(BuildContext context) {
-    final clampedValue = value.clamp(0.0, 1.0);
+    final clampedProgress = progress.clamp(0.0, 1.0).toDouble();
     if (kIsWeb) {
-      return _TrackingPipeBar(
-        value: clampedValue,
-        color: color,
-        showMotorcycle: showMotorcycle,
-      );
+      return _TrackingDriverRouteBarFrame(progress: clampedProgress);
     }
 
     return TweenAnimationBuilder<double>(
-      duration: const Duration(milliseconds: 650),
-      curve: Curves.easeOutCubic,
-      tween: Tween<double>(end: clampedValue),
-      builder: (context, animatedValue, _) {
-        return _TrackingPipeBar(
-          value: animatedValue,
-          color: color,
-          showMotorcycle: showMotorcycle,
-        );
+      duration: const Duration(milliseconds: 900),
+      curve: Curves.easeInOutCubic,
+      tween: Tween<double>(end: clampedProgress),
+      builder: (context, animatedProgress, _) {
+        return _TrackingDriverRouteBarFrame(progress: animatedProgress);
       },
     );
   }
 }
 
-class _TrackingPipeBar extends StatelessWidget {
-  const _TrackingPipeBar({
-    required this.value,
-    required this.color,
-    required this.showMotorcycle,
+class _TrackingDriverRouteBarFrame extends StatelessWidget {
+  const _TrackingDriverRouteBarFrame({
+    required this.progress,
   });
 
-  final double value;
-  final Color color;
-  final bool showMotorcycle;
+  final double progress;
 
   @override
   Widget build(BuildContext context) {
-    const trackHeight = 16.0;
-    const iconSize = 28.0;
-    final clampedValue = value.clamp(0.0, 1.0);
+    const endpointWidth = 76.0;
+    const endpointBadgeSize = 44.0;
+    const driverBadgeSize = 46.0;
+    const trackHeight = 10.0;
+    final clampedProgress = progress.clamp(0.0, 1.0).toDouble();
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final maxLeft = math.max(0, constraints.maxWidth - iconSize);
-        final iconLeft = (maxLeft * clampedValue).toDouble();
+    return Directionality(
+      textDirection: TextDirection.ltr,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final trackStart = endpointWidth - (endpointBadgeSize / 2);
+          final trackEnd =
+              constraints.maxWidth - endpointWidth + (endpointBadgeSize / 2);
+          final trackWidth = math.max(0.0, trackEnd - trackStart);
+          final driverCenter = trackStart + (trackWidth * clampedProgress);
+          final driverLeft = (driverCenter - (driverBadgeSize / 2))
+              .clamp(0.0, math.max(0.0, constraints.maxWidth - driverBadgeSize))
+              .toDouble();
 
-        return SizedBox(
-          height: trackHeight + iconSize * 0.75,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              PositionedDirectional(
-                top: iconSize * 0.45,
-                start: 0,
-                end: 0,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(999),
-                  child: Stack(
-                    children: [
-                      Container(
-                        height: trackHeight,
-                        width: double.infinity,
-                        color: const Color(0xFFDDE3EA),
+          return Container(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFFCF5),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: const Color(0xFFFFE0B2)),
+            ),
+            child: SizedBox(
+              height: 104,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned(
+                    top: 42,
+                    left: trackStart,
+                    width: trackWidth,
+                    child: Container(
+                      height: trackHeight,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE5E7EB),
+                        borderRadius: BorderRadius.circular(999),
                       ),
-                      FractionallySizedBox(
-                        widthFactor: clampedValue,
-                        child: Container(
-                          height: trackHeight,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                color.withValues(alpha: 0.9),
-                                color,
-                              ],
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: FractionallySizedBox(
+                          widthFactor: clampedProgress,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFB8C00),
+                              borderRadius: BorderRadius.circular(999),
                             ),
                           ),
                         ),
                       ),
-                    ],
+                    ),
                   ),
-                ),
-              ),
-              if (showMotorcycle)
-                PositionedDirectional(
-                  top: 0,
-                  start: iconLeft,
-                  child: Container(
-                    width: iconSize,
-                    height: iconSize,
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Color(0x26000000),
-                          blurRadius: 10,
-                          offset: Offset(0, 3),
+                  const Positioned(
+                    top: 0,
+                    left: 0,
+                    child: _TrackingRouteEndpoint(
+                      emoji: '🏪',
+                      label: 'المطعم',
+                      color: Color(0xFF7C4D2A),
+                      background: Color(0xFFFFF4E5),
+                    ),
+                  ),
+                  const Positioned(
+                    top: 0,
+                    right: 0,
+                    child: _TrackingRouteEndpoint(
+                      emoji: '🏠',
+                      label: 'العميل',
+                      color: Color(0xFF1565C0),
+                      background: Color(0xFFE3F2FD),
+                    ),
+                  ),
+                  Positioned(
+                    top: 18,
+                    left: driverLeft,
+                    child: Container(
+                      width: driverBadgeSize,
+                      height: driverBadgeSize,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: const Color(0xFFFFE0B2),
+                          width: 2,
                         ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.delivery_dining_rounded,
-                      color: Color(0xFFFB8C00),
-                      size: 19,
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x26000000),
+                            blurRadius: 14,
+                            offset: Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      alignment: Alignment.center,
+                      child: const Text(
+                        '🛵',
+                        style: TextStyle(fontSize: 21),
+                      ),
                     ),
                   ),
-                ),
-            ],
-          ),
-        );
-      },
+                ],
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 }
 
-class _ProgressHint extends StatelessWidget {
-  const _ProgressHint({
-    required this.text,
-    required this.active,
+class _TrackingRouteEndpoint extends StatelessWidget {
+  const _TrackingRouteEndpoint({
+    required this.emoji,
+    required this.label,
+    required this.color,
+    required this.background,
   });
 
-  final String text;
-  final bool active;
+  final String emoji;
+  final String label;
+  final Color color;
+  final Color background;
 
   @override
   Widget build(BuildContext context) {
-    final animationDuration =
-        kIsWeb ? Duration.zero : AppTheme.microInteractionDuration;
-    return AnimatedContainer(
-      duration: animationDuration,
-      curve: AppTheme.emphasizedCurve,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: active
-            ? AppTheme.primary.withValues(alpha: 0.12)
-            : const Color(0xFFF2F4F7),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: active ? AppTheme.primary : const Color(0xFF667085),
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-        ),
+    return SizedBox(
+      width: 64,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: background,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              emoji,
+              style: const TextStyle(fontSize: 20),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w800,
+              fontSize: 12,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2394,28 +2191,18 @@ enum _TrackingDeliveryStage {
 
 class _TrackingDeliveryProgress {
   const _TrackingDeliveryProgress({
-    required this.stage,
-    required this.progress,
     required this.color,
     required this.label,
-    required this.showMotorcycle,
     required this.driverStatus,
     this.distanceSummary,
     this.etaSummary,
   });
 
-  final _TrackingDeliveryStage stage;
-  final double progress;
   final Color color;
   final String label;
-  final bool showMotorcycle;
   final String driverStatus;
   final String? distanceSummary;
   final String? etaSummary;
-
-  bool isStageReached(_TrackingDeliveryStage other) {
-    return _stageRank(stage) >= _stageRank(other);
-  }
 
   static _TrackingDeliveryProgress fromOrder(Map<String, dynamic> order) {
     final normalizedStatus = normalizeOrderStatus(order['status']?.toString());
@@ -2430,25 +2217,13 @@ class _TrackingDeliveryProgress {
     final totalDistance = snapshot?.totalDistanceToCustomer;
     final remainingDistance = snapshot?.remainingDriverDistanceToCustomer;
 
-    var geometryProgress = 0.0;
-    if (totalDistance != null &&
-        totalDistance > 1 &&
-        remainingDistance != null) {
-      geometryProgress = ((totalDistance - remainingDistance) / totalDistance)
-          .clamp(0.0, 1.0)
-          .toDouble();
-    }
-
     if (isFinalDelivered) {
       final summary = totalDistance == null
           ? null
-          : 'اكتملت الرحلة (${_distanceLabel(totalDistance)})';
+          : 'اكتملت الرحلة (${distanceLabel(totalDistance)})';
       return _TrackingDeliveryProgress(
-        stage: _TrackingDeliveryStage.delivered,
-        progress: 1,
-        color: Color(0xFF2E7D32),
+        color: const Color(0xFF2E7D32),
         label: 'اكتمل الطلب',
-        showMotorcycle: false,
         driverStatus: 'حالة السائق: تم إنهاء الطلب بنجاح.',
         distanceSummary: summary,
         etaSummary: 'وقت الوصول المتوقع: اكتمل الطلب.',
@@ -2458,13 +2233,10 @@ class _TrackingDeliveryProgress {
     if (isAwaitingCustomerConfirmation) {
       final summary = totalDistance == null
           ? null
-          : 'وصل الطلب إلى نقطة التسليم (${_distanceLabel(totalDistance)})';
+          : 'وصل الطلب إلى نقطة التسليم (${distanceLabel(totalDistance)})';
       return _TrackingDeliveryProgress(
-        stage: _TrackingDeliveryStage.delivered,
-        progress: 1,
         color: const Color(0xFF7C3AED),
         label: 'تم التسليم - بانتظار تأكيد الاستلام',
-        showMotorcycle: false,
         driverStatus: 'حالة السائق: أكد تسليم الطلب وينتظر تأكيدك.',
         distanceSummary: summary,
         etaSummary: 'وقت الوصول المتوقع: بانتظار تأكيد الاستلام.',
@@ -2488,33 +2260,13 @@ class _TrackingDeliveryProgress {
       stage = _TrackingDeliveryStage.preparing;
     }
 
-    var progress = geometryProgress;
-    switch (stage) {
-      case _TrackingDeliveryStage.preparing:
-        progress =
-            (progress > 0 ? progress : 0.18).clamp(0.14, 0.30).toDouble();
-        break;
-      case _TrackingDeliveryStage.onTheWay:
-        progress =
-            (progress > 0 ? progress : 0.42).clamp(0.32, 0.89).toDouble();
-        break;
-      case _TrackingDeliveryStage.nearCustomer:
-        progress = math.max(progress, 0.90).clamp(0.90, 0.98).toDouble();
-        break;
-      case _TrackingDeliveryStage.delivered:
-        progress = 1.0;
-        break;
-    }
-
     final summary = totalDistance == null
         ? null
         : remainingDistance == null
-            ? 'المسافة الكلية ${_distanceLabel(totalDistance)}'
-            : 'المتبقي ${_distanceLabel(remainingDistance)} من ${_distanceLabel(totalDistance)}';
+            ? 'المسافة الكلية ${distanceLabel(totalDistance)}'
+            : 'المتبقي ${distanceLabel(remainingDistance)} من ${distanceLabel(totalDistance)}';
 
     return _TrackingDeliveryProgress(
-      stage: stage,
-      progress: progress,
       color: switch (stage) {
         _TrackingDeliveryStage.preparing => const Color(0xFFF4B400),
         _TrackingDeliveryStage.onTheWay => const Color(0xFFFB8C00),
@@ -2527,8 +2279,6 @@ class _TrackingDeliveryProgress {
         _TrackingDeliveryStage.nearCustomer => 'قريب من العميل',
         _TrackingDeliveryStage.delivered => 'تم التسليم',
       },
-      showMotorcycle: stage == _TrackingDeliveryStage.onTheWay ||
-          stage == _TrackingDeliveryStage.nearCustomer,
       driverStatus: _driverStatusLabel(
         stage: stage,
         hasAssignedDriver: hasAssignedDriver,
@@ -2637,20 +2387,7 @@ class _TrackingDeliveryProgress {
         normalizedStatus == 'received';
   }
 
-  static int _stageRank(_TrackingDeliveryStage stage) {
-    switch (stage) {
-      case _TrackingDeliveryStage.preparing:
-        return 0;
-      case _TrackingDeliveryStage.onTheWay:
-        return 1;
-      case _TrackingDeliveryStage.nearCustomer:
-        return 2;
-      case _TrackingDeliveryStage.delivered:
-        return 3;
-    }
-  }
-
-  static String _distanceLabel(double meters) {
+  static String distanceLabel(double meters) {
     if (meters < 1000) {
       return '${meters.round()} م';
     }
@@ -2664,6 +2401,8 @@ class _TrackingDeliveryProgress {
 }
 
 class _TrackingRouteSnapshot {
+  static const double arrivalSnapDistanceMeters = 35.0;
+
   const _TrackingRouteSnapshot({
     required this.customerPoint,
     this.restaurantPoint,
@@ -2697,6 +2436,13 @@ class _TrackingRouteSnapshot {
     );
   }
 
+  double? get routeDistanceMeters {
+    if (restaurantPoint == null) {
+      return null;
+    }
+    return _TrackingGeoPoint.distanceMeters(restaurantPoint!, customerPoint);
+  }
+
   double? get totalDistanceToCustomer {
     final fromPoint = restaurantPoint ?? driverPoint;
     if (fromPoint == null) {
@@ -2707,9 +2453,34 @@ class _TrackingRouteSnapshot {
 
   double? get remainingDriverDistanceToCustomer {
     if (driverPoint == null) {
-      return totalDistanceToCustomer;
+      return routeDistanceMeters ?? totalDistanceToCustomer;
     }
     return _TrackingGeoPoint.distanceMeters(driverPoint!, customerPoint);
+  }
+
+  double? get driverProgressFraction {
+    final totalDistance = routeDistanceMeters;
+    if (totalDistance == null || totalDistance <= 1) {
+      return null;
+    }
+    if (driverPoint == null) {
+      return 0.0;
+    }
+
+    final remainingDistance =
+        _TrackingGeoPoint.distanceMeters(driverPoint!, customerPoint);
+    if (remainingDistance <= arrivalSnapDistanceMeters) {
+      return 1.0;
+    }
+    return ((totalDistance - remainingDistance) / totalDistance)
+        .clamp(0.0, 1.0)
+        .toDouble();
+  }
+
+  bool get isDriverArrived {
+    final remainingDistance = remainingDriverDistanceToCustomer;
+    return remainingDistance != null &&
+        remainingDistance <= arrivalSnapDistanceMeters;
   }
 }
 
@@ -2718,20 +2489,6 @@ class _TrackingGeoPoint {
 
   final double latitude;
   final double longitude;
-
-  LatLng toLatLng() => LatLng(latitude, longitude);
-
-  static _TrackingGeoPoint lerp(
-    _TrackingGeoPoint start,
-    _TrackingGeoPoint end,
-    double t,
-  ) {
-    final clamped = t.clamp(0.0, 1.0).toDouble();
-    return _TrackingGeoPoint(
-      start.latitude + ((end.latitude - start.latitude) * clamped),
-      start.longitude + ((end.longitude - start.longitude) * clamped),
-    );
-  }
 
   static double distanceMeters(_TrackingGeoPoint start, _TrackingGeoPoint end) {
     const earthRadius = 6371000.0;

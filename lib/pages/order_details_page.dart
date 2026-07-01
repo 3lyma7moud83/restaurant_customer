@@ -17,7 +17,6 @@ import '../core/theme/app_theme.dart';
 import '../core/ui/app_snackbar.dart';
 import '../core/ui/input_focus_guard.dart';
 import '../services/orders_service.dart';
-import 'delivery_issue_page.dart';
 import 'order_tracking_page.dart';
 
 class OrderDetailsPage extends StatefulWidget {
@@ -569,10 +568,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
         context: context,
         order: order,
         onConfirm: confirmDeliveryReceived,
-        onBeforeReportIssue: () {
-          _deliveryConfirmationDialogOpen = false;
-        },
-        onReportIssue: () => unawaited(_openDeliveryIssuePage(order)),
+        onContactDriver: () => unawaited(_callDriver()),
       );
     } finally {
       _deliveryConfirmationDialogOpen = false;
@@ -597,28 +593,40 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
     await OrdersService.confirmDeliveryReceived(order);
   }
 
-  Future<void> _openDeliveryIssuePage(
-      Map<String, dynamic> fallbackOrder) async {
-    await InputFocusGuard.prepareForUiTransition(context: context);
+  Future<void> _callPhone(
+    String? phone, {
+    required String unavailableMessage,
+  }) async {
+    final normalizedPhone = phone?.trim() ?? '';
+    if (normalizedPhone.isEmpty) {
+      AppSnackBar.show(context, message: unavailableMessage);
+      return;
+    }
+
+    final uri = Uri.parse('tel:$normalizedPhone');
+    final canLaunch = await canLaunchUrl(uri);
     if (!mounted) {
       return;
     }
-    final order = _order ?? fallbackOrder;
-    await Navigator.push<bool>(
-      context,
-      AppTheme.platformPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => DeliveryIssuePage(order: order),
-      ),
-    );
-  }
-
-  Future<void> _callRestaurant(String phone) async {
-    final uri = Uri.parse('tel:$phone');
-    if (!await canLaunchUrl(uri)) {
+    if (!canLaunch) {
+      AppSnackBar.show(context, message: unavailableMessage);
       return;
     }
     await launchUrl(uri);
+  }
+
+  Future<void> _callRestaurant(String phone) {
+    return _callPhone(
+      phone,
+      unavailableMessage: 'رقم المطعم غير متوفر حاليًا.',
+    );
+  }
+
+  Future<void> _callDriver() {
+    return _callPhone(
+      _order == null ? null : OrdersService.driverPhoneOf(_order!),
+      unavailableMessage: 'رقم السائق غير متوفر حاليًا.',
+    );
   }
 
   Future<void> _openTrackingPage() async {

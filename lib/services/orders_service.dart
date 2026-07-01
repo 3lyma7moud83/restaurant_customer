@@ -1238,6 +1238,43 @@ class OrdersService {
         _stringValue(order['rider_id']);
   }
 
+  static String? driverPhoneOf(Map<String, dynamic> order) {
+    final driver = driverDataOf(order);
+    return _stringValue(order['driver_phone']) ??
+        _stringValue(order['courier_phone']) ??
+        _stringValue(order['rider_phone']) ??
+        _firstStringValue(driver, const [
+          'phone',
+          'mobile',
+          'phone_number',
+          'mobile_number',
+          'driver_phone',
+          'courier_phone',
+          'rider_phone',
+        ]);
+  }
+
+  static Map<String, dynamic>? driverDataOf(Map<String, dynamic> order) {
+    for (final key in const [
+      'driver_data',
+      'driver',
+      'drivers',
+      'courier',
+      'couriers',
+      'rider',
+      'riders',
+    ]) {
+      final value = order[key];
+      if (value is Map) {
+        return Map<String, dynamic>.from(value);
+      }
+      if (value is List && value.isNotEmpty && value.first is Map) {
+        return Map<String, dynamic>.from(value.first as Map);
+      }
+    }
+    return null;
+  }
+
   static String restaurantNameOf(Map<String, dynamic> order) {
     final restaurant = restaurantDataOf(order);
     if (restaurant == null) {

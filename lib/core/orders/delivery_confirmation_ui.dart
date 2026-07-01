@@ -20,8 +20,7 @@ Future<void> showDeliveryConfirmationDialog({
   required BuildContext context,
   required Map<String, dynamic> order,
   required Future<void> Function() onConfirm,
-  required VoidCallback onReportIssue,
-  VoidCallback? onBeforeReportIssue,
+  VoidCallback? onContactDriver,
 }) {
   final orderId = OrdersService.idOf(order);
   StabilityLogger.deliveryConfirmation(
@@ -33,14 +32,10 @@ Future<void> showDeliveryConfirmationDialog({
     isDismissible: false,
     enableDrag: false,
     isScrollControlled: true,
-    builder: (sheetContext) {
+    builder: (_) {
       return _DeliveryConfirmationSheet(
         onConfirm: onConfirm,
-        onReportIssue: () {
-          onBeforeReportIssue?.call();
-          Navigator.of(sheetContext).pop();
-          onReportIssue();
-        },
+        onContactDriver: onContactDriver,
       );
     },
   ).whenComplete(
@@ -117,11 +112,11 @@ class DeliveryConfirmationBanner extends StatelessWidget {
 class _DeliveryConfirmationSheet extends StatefulWidget {
   const _DeliveryConfirmationSheet({
     required this.onConfirm,
-    required this.onReportIssue,
+    this.onContactDriver,
   });
 
   final Future<void> Function() onConfirm;
-  final VoidCallback onReportIssue;
+  final VoidCallback? onContactDriver;
 
   @override
   State<_DeliveryConfirmationSheet> createState() =>
@@ -132,6 +127,7 @@ class _DeliveryConfirmationSheetState
     extends State<_DeliveryConfirmationSheet> {
   bool _submitting = false;
   bool _waitingForRealtime = false;
+  bool _showContactDriver = false;
 
   Future<void> _confirmDeliveryReceived() async {
     if (_submitting || _waitingForRealtime) {
@@ -160,6 +156,13 @@ class _DeliveryConfirmationSheetState
     }
   }
 
+  void _handleNotReceived() {
+    if (_submitting || _waitingForRealtime) {
+      return;
+    }
+    setState(() => _showContactDriver = true);
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.viewInsetsOf(context).bottom;
@@ -184,7 +187,7 @@ class _DeliveryConfirmationSheetState
             ),
             const SizedBox(height: 18),
             const Text(
-              'تم تسليم الطلب',
+              'هل استلمت الطلب؟',
               textAlign: TextAlign.right,
               style: TextStyle(
                 fontSize: 20,
@@ -194,7 +197,7 @@ class _DeliveryConfirmationSheetState
             ),
             const SizedBox(height: 10),
             const Text(
-              'أكد الطيار أنه قام بتسليم الطلب.\nهل استلمت طلبك بالفعل؟',
+              'أكد السائق أنه قام بتسليم الطلب.\nلن تتغير الحالة إلى مكتمل إلا بعد تأكيدك أنت.',
               textAlign: TextAlign.right,
               style: TextStyle(
                 color: Color(0xFF667085),
@@ -254,10 +257,53 @@ class _DeliveryConfirmationSheetState
             OutlinedButton.icon(
               onPressed: _submitting || _waitingForRealtime
                   ? null
-                  : widget.onReportIssue,
+                  : _handleNotReceived,
               icon: const Icon(Icons.report_problem_outlined),
               label: const Text('لم أستلم الطلب'),
             ),
+            if (_showContactDriver) ...[
+              const SizedBox(height: 14),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF7ED),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFFED7AA)),
+                ),
+                child: const Text(
+                  'سيبقى الطلب على حالته الحالية حتى تؤكد الاستلام. يمكنك التواصل مع السائق مباشرة الآن.',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: Color(0xFF9A3412),
+                    fontWeight: FontWeight.w800,
+                    height: 1.45,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              FilledButton.icon(
+                onPressed: _submitting || _waitingForRealtime
+                    ? null
+                    : () {
+                        final onContactDriver = widget.onContactDriver;
+                        if (onContactDriver != null) {
+                          onContactDriver();
+                          return;
+                        }
+                        AppSnackBar.show(
+                          context,
+                          message: 'رقم السائق غير متوفر حاليًا.',
+                        );
+                      },
+                icon: const Icon(Icons.phone_outlined),
+                label: const Text('📞 الاتصال بالسائق'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFEA580C),
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ],
           ],
         ),
       ),
