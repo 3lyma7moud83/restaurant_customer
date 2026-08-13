@@ -112,8 +112,8 @@ OrderStatusInfo resolveOrderStatus(String? rawStatus) {
     case 'delivered':
       return const OrderStatusInfo(
         stage: OrderStatusStage.onTheWay,
-        text: 'في الطريق',
-        color: Color(0xFFFB8C00),
+        text: 'الطيار استلم الطلب',
+        color: Color(0xFFFFB000),
         icon: Icons.delivery_dining_rounded,
         rawValue: 'on_the_way',
       );

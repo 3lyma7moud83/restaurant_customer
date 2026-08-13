@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:ui';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -21,22 +23,616 @@ import '../../core/stability/stability_metrics_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/ui/input_focus_guard.dart';
 import '../../pages/orders_page.dart';
+import '../../pages/order_chat_page.dart';
 import '../../pages/order_details_page.dart';
 import '../../pages/order_tracking_page.dart';
 import '../orders_service.dart';
 import '../session_manager.dart';
 import 'web_push_bridge.dart';
 
+const Color _androidNotificationLedColor = Color(0xFF2E7D32);
 const AndroidNotificationChannel _ordersNotificationChannel =
     AndroidNotificationChannel(
-  'high_importance_channel',
-  'Order Updates',
-  description: 'Notifications for order updates and customer alerts.',
+  'orders',
+  'Orders',
+  description: 'Order updates and delivery alerts.',
   importance: Importance.max,
   playSound: true,
   enableVibration: true,
+  showBadge: true,
+  enableLights: true,
+  ledColor: _androidNotificationLedColor,
+);
+const AndroidNotificationChannel _messagesNotificationChannel =
+    AndroidNotificationChannel(
+  'messages',
+  'Messages',
+  description: 'Chat and customer message notifications.',
+  importance: Importance.max,
+  playSound: true,
+  enableVibration: true,
+  showBadge: true,
+  enableLights: true,
+  ledColor: _androidNotificationLedColor,
+);
+const AndroidNotificationChannel _generalNotificationChannel =
+    AndroidNotificationChannel(
+  'general',
+  'General',
+  description: 'General customer account notifications.',
+  importance: Importance.max,
+  playSound: true,
+  enableVibration: true,
+  showBadge: true,
+  enableLights: true,
+  ledColor: _androidNotificationLedColor,
+);
+const AndroidNotificationChannel _urgentNotificationChannel =
+    AndroidNotificationChannel(
+  'urgent',
+  'Urgent',
+  description: 'Urgent delivery and account notifications.',
+  importance: Importance.max,
+  playSound: true,
+  enableVibration: true,
+  showBadge: true,
+  enableLights: true,
+  ledColor: _androidNotificationLedColor,
+);
+const AndroidNotificationChannel _legacyHighImportanceNotificationChannel =
+    AndroidNotificationChannel(
+  'high_importance_channel',
+  'Orders',
+  description: 'Compatibility channel for server-sent Android order pushes.',
+  importance: Importance.max,
+  playSound: true,
+  enableVibration: true,
+  showBadge: true,
+  enableLights: true,
+  ledColor: _androidNotificationLedColor,
 );
 const String _androidNotificationIcon = 'ic_stat_notification';
+const List<AndroidNotificationChannel> _androidNotificationChannels =
+    <AndroidNotificationChannel>[
+  _ordersNotificationChannel,
+  _messagesNotificationChannel,
+  _generalNotificationChannel,
+  _urgentNotificationChannel,
+  _legacyHighImportanceNotificationChannel,
+];
+const MethodChannel _androidNotificationSettingsChannel = MethodChannel(
+  'restaurant_customer/android_notifications',
+);
+
+Future<void> _initializeAndroidLocalNotificationsForBackground(
+  FlutterLocalNotificationsPlugin localNotifications,
+) async {
+  const androidSettings = AndroidInitializationSettings(
+    _androidNotificationIcon,
+  );
+  await localNotifications.initialize(
+    const InitializationSettings(android: androidSettings),
+    onDidReceiveBackgroundNotificationResponse:
+        localNotificationTapBackgroundHandler,
+  );
+  await _createAndroidNotificationChannels(localNotifications);
+}
+
+Future<void> _createAndroidNotificationChannels(
+  FlutterLocalNotificationsPlugin localNotifications,
+) async {
+  final androidPlugin =
+      localNotifications.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+  if (androidPlugin == null) {
+    return;
+  }
+
+  for (final channel in _androidNotificationChannels) {
+    await androidPlugin.createNotificationChannel(channel);
+  }
+}
+
+NotificationDetails _androidNotificationDetailsForPresentation(
+  _AndroidNotificationPresentation presentation,
+) {
+  return _androidNotificationDetailsForChannel(
+    presentation.channel,
+    title: presentation.title,
+    body: presentation.body,
+    tag: presentation.notificationId,
+    badgeCount: presentation.badgeCount,
+    timestamp: presentation.timestamp,
+  );
+}
+
+NotificationDetails _androidNotificationDetailsForChannel(
+  AndroidNotificationChannel channel, {
+  required String title,
+  required String body,
+  String? tag,
+  int? badgeCount,
+  DateTime? timestamp,
+}) {
+  return NotificationDetails(
+    android: AndroidNotificationDetails(
+      channel.id,
+      channel.name,
+      channelDescription: channel.description,
+      importance: Importance.max,
+      priority: Priority.high,
+      playSound: true,
+      enableVibration: true,
+      icon: _androidNotificationIcon,
+      visibility: NotificationVisibility.public,
+      channelShowBadge: true,
+      enableLights: true,
+      ledColor: _androidNotificationLedColor,
+      ledOnMs: 1000,
+      ledOffMs: 500,
+      ticker: title,
+      tag: tag,
+      number: badgeCount,
+      when: timestamp?.millisecondsSinceEpoch,
+      styleInformation: BigTextStyleInformation(
+        body,
+        contentTitle: title,
+      ),
+    ),
+    iOS: DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+      badgeNumber: badgeCount,
+    ),
+  );
+}
+
+_AndroidNotificationPresentation? _buildAndroidNotificationPresentation(
+  RemoteMessage message, {
+  required String source,
+}) {
+  final data = _androidNormalizeMessageData(message);
+  final androidNotification = message.notification?.android;
+  final rawTitle = message.notification?.title ?? data['title'];
+  final rawBody = message.notification?.body ?? data['body'];
+  final title = _androidNormalizeBrandingText(
+    _androidNormalizeDataValue(rawTitle) ?? '',
+  );
+  final body = _androidNormalizeBrandingText(
+    _androidNormalizeDataValue(rawBody) ?? '',
+  );
+  if (title.isEmpty || body.isEmpty) {
+    _logAndroidNotificationFlow('ERROR', {
+      'source': source,
+      'error': 'missing_title_or_body',
+      'message_id': message.messageId,
+      'data': data,
+    });
+    return null;
+  }
+
+  final messageId = _androidNormalizeDataValue(message.messageId) ??
+      _androidNormalizeDataValue(data['message_id']) ??
+      _androidNormalizeDataValue(data['google.message_id']);
+  final notificationId = _androidNormalizeDataValue(data['notification_id']) ??
+      messageId ??
+      _androidStableDataSignature(data);
+  if (notificationId.isEmpty) {
+    _logAndroidNotificationFlow('ERROR', {
+      'source': source,
+      'error': 'missing_notification_id',
+      'message_id': message.messageId,
+    });
+    return null;
+  }
+
+  final type = _androidResolveType(data);
+  final channel = _androidResolveChannel(
+    data,
+    type: type,
+    remoteChannelId: androidNotification?.channelId,
+  );
+  final resolvedClickAction = _androidResolveTargetPath(data);
+  final originalClickAction = _androidNormalizeTargetPath(data['click_action']);
+  final originalDeepLink = _androidNormalizeTargetPath(data['deep_link']);
+  final payloadClickAction = originalClickAction ?? resolvedClickAction;
+  final payloadDeepLink =
+      originalDeepLink ?? originalClickAction ?? resolvedClickAction;
+  final timestamp = _androidResolveTimestamp(data, message.sentTime);
+  final badgeCount = _androidIntValue(
+        data['badge_count'] ?? data['badge'] ?? data['count'],
+      ) ??
+      androidNotification?.count;
+  final sound =
+      _androidNormalizeDataValue(data['sound'] ?? androidNotification?.sound) ??
+          'default';
+  final priority = _androidNormalizeDataValue(data['priority']) ??
+      _androidPriorityName(androidNotification?.priority) ??
+      'high';
+  final image = _androidNormalizeDataValue(
+    data['image'] ??
+        data['image_url'] ??
+        data['picture'] ??
+        androidNotification?.imageUrl,
+  );
+
+  final payload = <String, String>{
+    ...data,
+    'title': title,
+    'body': body,
+    'type': type,
+    'notification_type': data['notification_type'] ?? type,
+    'event': data['event'] ?? type,
+    'notification_id': notificationId,
+    if (messageId != null) 'message_id': messageId,
+    if (payloadClickAction != null) 'click_action': payloadClickAction,
+    if (payloadDeepLink != null) 'deep_link': payloadDeepLink,
+    'timestamp': timestamp.toUtc().toIso8601String(),
+    if (badgeCount != null) 'badge_count': badgeCount.toString(),
+    'sound': sound,
+    'priority': priority,
+    'channel': _androidNormalizeDataValue(
+          data['channel'] ??
+              data['channel_id'] ??
+              androidNotification?.channelId,
+        ) ??
+        channel.id,
+    if (image != null) 'image': image,
+    'android_received_by': 'AppNotificationService',
+    'android_delivery_proof': source,
+  };
+
+  return _AndroidNotificationPresentation(
+    title: title,
+    body: body,
+    payload: payload,
+    notificationId: notificationId,
+    messageId: messageId,
+    type: type,
+    channel: channel,
+    timestamp: timestamp,
+    badgeCount: badgeCount,
+    dedupKey: 'notification:$notificationId',
+    localNotificationId: _androidNotificationIdForKey(notificationId),
+  );
+}
+
+Map<String, String> _androidNormalizeMessageData(RemoteMessage message) {
+  final fromData = _androidNormalizeStringData(message.data);
+  final fromStringifiedData = _androidNormalizeStringData(
+    _androidParseJsonMap(message.data['data']),
+  );
+  final fromNestedData = _androidNormalizeStringData(
+    _androidParseJsonMap(fromStringifiedData['data'] ?? fromData['data']),
+  );
+  return <String, String>{
+    ...fromStringifiedData,
+    ...fromNestedData,
+    ...fromData,
+  };
+}
+
+Map<String, dynamic> _androidParseJsonMap(Object? value) {
+  if (value is Map<String, dynamic>) {
+    return value;
+  }
+  if (value is Map) {
+    return value.map((key, value) => MapEntry(key.toString(), value));
+  }
+  final raw = _androidNormalizeDataValue(value);
+  if (raw == null) {
+    return const <String, dynamic>{};
+  }
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is Map<String, dynamic>) {
+      return decoded;
+    }
+    if (decoded is Map) {
+      return decoded.map((key, value) => MapEntry(key.toString(), value));
+    }
+  } catch (_) {
+    return const <String, dynamic>{};
+  }
+  return const <String, dynamic>{};
+}
+
+Map<String, String> _androidNormalizeStringData(Map<dynamic, dynamic> rawData) {
+  final normalized = <String, String>{};
+  for (final entry in rawData.entries) {
+    final key = entry.key.toString().trim();
+    if (key.isEmpty) {
+      continue;
+    }
+    final value = _androidNormalizeDataValue(entry.value);
+    if (value == null) {
+      continue;
+    }
+    normalized[key] = value;
+  }
+  return normalized;
+}
+
+String? _androidNormalizeDataValue(Object? raw) {
+  if (raw == null) {
+    return null;
+  }
+  var normalized = raw.toString().trim();
+  if (normalized.isEmpty || normalized.toLowerCase() == 'null') {
+    return null;
+  }
+  final hasWrappedDoubleQuotes =
+      normalized.startsWith('"') && normalized.endsWith('"');
+  final hasWrappedSingleQuotes =
+      normalized.startsWith("'") && normalized.endsWith("'");
+  if (hasWrappedDoubleQuotes || hasWrappedSingleQuotes) {
+    normalized = normalized.substring(1, normalized.length - 1).trim();
+  }
+  if (normalized.isEmpty || normalized.toLowerCase() == 'null') {
+    return null;
+  }
+  return normalized;
+}
+
+String _androidNormalizeBrandingText(String value) {
+  if (value.isEmpty) {
+    return value;
+  }
+  var normalized = value;
+  normalized = normalized.replaceAllMapped(
+    RegExp(r'support@delivery-mat3mk\.com', caseSensitive: false),
+    (_) => 'support@deliverymat3mk.com',
+  );
+  normalized = normalized.replaceAllMapped(
+    RegExp(r'delivery-mat3mk', caseSensitive: false),
+    (_) => 'Delivery Mat3mk',
+  );
+  normalized = normalized.replaceAllMapped(
+    RegExp(r'restaurant_(customer|driver|admin)', caseSensitive: false),
+    (_) => 'Delivery Mat3mk',
+  );
+  normalized = normalized.replaceAllMapped(
+    RegExp(r'mat3amak', caseSensitive: false),
+    (_) => 'Delivery Mat3mk',
+  );
+  return normalized;
+}
+
+String _androidResolveType(Map<String, String> data) {
+  final candidate = _androidNormalizeDataValue(data['type']) ??
+      _androidNormalizeDataValue(data['notification_type']) ??
+      _androidNormalizeDataValue(data['event']) ??
+      _androidNormalizeDataValue(data['status_key']) ??
+      _androidNormalizeDataValue(data['status']);
+  if (candidate != null) {
+    return candidate.toLowerCase();
+  }
+  if (_androidNormalizeDataValue(data['order_id']) != null) {
+    return 'order_status';
+  }
+  return 'general';
+}
+
+AndroidNotificationChannel _androidResolveChannel(
+  Map<String, String> data, {
+  required String type,
+  String? remoteChannelId,
+}) {
+  final explicit = _androidNormalizeDataValue(
+    data['channel'] ?? data['channel_id'] ?? remoteChannelId,
+  )?.toLowerCase();
+  final normalizedExplicit = switch (explicit) {
+    'orders' || 'order' || 'orders-high-priority' => 'orders',
+    'messages' || 'message' || 'chat' => 'messages',
+    'urgent' || 'high' => 'urgent',
+    'high_importance_channel' => 'high_importance_channel',
+    'general' => 'general',
+    _ => null,
+  };
+  if (normalizedExplicit != null) {
+    return _androidChannelForId(normalizedExplicit);
+  }
+
+  final normalizedType = type.toLowerCase();
+  final priority = (data['priority'] ?? '').toLowerCase();
+  if (priority == 'urgent' ||
+      normalizedType.contains('urgent') ||
+      normalizedType.contains('priority')) {
+    return _urgentNotificationChannel;
+  }
+  if (normalizedType.contains('chat') ||
+      normalizedType.contains('message') ||
+      _androidNormalizeDataValue(data['chat_id']) != null) {
+    return _messagesNotificationChannel;
+  }
+  if (normalizedType.contains('order') ||
+      normalizedType.contains('delivery') ||
+      _androidNormalizeDataValue(data['order_id']) != null) {
+    return _ordersNotificationChannel;
+  }
+  return _generalNotificationChannel;
+}
+
+AndroidNotificationChannel _androidChannelForId(String channelId) {
+  return switch (channelId) {
+    'messages' => _messagesNotificationChannel,
+    'general' => _generalNotificationChannel,
+    'urgent' => _urgentNotificationChannel,
+    'high_importance_channel' => _legacyHighImportanceNotificationChannel,
+    _ => _ordersNotificationChannel,
+  };
+}
+
+String? _androidResolveTargetPath(Map<String, String> data) {
+  final orderId = _androidNormalizeDataValue(data['order_id']);
+  final trackingPath = orderId == null
+      ? null
+      : '/?screen=order_tracking&order_id=${Uri.encodeComponent(orderId)}';
+  for (final key in const ['click_action', 'link', 'url', 'path', 'route']) {
+    final normalized = _androidNormalizeTargetPath(data[key]);
+    if (normalized == null) {
+      continue;
+    }
+    return normalized;
+  }
+
+  final screen = _androidNormalizeDataValue(data['screen'])?.toLowerCase();
+  if (screen != null) {
+    final query = <String, String>{'screen': screen};
+    if (orderId != null) {
+      query['order_id'] = orderId;
+    }
+    return '/?${Uri(queryParameters: query).query}';
+  }
+
+  return trackingPath ?? '/';
+}
+
+String? _androidNormalizeTargetPath(Object? candidate) {
+  final trimmed = _androidNormalizeDataValue(candidate);
+  if (trimmed == null ||
+      trimmed.toUpperCase() == 'FLUTTER_NOTIFICATION_CLICK') {
+    return null;
+  }
+
+  if (RegExp(r'^(?:https?:)?//', caseSensitive: false).hasMatch(trimmed)) {
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null || uri.host.isNotEmpty) {
+      return null;
+    }
+  }
+  if (RegExp(r'^[a-z][a-z0-9+.-]*:', caseSensitive: false).hasMatch(trimmed)) {
+    return null;
+  }
+  if (trimmed.startsWith('/')) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('?') || trimmed.startsWith('#')) {
+    return '/$trimmed';
+  }
+  return '/$trimmed';
+}
+
+DateTime _androidResolveTimestamp(
+  Map<String, String> data,
+  DateTime? sentTime,
+) {
+  for (final key in const [
+    'timestamp',
+    'created_at',
+    'updated_at',
+    'sent_at',
+    'pushed_at',
+  ]) {
+    final parsed = DateTime.tryParse(data[key] ?? '');
+    if (parsed != null) {
+      return parsed.toUtc();
+    }
+  }
+  return sentTime?.toUtc() ?? DateTime.now().toUtc();
+}
+
+String? _androidPriorityName(AndroidNotificationPriority? priority) {
+  return priority?.name;
+}
+
+int? _androidIntValue(Object? value) {
+  if (value is int) {
+    return value;
+  }
+  if (value is num) {
+    return value.toInt();
+  }
+  final normalized = _androidNormalizeDataValue(value);
+  if (normalized == null) {
+    return null;
+  }
+  return int.tryParse(normalized);
+}
+
+int _androidNotificationIdForKey(String key) {
+  return key.hashCode & 0x7fffffff;
+}
+
+String _androidStableDataSignature(Map<String, String> data) {
+  if (data.isEmpty) {
+    return '';
+  }
+  final entries = data.entries.toList(growable: false)
+    ..sort((a, b) => a.key.compareTo(b.key));
+  return entries.map((entry) => '${entry.key}=${entry.value}').join('&');
+}
+
+void _logAndroidNotificationFlow(
+  String marker,
+  Map<String, Object?> payload,
+) {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+    return;
+  }
+  final normalizedMarker = marker.trim().toUpperCase();
+  final safePayload = <String, Object?>{
+    'at': DateTime.now().toUtc().toIso8601String(),
+    for (final entry in payload.entries)
+      if (entry.value != null) entry.key: entry.value,
+  };
+  try {
+    debugPrint(
+      'ANDROID_NOTIFICATION_$normalizedMarker ${jsonEncode(safePayload)}',
+    );
+  } catch (_) {
+    debugPrint('ANDROID_NOTIFICATION_$normalizedMarker $safePayload');
+  }
+}
+
+void _logBootstrapStartup(String message) {
+  debugPrint('[bootstrap] $message');
+}
+
+class _AndroidNotificationPermissionStatus {
+  const _AndroidNotificationPermissionStatus({
+    required this.sdkInt,
+    required this.notificationsEnabled,
+    required this.postNotificationsGranted,
+    required this.shouldShowPostNotificationsRationale,
+  });
+
+  final int sdkInt;
+  final bool notificationsEnabled;
+  final bool postNotificationsGranted;
+  final bool shouldShowPostNotificationsRationale;
+
+  bool get isAndroid13OrAbove => sdkInt >= 33;
+}
+
+class _AndroidNotificationPresentation {
+  const _AndroidNotificationPresentation({
+    required this.title,
+    required this.body,
+    required this.payload,
+    required this.notificationId,
+    required this.messageId,
+    required this.type,
+    required this.channel,
+    required this.timestamp,
+    required this.badgeCount,
+    required this.dedupKey,
+    required this.localNotificationId,
+  });
+
+  final String title;
+  final String body;
+  final Map<String, String> payload;
+  final String notificationId;
+  final String? messageId;
+  final String type;
+  final AndroidNotificationChannel channel;
+  final DateTime timestamp;
+  final int? badgeCount;
+  final String dedupKey;
+  final int localNotificationId;
+}
 
 const String _notificationTokensTable = 'customer_device_tokens';
 const String _notificationTokenColumn = 'fcm_token';
@@ -61,9 +657,21 @@ const String _awaitingConfirmationNotificationBody =
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
   try {
     await AppNotificationService.ensureFirebaseInitialized();
+    _logAndroidNotificationFlow('BACKGROUND', {
+      'source': 'firebaseMessagingBackgroundHandler',
+      'message_id': message.messageId,
+      'notification_id': message.data['notification_id']?.toString(),
+      'has_notification': message.notification != null,
+    });
   } catch (error, stack) {
+    _logAndroidNotificationFlow('ERROR', {
+      'source': 'background_initialize_firebase',
+      'error': error.toString(),
+    });
     await ErrorLogger.logError(
       module: 'notification_service.background.initialize_firebase',
       error: error,
@@ -75,6 +683,76 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     '[FCM][background] title=${message.notification?.title} '
     'body=${message.notification?.body} data=${message.data}',
   );
+
+  _logAndroidNotificationFlow('RECEIVED', {
+    'source': 'background',
+    'message_id': message.messageId,
+    'notification_id': message.data['notification_id']?.toString(),
+    'type': message.data['type']?.toString(),
+  });
+
+  // Notification-payload messages are displayed by Android itself while the
+  // app is backgrounded or killed. Only data-only pushes need local display.
+  if (message.notification != null) {
+    _logAndroidNotificationFlow('DISPLAYED', {
+      'source': 'background_system_notification',
+      'display_owner': 'android_system',
+      'message_id': message.messageId,
+      'notification_id': message.data['notification_id']?.toString(),
+      'type': message.data['type']?.toString(),
+    });
+    return;
+  }
+
+  try {
+    final presentation = _buildAndroidNotificationPresentation(
+      message,
+      source: 'background',
+    );
+    if (presentation == null) {
+      return;
+    }
+
+    final shouldProcess =
+        await NotificationDedupeService.instance.shouldProcess(
+      fingerprint: presentation.dedupKey,
+      source: 'background_push',
+      dedupeWindow: _foregroundMessageDedupWindow,
+    );
+    if (!shouldProcess) {
+      return;
+    }
+
+    final localNotifications = FlutterLocalNotificationsPlugin();
+    await _initializeAndroidLocalNotificationsForBackground(
+      localNotifications,
+    );
+    await localNotifications.show(
+      presentation.localNotificationId,
+      presentation.title,
+      presentation.body,
+      _androidNotificationDetailsForPresentation(presentation),
+      payload: jsonEncode(presentation.payload),
+    );
+    _logAndroidNotificationFlow('DISPLAYED', {
+      'source': 'background_data_push',
+      'notification_id': presentation.notificationId,
+      'message_id': presentation.messageId,
+      'channel': presentation.channel.id,
+      'type': presentation.type,
+    });
+  } catch (error, stack) {
+    _logAndroidNotificationFlow('ERROR', {
+      'source': 'background_display',
+      'message_id': message.messageId,
+      'error': error.toString(),
+    });
+    await ErrorLogger.logError(
+      module: 'notification_service.background.display',
+      error: error,
+      stack: stack,
+    );
+  }
 }
 
 @pragma('vm:entry-point')
@@ -83,6 +761,9 @@ void localNotificationTapBackgroundHandler(NotificationResponse response) {
   if (payload == null || payload.isEmpty) {
     return;
   }
+  _logAndroidNotificationFlow('CLICKED', {
+    'source': 'local_notification_background_response',
+  });
   unawaited(_persistBackgroundNotificationTapPayload(payload));
 }
 
@@ -137,10 +818,13 @@ class AppNotificationService with WidgetsBindingObserver {
   bool _webBridgeInitialized = false;
   bool _webPermissionPromptAttached = false;
   bool _drainInteractionScheduled = false;
+  bool _uiReadyForNotificationNavigation = false;
   bool _messagingListenersAttached = false;
   bool _widgetsBindingObserverAttached = false;
   bool _webPermissionPromptRequested = false;
+  bool _supabaseBindingsInitialized = false;
   Future<void>? _orderEventSubscriptionSync;
+  Future<void>? _supabaseBindingFuture;
   String? _lastKnownToken;
   String? _lastKnownUserId;
   String? _lastSuccessfulTokenSyncSignature;
@@ -162,13 +846,125 @@ class AppNotificationService with WidgetsBindingObserver {
     return _messaging ??= FirebaseMessaging.instance;
   }
 
+  SupabaseClient? get _supabaseClientOrNull {
+    try {
+      return Supabase.instance.client;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  User? get _currentSupabaseUserOrNull =>
+      _supabaseClientOrNull?.auth.currentUser;
+
+  Future<void> onSupabaseReady() async {
+    if (!_initialized) {
+      await initialize();
+    }
+
+    final pendingBinding = _supabaseBindingFuture;
+    if (pendingBinding != null) {
+      await pendingBinding;
+      return;
+    }
+    if (_supabaseBindingsInitialized) {
+      return;
+    }
+
+    final client = _supabaseClientOrNull;
+    if (client == null) {
+      throw StateError(
+        'Supabase must be initialized before binding notification auth state.',
+      );
+    }
+
+    final bindingFuture = _bindSupabaseState(client);
+    _supabaseBindingFuture = bindingFuture;
+    try {
+      await bindingFuture;
+    } finally {
+      if (identical(_supabaseBindingFuture, bindingFuture)) {
+        _supabaseBindingFuture = null;
+      }
+    }
+  }
+
+  void markUiReadyForNotificationNavigation() {
+    if (_uiReadyForNotificationNavigation) {
+      return;
+    }
+    _uiReadyForNotificationNavigation = true;
+    _logAndroidNotificationFlow('INIT', {
+      'stage': 'notification_navigation_ui_ready',
+    });
+    _scheduleNotificationTapDrain();
+  }
+
+  Future<void> _bindSupabaseIfAvailable() async {
+    if (_supabaseBindingsInitialized) {
+      return;
+    }
+
+    final client = _supabaseClientOrNull;
+    if (client == null) {
+      _logBootstrapStartup('SUPABASE_NOTIFICATION_BINDINGS_DEFERRED');
+      return;
+    }
+
+    await onSupabaseReady();
+  }
+
+  Future<void> _bindSupabaseState(SupabaseClient client) async {
+    if (_supabaseBindingsInitialized) {
+      return;
+    }
+
+    _authSubscription ??= client.auth.onAuthStateChange.listen((event) {
+      final user = event.session?.user;
+      if (user == null) {
+        _lastKnownUserId = null;
+        _resetTokenSyncRetry();
+        unawaited(_disposeOrderEventSubscription());
+        unawaited(_clearAwaitingCustomerConfirmationState());
+        return;
+      }
+      _lastKnownUserId = user.id;
+      unawaited(_syncOrderEventSubscriptionForUser(user.id));
+      unawaited(syncTokenIfPossible());
+    });
+
+    _supabaseBindingsInitialized = true;
+
+    final currentUser = client.auth.currentUser;
+    _lastKnownUserId = currentUser?.id;
+    if (currentUser == null) {
+      debugPrint(
+        '[FCM] startup token sync deferred until Supabase authentication is available.',
+      );
+      return;
+    }
+
+    await _syncOrderEventSubscriptionForUser(currentUser.id);
+    if (kIsWeb) {
+      debugPrint(
+        '[FCM] startup token sync skipped on web; permission bootstrap already handles token sync.',
+      );
+      return;
+    }
+
+    final token = await _loadCurrentToken();
+    debugPrint('[FCM] startup token: ${_maskToken(token)}');
+    _logWebTokenDebug(token, reason: 'startup');
+    await _safeSyncToken(token, reason: 'startup');
+  }
+
   static Future<void> ensureFirebaseInitialized() async {
     if (Firebase.apps.isNotEmpty) {
       return;
     }
 
-    final options = AppFirebaseOptions.currentPlatform;
     if (kIsWeb) {
+      final options = _tryResolveFirebaseOptions();
       if (options == null) {
         return;
       }
@@ -180,11 +976,20 @@ class AppNotificationService with WidgetsBindingObserver {
       await Firebase.initializeApp();
       return;
     } catch (_) {
+      final options = _tryResolveFirebaseOptions();
       if (options != null) {
         await Firebase.initializeApp(options: options);
         return;
       }
       rethrow;
+    }
+  }
+
+  static FirebaseOptions? _tryResolveFirebaseOptions() {
+    try {
+      return AppFirebaseOptions.currentPlatform;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -195,6 +1000,7 @@ class AppNotificationService with WidgetsBindingObserver {
     _initialized = true;
     _attachWidgetsBindingObserver();
     await _restoreWebPermissionPromptState();
+    _logBootstrapStartup('APP_NOTIFICATION_SERVICE_INIT_START');
 
     if (kIsWeb) {
       final webConfigError = AppFirebaseOptions.configurationError;
@@ -208,25 +1014,47 @@ class AppNotificationService with WidgetsBindingObserver {
     }
 
     try {
+      _logBootstrapStartup('FIREBASE_INIT_START');
       await ensureFirebaseInitialized();
+      _logBootstrapStartup('FIREBASE_INITIALIZED');
       await NotificationDedupeService.instance.initialize();
       _messaging = FirebaseMessaging.instance;
       await _messagingInstance.setAutoInitEnabled(true);
+      _logAndroidNotificationFlow('INIT', {
+        'stage': 'firebase_ready',
+      });
+
+      _logBootstrapStartup('PERMISSION_REQUEST_START');
+      final permissionGranted = await _requestNotificationPermissions();
+      if (permissionGranted) {
+        _logBootstrapStartup('PERMISSION_GRANTED');
+      }
+
       if (kIsWeb) {
         await _initializeWebNotificationBridge();
+        _logBootstrapStartup('ANDROID_NOTIFICATION_INIT');
       } else {
+        _logBootstrapStartup('CHANNEL_CREATION_START');
         await _initializeLocalNotifications();
+        _logBootstrapStartup('CHANNELS_CREATED');
         FirebaseMessaging.onBackgroundMessage(
           firebaseMessagingBackgroundHandler,
         );
+        _logAndroidNotificationFlow('INIT', {
+          'stage': 'background_handler_registered',
+        });
+        _logBootstrapStartup('ANDROID_NOTIFICATION_INIT');
       }
+
+      _logBootstrapStartup('FCM_LISTENERS_REGISTER_START');
       _attachMessagingListeners();
-      await _requestNotificationPermissions();
+      _logBootstrapStartup('FCM_LISTENERS_REGISTERED');
+
       _tokenRefreshSubscription = _messagingInstance.onTokenRefresh.listen(
         (token) {
           debugPrint('[FCM] token refreshed: ${_maskToken(token)}');
           _logWebTokenDebug(token, reason: 'token_refresh');
-          if (Supabase.instance.client.auth.currentUser == null) {
+          if (_currentSupabaseUserOrNull == null) {
             _lastKnownToken = token.trim().isEmpty ? _lastKnownToken : token;
             debugPrint(
                 '[FCM] token refresh deferred until authenticated login.');
@@ -242,20 +1070,6 @@ class AppNotificationService with WidgetsBindingObserver {
           );
         },
       );
-      _authSubscription =
-          Supabase.instance.client.auth.onAuthStateChange.listen((event) {
-        final user = event.session?.user;
-        if (user == null) {
-          _lastKnownUserId = null;
-          _resetTokenSyncRetry();
-          unawaited(_disposeOrderEventSubscription());
-          unawaited(_clearAwaitingCustomerConfirmationState());
-          return;
-        }
-        _lastKnownUserId = user.id;
-        unawaited(_syncOrderEventSubscriptionForUser(user.id));
-        unawaited(syncTokenIfPossible());
-      });
 
       final initialMessage = await _messagingInstance.getInitialMessage();
       if (initialMessage != null) {
@@ -269,6 +1083,13 @@ class AppNotificationService with WidgetsBindingObserver {
             'web delivery proof must come from firebase-messaging-sw.js push.',
           );
         } else {
+          _logAndroidNotificationFlow('TERMINATED', {
+            'source': 'firebase_initial_message',
+            'message_id': initialMessage.messageId,
+            'notification_id':
+                initialMessage.data['notification_id']?.toString(),
+            'type': initialMessage.data['type']?.toString(),
+          });
           unawaited(
             _handleMessageInteraction(
               initialMessage,
@@ -279,36 +1100,23 @@ class AppNotificationService with WidgetsBindingObserver {
       }
 
       _available = true;
-      final currentUser = Supabase.instance.client.auth.currentUser;
-      _lastKnownUserId = currentUser?.id;
-      if (currentUser == null) {
-        debugPrint(
-          '[FCM] startup token sync deferred until Supabase authentication is available.',
-        );
-      } else {
-        await _syncOrderEventSubscriptionForUser(currentUser.id);
-        if (kIsWeb) {
-          debugPrint(
-            '[FCM] startup token sync skipped on web; permission bootstrap already handles token sync.',
-          );
-        } else {
-          final token = await _loadCurrentToken();
-          debugPrint('[FCM] startup token: ${_maskToken(token)}');
-          _logWebTokenDebug(token, reason: 'startup');
-          await _safeSyncToken(token, reason: 'startup');
-        }
-      }
+      await _bindSupabaseIfAvailable();
 
       if (kIsWeb) {
         _queueInitialWebLaunchNotificationTap();
       }
     } catch (error, stack) {
+      _logAndroidNotificationFlow('ERROR', {
+        'source': 'initialize',
+        'error': error.toString(),
+      });
       await ErrorLogger.logError(
         module: 'notification_service.initialize',
         error: error,
         stack: stack,
       );
       debugPrint('[FCM] initialization failed: $error');
+      rethrow;
     }
   }
 
@@ -320,7 +1128,9 @@ class AppNotificationService with WidgetsBindingObserver {
       return;
     }
 
-    final user = Supabase.instance.client.auth.currentUser;
+    await _bindSupabaseIfAvailable();
+
+    final user = _currentSupabaseUserOrNull;
     if (user == null) {
       debugPrint(
         '[FCM] token sync skipped because no authenticated Supabase user exists.',
@@ -443,6 +1253,7 @@ class AppNotificationService with WidgetsBindingObserver {
     _pendingNotificationTaps.clear();
     _recentForegroundMessages.clear();
     _recentInteractionSignatures.clear();
+    _uiReadyForNotificationNavigation = false;
     _messagingListenersAttached = false;
     if (_widgetsBindingObserverAttached) {
       WidgetsBinding.instance.removeObserver(this);
@@ -465,8 +1276,15 @@ class AppNotificationService with WidgetsBindingObserver {
         _queueInitialWebLaunchNotificationTap();
       }
       unawaited(syncTokenIfPossible());
-      final userId = Supabase.instance.client.auth.currentUser?.id;
+      final userId = _currentSupabaseUserOrNull?.id;
       if (userId != null && userId.isNotEmpty) {
+        if (!kIsWeb) {
+          _logAndroidNotificationFlow('INIT', {
+            'stage': 'resume_recovery',
+            'user_id': userId,
+          });
+          unawaited(_syncOrderEventSubscriptionForUser(userId));
+        }
         unawaited(_syncAwaitingCustomerConfirmationStateFromServer(userId));
       }
     }
@@ -545,6 +1363,9 @@ class AppNotificationService with WidgetsBindingObserver {
       },
     );
     _messagingListenersAttached = true;
+    _logAndroidNotificationFlow('INIT', {
+      'stage': 'foreground_and_opened_handlers_attached',
+    });
     debugPrint(
       '[FCM] FirebaseMessaging listeners attached '
       '(onMessage, onMessageOpenedApp).',
@@ -556,6 +1377,10 @@ class AppNotificationService with WidgetsBindingObserver {
       return;
     }
 
+    _logAndroidNotificationFlow('INIT', {
+      'stage': 'local_notifications_start',
+      'channels': _androidNotificationChannels.map((c) => c.id).join(','),
+    });
     const androidSettings = AndroidInitializationSettings(
       _androidNotificationIcon,
     );
@@ -571,6 +1396,12 @@ class AppNotificationService with WidgetsBindingObserver {
         if (payload.isEmpty) {
           return;
         }
+        _logAndroidNotificationFlow('CLICKED', {
+          'source': 'local_notification_tap',
+          'notification_id': payload['notification_id'],
+          'message_id': payload['message_id'],
+          'type': payload['type'] ?? payload['notification_type'],
+        });
         _queueNotificationTap(
           payload,
           source: 'local_notification_tap',
@@ -581,10 +1412,7 @@ class AppNotificationService with WidgetsBindingObserver {
           localNotificationTapBackgroundHandler,
     );
 
-    final androidPlugin =
-        _localNotifications.resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
-    await androidPlugin?.createNotificationChannel(_ordersNotificationChannel);
+    await _createAndroidNotificationChannels(_localNotifications);
     _localNotificationsInitialized = true;
 
     final launchDetails =
@@ -594,6 +1422,12 @@ class AppNotificationService with WidgetsBindingObserver {
         launchDetails?.notificationResponse?.payload,
       );
       if (payload.isNotEmpty) {
+        _logAndroidNotificationFlow('TERMINATED', {
+          'source': 'local_notification_launch',
+          'notification_id': payload['notification_id'],
+          'message_id': payload['message_id'],
+          'type': payload['type'] ?? payload['notification_type'],
+        });
         _queueNotificationTap(
           payload,
           source: 'local_notification_launch',
@@ -602,6 +1436,9 @@ class AppNotificationService with WidgetsBindingObserver {
       }
     }
     await _drainPersistedBackgroundNotificationTapPayloads();
+    _logAndroidNotificationFlow('INIT', {
+      'stage': 'local_notifications_ready',
+    });
   }
 
   Future<void> _initializeWebNotificationBridge() async {
@@ -659,25 +1496,16 @@ class AppNotificationService with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _requestNotificationPermissions() async {
+  Future<bool> _requestNotificationPermissions() async {
     NotificationSettings? settings;
     if (!kIsWeb) {
-      try {
-        final permissionRequest = _messagingInstance.requestPermission(
-          alert: true,
-          badge: true,
-          sound: true,
-          provisional: false,
-        );
-        settings = await permissionRequest;
-      } catch (error, stack) {
-        await ErrorLogger.logError(
-          module: 'notification_service.request_permission',
-          error: error,
-          stack: stack,
-        );
-        debugPrint('[FCM] permission request failed: $error');
-      }
+      final permissionRequest = _messagingInstance.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+        provisional: false,
+      );
+      settings = await permissionRequest;
     }
     if (settings != null) {
       debugPrint(
@@ -695,52 +1523,118 @@ class AppNotificationService with WidgetsBindingObserver {
       final androidPlugin =
           _localNotifications.resolvePlatformSpecificImplementation<
               AndroidFlutterLocalNotificationsPlugin>();
-      try {
-        await androidPlugin?.requestNotificationsPermission();
-      } catch (error, stack) {
-        await ErrorLogger.logError(
-          module: 'notification_service.request_android_permission',
-          error: error,
-          stack: stack,
-        );
+      final beforeStatus = await _loadAndroidNotificationPermissionStatus();
+      final granted = await androidPlugin?.requestNotificationsPermission();
+      final enabled = await androidPlugin?.areNotificationsEnabled();
+      final afterStatus = await _loadAndroidNotificationPermissionStatus();
+      final effectiveEnabled = enabled ?? afterStatus.notificationsEnabled;
+
+      _logAndroidNotificationFlow('PERMISSION', {
+        'source': 'android_post_notifications',
+        'firebase_status': settings?.authorizationStatus.name,
+        'request_granted': granted,
+        'notifications_enabled': enabled,
+        'sdk_int': afterStatus.sdkInt,
+        'post_notifications_granted': afterStatus.postNotificationsGranted,
+        'should_show_rationale':
+            afterStatus.shouldShowPostNotificationsRationale,
+      });
+
+      if (effectiveEnabled) {
+        return true;
       }
+
+      _logBootstrapStartup('PERMISSION_DENIED');
+      final shouldOpenSettings = afterStatus.isAndroid13OrAbove
+          ? !afterStatus.postNotificationsGranted ||
+              !afterStatus.shouldShowPostNotificationsRationale
+          : true;
+      if (shouldOpenSettings) {
+        final opened = await _openAndroidNotificationSettings();
+        _logAndroidNotificationFlow('PERMISSION', {
+          'source': 'android_post_notifications',
+          'status': 'settings_opened',
+          'opened': opened,
+          'enabled_before_request': beforeStatus.notificationsEnabled,
+        });
+        if (opened) {
+          _logBootstrapStartup('PERMISSION_SETTINGS_OPENED');
+        }
+      }
+      return false;
     }
 
     if (kIsWeb) {
       if (!supportsWebBrowserNotifications()) {
         debugPrint('[FCM][web] Browser Notification API is not supported.');
-        return;
+        return false;
       }
-      try {
-        final webPermission = currentWebNotificationPermission();
-        if (webPermission == null) {
-          return;
-        }
-        _logWebPermissionState(webPermission, source: 'request_permission');
-        debugPrint('[FCM][web] browser permission: $webPermission');
-        if (webPermission == 'granted') {
-          final refreshedToken = await _loadCurrentToken();
-          await _safeSyncToken(
-            refreshedToken,
-            reason: 'web_permission_granted',
-          );
-        } else if (webPermission == 'default') {
-          _scheduleWebPermissionPromptOnFirstGesture();
-        } else if (webPermission == 'denied') {
-          debugPrint(
-            '[FCM][web] browser permission is denied. Enable notifications '
-            'from browser site settings for this origin, then refresh the app '
-            'to retry token sync.',
-          );
-        }
-      } catch (error, stack) {
-        await ErrorLogger.logError(
-          module: 'notification_service.request_web_permission',
-          error: error,
-          stack: stack,
+      final webPermission = currentWebNotificationPermission();
+      if (webPermission == null) {
+        return false;
+      }
+      _logWebPermissionState(webPermission, source: 'request_permission');
+      debugPrint('[FCM][web] browser permission: $webPermission');
+      if (webPermission == 'granted') {
+        final refreshedToken = await _loadCurrentToken();
+        await _safeSyncToken(
+          refreshedToken,
+          reason: 'web_permission_granted',
+        );
+        return true;
+      }
+      if (webPermission == 'default') {
+        _scheduleWebPermissionPromptOnFirstGesture();
+      } else if (webPermission == 'denied') {
+        debugPrint(
+          '[FCM][web] browser permission is denied. Enable notifications '
+          'from browser site settings for this origin, then refresh the app '
+          'to retry token sync.',
         );
       }
+      return false;
     }
+
+    return settings?.authorizationStatus == AuthorizationStatus.authorized;
+  }
+
+  Future<_AndroidNotificationPermissionStatus>
+      _loadAndroidNotificationPermissionStatus() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return const _AndroidNotificationPermissionStatus(
+        sdkInt: 0,
+        notificationsEnabled: false,
+        postNotificationsGranted: false,
+        shouldShowPostNotificationsRationale: false,
+      );
+    }
+
+    final rawStatus = await _androidNotificationSettingsChannel
+        .invokeMapMethod<String, dynamic>('getStatus');
+    final sdkInt = _androidIntValue(rawStatus?['sdkInt']) ?? 0;
+    final notificationsEnabled = rawStatus?['notificationsEnabled'] == true;
+    final postNotificationsGranted =
+        rawStatus?['postNotificationsGranted'] != false;
+    final shouldShowRationale =
+        rawStatus?['shouldShowPostNotificationsRationale'] == true;
+
+    return _AndroidNotificationPermissionStatus(
+      sdkInt: sdkInt,
+      notificationsEnabled: notificationsEnabled,
+      postNotificationsGranted: postNotificationsGranted,
+      shouldShowPostNotificationsRationale: shouldShowRationale,
+    );
+  }
+
+  Future<bool> _openAndroidNotificationSettings() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return false;
+    }
+
+    final opened = await _androidNotificationSettingsChannel.invokeMethod<bool>(
+      'openSettings',
+    );
+    return opened ?? false;
   }
 
   void _scheduleWebPermissionPromptOnFirstGesture({
@@ -1089,6 +1983,25 @@ class AppNotificationService with WidgetsBindingObserver {
     final title = _awaitingConfirmationNotificationTitle;
     final body = _awaitingConfirmationNotificationBody;
     final notificationId = _awaitingNotificationId(orderId);
+    final timestamp = DateTime.now().toUtc();
+    final localPayload = <String, String>{
+      ...payload,
+      'title': title,
+      'body': body,
+      'type': payload['type'] ?? 'awaiting_customer_confirmation',
+      'notification_type':
+          payload['notification_type'] ?? 'awaiting_customer_confirmation',
+      'event': payload['event'] ?? 'awaiting_customer_confirmation',
+      'deep_link': payload['deep_link'] ??
+          payload['click_action'] ??
+          payload['path'] ??
+          '/?screen=order_tracking&order_id=$orderId',
+      'timestamp': payload['timestamp'] ?? timestamp.toIso8601String(),
+      'badge_count': payload['badge_count'] ?? '1',
+      'sound': payload['sound'] ?? 'default',
+      'priority': payload['priority'] ?? 'high',
+      'channel': payload['channel'] ?? _ordersNotificationChannel.id,
+    };
 
     if (kIsWeb) {
       final shown = await showForegroundWebNotification(
@@ -1108,30 +2021,33 @@ class AppNotificationService with WidgetsBindingObserver {
       notificationId,
       title,
       body,
-      _awaitingCustomerConfirmationNotificationDetails(),
-      payload: _encodeNotificationPayload(payload),
+      _awaitingCustomerConfirmationNotificationDetails(
+        title: title,
+        body: body,
+        timestamp: timestamp,
+      ),
+      payload: _encodeNotificationPayload(localPayload),
     );
+    _logAndroidNotificationFlow('DISPLAYED', {
+      'source': source,
+      'notification_id': localPayload['notification_id'],
+      'type': localPayload['type'],
+      'channel': localPayload['channel'],
+      'reminder': isReminder,
+    });
   }
 
-  NotificationDetails _awaitingCustomerConfirmationNotificationDetails() {
-    return NotificationDetails(
-      android: AndroidNotificationDetails(
-        _ordersNotificationChannel.id,
-        _ordersNotificationChannel.name,
-        channelDescription: _ordersNotificationChannel.description,
-        importance: Importance.max,
-        priority: Priority.high,
-        playSound: true,
-        enableVibration: true,
-        icon: _androidNotificationIcon,
-        visibility: NotificationVisibility.public,
-        channelShowBadge: true,
-      ),
-      iOS: const DarwinNotificationDetails(
-        presentAlert: true,
-        presentBadge: true,
-        presentSound: true,
-      ),
+  NotificationDetails _awaitingCustomerConfirmationNotificationDetails({
+    String title = _awaitingConfirmationNotificationTitle,
+    String body = _awaitingConfirmationNotificationBody,
+    DateTime? timestamp,
+  }) {
+    return _androidNotificationDetailsForChannel(
+      _ordersNotificationChannel,
+      title: title,
+      body: body,
+      badgeCount: 1,
+      timestamp: timestamp,
     );
   }
 
@@ -1150,6 +2066,14 @@ class AppNotificationService with WidgetsBindingObserver {
       'notification_id': stateKey,
       'title': _awaitingConfirmationNotificationTitle,
       'body': _awaitingConfirmationNotificationBody,
+      'type': 'awaiting_customer_confirmation',
+      'event': 'awaiting_customer_confirmation',
+      'click_action': path,
+      'deep_link': path,
+      'badge_count': '1',
+      'sound': 'default',
+      'priority': 'high',
+      'channel': _ordersNotificationChannel.id,
     };
   }
 
@@ -1198,6 +2122,12 @@ class AppNotificationService with WidgetsBindingObserver {
 
   Future<void> _handleForegroundMessage(RemoteMessage message) async {
     _logIncomingMessage(message, source: 'foreground');
+    _logAndroidNotificationFlow('RECEIVED', {
+      'source': 'foreground',
+      'message_id': message.messageId,
+      'notification_id': message.data['notification_id']?.toString(),
+      'type': message.data['type']?.toString(),
+    });
     if (kIsWeb) {
       debugPrint(
         '[FCM][web][foreground] message treated as data synchronization only; '
@@ -1220,13 +2150,24 @@ class AppNotificationService with WidgetsBindingObserver {
       debugPrint(
         '[FCM][foreground] duplicate message skipped: ${message.messageId}',
       );
+      _logAndroidNotificationFlow('RECEIVED', {
+        'source': 'foreground',
+        'status': 'duplicate_skipped',
+        'message_id': message.messageId,
+      });
       return;
     }
-    final userId = Supabase.instance.client.auth.currentUser?.id;
-    final fingerprint = _notificationTagForMessage(message);
+    final presentation = _buildAndroidNotificationPresentation(
+      message,
+      source: 'foreground',
+    );
+    if (presentation == null) {
+      return;
+    }
+    final userId = _currentSupabaseUserOrNull?.id;
     final shouldProcess =
         await NotificationDedupeService.instance.shouldProcess(
-      fingerprint: fingerprint,
+      fingerprint: presentation.dedupKey,
       source: 'foreground_push',
       userId: userId,
       dedupeWindow: _foregroundMessageDedupWindow,
@@ -1235,47 +2176,20 @@ class AppNotificationService with WidgetsBindingObserver {
       return;
     }
 
-    final title = _normalizeBrandingText(
-      message.notification?.title ??
-          message.data['title']?.toString() ??
-          'Delivery Mat3mk',
-    );
-    final body = _normalizeBrandingText(
-      message.notification?.body ?? message.data['body']?.toString() ?? '',
-    );
-    final data = _normalizeStringData(message.data);
-
-    final localPayload = <String, String>{
-      ...data,
-      if (!data.containsKey('title')) 'title': title,
-      if (!data.containsKey('body')) 'body': body,
-    };
-
     await _localNotifications.show(
-      _notificationIdForMessage(message),
-      title,
-      body,
-      NotificationDetails(
-        android: AndroidNotificationDetails(
-          _ordersNotificationChannel.id,
-          _ordersNotificationChannel.name,
-          channelDescription: _ordersNotificationChannel.description,
-          importance: Importance.max,
-          priority: Priority.high,
-          playSound: true,
-          enableVibration: true,
-          icon: _androidNotificationIcon,
-          visibility: NotificationVisibility.public,
-          channelShowBadge: true,
-        ),
-        iOS: const DarwinNotificationDetails(
-          presentAlert: true,
-          presentBadge: true,
-          presentSound: true,
-        ),
-      ),
-      payload: _encodeNotificationPayload(localPayload),
+      presentation.localNotificationId,
+      presentation.title,
+      presentation.body,
+      _androidNotificationDetailsForPresentation(presentation),
+      payload: _encodeNotificationPayload(presentation.payload),
     );
+    _logAndroidNotificationFlow('DISPLAYED', {
+      'source': 'foreground',
+      'notification_id': presentation.notificationId,
+      'message_id': presentation.messageId,
+      'type': presentation.type,
+      'channel': presentation.channel.id,
+    });
   }
 
   Future<void> _drainPersistedBackgroundNotificationTapPayloads() async {
@@ -1363,10 +2277,11 @@ class AppNotificationService with WidgetsBindingObserver {
     if (data.isEmpty) {
       return;
     }
-    final userId = Supabase.instance.client.auth.currentUser?.id;
-    final interactionFingerprint = message.messageId?.trim().isNotEmpty == true
-        ? 'message_id:${message.messageId!.trim()}'
-        : '${_resolveScreenFromData(data) ?? 'unknown'}:${_stableDataSignature(data)}';
+    final userId = _currentSupabaseUserOrNull?.id;
+    final interactionFingerprint = _notificationInteractionSignature(
+      data,
+      messageId: message.messageId,
+    );
     final shouldProcess =
         await NotificationDedupeService.instance.shouldProcess(
       fingerprint: interactionFingerprint,
@@ -1378,12 +2293,37 @@ class AppNotificationService with WidgetsBindingObserver {
       return;
     }
 
+    _logAndroidNotificationFlow('CLICKED', {
+      'source': source,
+      'notification_id': data['notification_id'],
+      'message_id': data['message_id'] ?? message.messageId,
+      'type': data['type'] ?? data['notification_type'],
+    });
     _queueNotificationTap(
       data,
       source: source,
       messageId: message.messageId,
     );
     _scheduleNotificationTapDrain();
+  }
+
+  String _notificationInteractionSignature(
+    Map<String, String> data, {
+    String? messageId,
+  }) {
+    final notificationId = _normalizeDataValue(data['notification_id']);
+    if (notificationId != null) {
+      return 'notification_id:$notificationId';
+    }
+    final dataMessageId = _normalizeDataValue(data['message_id']);
+    if (dataMessageId != null) {
+      return 'message_id:$dataMessageId';
+    }
+    final remoteMessageId = _normalizeDataValue(messageId);
+    if (remoteMessageId != null) {
+      return 'message_id:$remoteMessageId';
+    }
+    return '${_resolveScreenFromData(data) ?? 'unknown'}:${_stableDataSignature(data)}';
   }
 
   void _queueNotificationTap(
@@ -1395,9 +2335,10 @@ class AppNotificationService with WidgetsBindingObserver {
       return;
     }
 
-    final signature = messageId != null && messageId.trim().isNotEmpty
-        ? 'message_id:${messageId.trim()}'
-        : '${_resolveScreenFromData(data) ?? 'unknown'}:${_stableDataSignature(data)}';
+    final signature = _notificationInteractionSignature(
+      data,
+      messageId: messageId,
+    );
 
     final now = DateTime.now();
     _recentInteractionSignatures.removeWhere(
@@ -1405,6 +2346,11 @@ class AppNotificationService with WidgetsBindingObserver {
     );
     final seenAt = _recentInteractionSignatures[signature];
     if (seenAt != null && now.difference(seenAt) < _interactionDedupWindow) {
+      _logAndroidNotificationFlow('CLICKED', {
+        'source': source,
+        'status': 'duplicate_navigation_skipped',
+        'signature': signature,
+      });
       return;
     }
     _recentInteractionSignatures[signature] = now;
@@ -1430,6 +2376,14 @@ class AppNotificationService with WidgetsBindingObserver {
 
   Future<void> _drainPendingNotificationTaps() async {
     if (_pendingNotificationTaps.isEmpty) {
+      return;
+    }
+
+    if (!_uiReadyForNotificationNavigation) {
+      Timer(
+        const Duration(milliseconds: 250),
+        _scheduleNotificationTapDrain,
+      );
       return;
     }
 
@@ -1464,7 +2418,7 @@ class AppNotificationService with WidgetsBindingObserver {
     required String source,
   }) async {
     final normalizedScreen = screen.trim().toLowerCase();
-    final signedInUser = Supabase.instance.client.auth.currentUser;
+    final signedInUser = _currentSupabaseUserOrNull;
     if (signedInUser == null) {
       await SessionManager.instance.redirectToLogin();
       return;
@@ -1507,6 +2461,65 @@ class AppNotificationService with WidgetsBindingObserver {
           ),
         );
         return;
+      case 'chat':
+      case 'order_chat':
+      case 'messages':
+      case 'message':
+        if (orderId == null) {
+          break;
+        }
+        debugPrint(
+          '[FCM][tap:$source] opening OrderChatPage order=$orderId.',
+        );
+        await InputFocusGuard.prepareForUiTransition();
+        if (!navigator.mounted) {
+          return;
+        }
+        await navigator.push(
+          AppTheme.platformPageRoute<void>(
+            builder: (_) => OrderChatPage(orderId: orderId),
+          ),
+        );
+        return;
+      case 'current_order':
+      case 'current':
+      case 'active_order':
+        var targetOrderId = orderId;
+        if (targetOrderId == null) {
+          final activeOrder = await OrdersService.getLatestActiveOrder(
+            signedInUser.id,
+            forceRefresh: true,
+          );
+          if (activeOrder != null) {
+            targetOrderId = OrdersService.idOf(activeOrder);
+          }
+        }
+        if (targetOrderId != null && targetOrderId.isNotEmpty) {
+          debugPrint(
+            '[FCM][tap:$source] opening current OrderTrackingPage order=$targetOrderId.',
+          );
+          await InputFocusGuard.prepareForUiTransition();
+          if (!navigator.mounted) {
+            return;
+          }
+          await navigator.push(
+            AppTheme.platformPageRoute<void>(
+              builder: (_) => OrderTrackingPage(orderId: targetOrderId!),
+            ),
+          );
+          return;
+        }
+        debugPrint('[FCM][tap:$source] opening OrdersPage current fallback.');
+        await InputFocusGuard.prepareForUiTransition();
+        if (!navigator.mounted) {
+          return;
+        }
+        await navigator.push(
+          AppTheme.platformPageRoute<void>(
+            builder: (_) => const OrdersPage(),
+          ),
+        );
+        return;
       case 'orders':
       case 'order':
       case 'my_orders':
@@ -1536,6 +2549,20 @@ class AppNotificationService with WidgetsBindingObserver {
           ),
         );
         return;
+      case 'history':
+      case 'order_history':
+      case 'orders_history':
+        debugPrint('[FCM][tap:$source] opening OrdersPage history surface.');
+        await InputFocusGuard.prepareForUiTransition();
+        if (!navigator.mounted) {
+          return;
+        }
+        await navigator.push(
+          AppTheme.platformPageRoute<void>(
+            builder: (_) => const OrdersPage(),
+          ),
+        );
+        return;
       default:
         debugPrint('[FCM][tap:$source] unhandled screen="$normalizedScreen".');
         return;
@@ -1548,7 +2575,14 @@ class AppNotificationService with WidgetsBindingObserver {
       return direct.toLowerCase();
     }
 
-    for (final key in const ['click_action', 'link', 'url', 'path']) {
+    for (final key in const [
+      'click_action',
+      'deep_link',
+      'link',
+      'url',
+      'path',
+      'route',
+    ]) {
       final candidate = _normalizeDataValue(data[key]);
       if (candidate == null) {
         continue;
@@ -1565,12 +2599,24 @@ class AppNotificationService with WidgetsBindingObserver {
         continue;
       }
       final normalizedPath = candidatePath.toLowerCase();
+      if (normalizedPath.contains('order_chat') ||
+          normalizedPath.contains('/chat') ||
+          normalizedPath == 'chat') {
+        return 'chat';
+      }
       if (normalizedPath.contains('order_tracking') ||
           normalizedPath.contains('tracking')) {
         return 'order_tracking';
       }
       if (normalizedPath.contains('order_details')) {
         return 'order_details';
+      }
+      if (normalizedPath.contains('current_order') ||
+          normalizedPath.contains('active_order')) {
+        return 'current_order';
+      }
+      if (normalizedPath.contains('history')) {
+        return 'history';
       }
       if (normalizedPath == '/orders' ||
           normalizedPath == 'orders' ||
@@ -1582,6 +2628,22 @@ class AppNotificationService with WidgetsBindingObserver {
     final typeHint = _normalizeDataValue(data['type']) ??
         _normalizeDataValue(data['notification_type']) ??
         _normalizeDataValue(data['event']);
+    if (typeHint != null) {
+      final normalizedTypeHint = typeHint.toLowerCase();
+      if (normalizedTypeHint.contains('chat') ||
+          normalizedTypeHint == 'message' ||
+          normalizedTypeHint.contains('order_message') ||
+          normalizedTypeHint.contains('customer_message')) {
+        return 'chat';
+      }
+      if (normalizedTypeHint.contains('current_order') ||
+          normalizedTypeHint.contains('active_order')) {
+        return 'current_order';
+      }
+      if (normalizedTypeHint.contains('history')) {
+        return 'history';
+      }
+    }
     if (_normalizeDataValue(data['order_id']) != null) {
       return 'order_tracking';
     }
@@ -1657,11 +2719,6 @@ class AppNotificationService with WidgetsBindingObserver {
     return false;
   }
 
-  int _notificationIdForMessage(RemoteMessage message) {
-    final key = _notificationTagForMessage(message);
-    return key.hashCode & 0x7fffffff;
-  }
-
   String _notificationTagForMessage(RemoteMessage message) {
     final id = message.messageId?.trim();
     if (id != null && id.isNotEmpty) {
@@ -1723,7 +2780,8 @@ class AppNotificationService with WidgetsBindingObserver {
       return;
     }
 
-    final user = Supabase.instance.client.auth.currentUser;
+    final client = _supabaseClientOrNull;
+    final user = client?.auth.currentUser;
     if (user == null) {
       if (kIsWeb) {
         debugPrint(
@@ -1773,7 +2831,7 @@ class AppNotificationService with WidgetsBindingObserver {
     }
 
     try {
-      await Supabase.instance.client.rpc(
+      await client!.rpc(
         _registerTokenRpc,
         params: {
           'p_fcm_token': normalizedToken,
@@ -1844,7 +2902,7 @@ class AppNotificationService with WidgetsBindingObserver {
     if (!_available) {
       return;
     }
-    if (Supabase.instance.client.auth.currentUser == null) {
+    if (_currentSupabaseUserOrNull == null) {
       return;
     }
     if (_tokenSyncRetryAttempt >= _maxTokenSyncRetries) {
@@ -1895,7 +2953,7 @@ class AppNotificationService with WidgetsBindingObserver {
   }
 
   bool _shouldRetryTokenSyncWhenTokenUnavailable() {
-    if (Supabase.instance.client.auth.currentUser == null) {
+    if (_currentSupabaseUserOrNull == null) {
       return false;
     }
     if (!kIsWeb) {
@@ -1948,7 +3006,14 @@ class AppNotificationService with WidgetsBindingObserver {
     required String nowIso,
     required Map<String, dynamic> deviceInfo,
   }) async {
-    await Supabase.instance.client.from(_notificationTokensTable).upsert(
+    final client = _supabaseClientOrNull;
+    if (client == null) {
+      throw StateError(
+        'Supabase client is unavailable during notification token fallback upsert.',
+      );
+    }
+
+    await client.from(_notificationTokensTable).upsert(
       {
         'user_id': userId,
         'fcm_token': token,
@@ -1993,9 +3058,9 @@ class AppNotificationService with WidgetsBindingObserver {
       return;
     }
 
-    final userId =
-        _lastKnownUserId ?? Supabase.instance.client.auth.currentUser?.id;
-    if (userId == null) {
+    final client = _supabaseClientOrNull;
+    final userId = _lastKnownUserId ?? client?.auth.currentUser?.id;
+    if (client == null || userId == null) {
       return;
     }
 
@@ -2011,7 +3076,7 @@ class AppNotificationService with WidgetsBindingObserver {
       return;
     }
     try {
-      await Supabase.instance.client.rpc(
+      await client!.rpc(
         _deactivateTokenRpc,
         params: {
           'p_fcm_token': normalizedToken,
@@ -2024,7 +3089,7 @@ class AppNotificationService with WidgetsBindingObserver {
         error: error,
         stack: stack,
       );
-      await Supabase.instance.client
+      await client
           .from(_notificationTokensTable)
           .update({
             'is_active': false,
@@ -2184,31 +3249,6 @@ class AppNotificationService with WidgetsBindingObserver {
       return;
     }
     debugPrint('[FCM][web][debug][$reason] token(full)=$normalized');
-  }
-
-  String _normalizeBrandingText(String value) {
-    if (value.isEmpty) {
-      return value;
-    }
-
-    var normalized = value;
-    normalized = normalized.replaceAllMapped(
-      RegExp(r'support@delivery-mat3mk\.com', caseSensitive: false),
-      (_) => 'support@deliverymat3mk.com',
-    );
-    normalized = normalized.replaceAllMapped(
-      RegExp(r'delivery-mat3mk', caseSensitive: false),
-      (_) => 'Delivery Mat3mk',
-    );
-    normalized = normalized.replaceAllMapped(
-      RegExp(r'restaurant_(customer|driver|admin)', caseSensitive: false),
-      (_) => 'Delivery Mat3mk',
-    );
-    normalized = normalized.replaceAllMapped(
-      RegExp(r'mat3amak', caseSensitive: false),
-      (_) => 'Delivery Mat3mk',
-    );
-    return normalized;
   }
 }
 

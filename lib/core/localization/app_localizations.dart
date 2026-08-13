@@ -56,6 +56,8 @@ class AppLocalizations {
           'فشل تهيئة Supabase. تأكد من مفاتيح البيئة واتصال الإنترنت.',
       'app.bootstrap_session_error':
           'فشل تهيئة الجلسة. حاول تشغيل التطبيق مرة أخرى.',
+      'app.bootstrap_notification_error':
+          'فشل تهيئة الإشعارات على Android. تحقق من صلاحية الإشعارات ثم أعد تشغيل التطبيق.',
       'common.retry': 'إعادة المحاولة',
       'common.enable_location': 'تفعيل الموقع',
       'location.permission_required_message':
@@ -255,6 +257,8 @@ class AppLocalizations {
           'Failed to initialize Supabase. Check environment keys and your connection.',
       'app.bootstrap_session_error':
           'Failed to initialize session. Please restart the app.',
+      'app.bootstrap_notification_error':
+          'Failed to initialize Android notifications. Check notification permission and restart the app.',
       'common.retry': 'Retry',
       'common.enable_location': 'Enable Location',
       'location.permission_required_message':

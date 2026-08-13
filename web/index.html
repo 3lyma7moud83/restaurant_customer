@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <!-- مهم جدًا لعمل Flutter -->
   <base href="$FLUTTER_BASE_HREF" />
 
   <meta charset="UTF-8" />
@@ -10,6 +9,7 @@
     name="viewport"
     content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
   />
+  <meta name="theme-color" content="#0E0F10" />
   <meta
     name="description"
     content="Delivery Mat3mk is a restaurant food ordering and delivery platform that helps customers browse restaurants, order meals, track delivery, and manage their orders online."
@@ -22,7 +22,6 @@
 
   <link rel="canonical" href="https://deliverymat3mk.com/" />
 
-  <!-- Open Graph -->
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Delivery Mat3mk" />
   <meta property="og:title" content="Delivery Mat3mk | Restaurant Food Delivery Platform" />
@@ -34,7 +33,6 @@
   <meta property="og:image" content="https://deliverymat3mk.com/icons/Icon-512.png" />
   <meta property="og:image:alt" content="Delivery Mat3mk food delivery platform" />
 
-  <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Delivery Mat3mk | Restaurant Food Delivery Platform" />
   <meta
@@ -44,9 +42,8 @@
   <meta name="twitter:image" content="https://deliverymat3mk.com/icons/Icon-512.png" />
   <meta name="twitter:image:alt" content="Delivery Mat3mk food delivery platform" />
 
-  <!-- 📱 Mobile / PWA -->
   <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Delivery Mat3mk" />
 
   <link rel="apple-touch-icon" href="icons/Icon-192.png" />
@@ -104,33 +101,94 @@
     }
   </script>
 
-  <!-- ستايل أساسي -->
   <style>
-    html, body {
+    :root {
+      --app-splash-bg: #0E0F10;
+      --app-splash-fade-ms: 180ms;
+    }
+
+    html,
+    body {
       margin: 0;
       padding: 0;
-      height: var(--app-height, 100%);
       width: 100%;
+      height: var(--app-height, 100%);
       overflow: hidden;
       overscroll-behavior: none;
       -webkit-text-size-adjust: 100%;
-      background: #f7f5f1;
+      background: var(--app-splash-bg);
+      color-scheme: dark;
     }
 
     body {
       position: fixed;
       inset: 0;
+      background: var(--app-splash-bg);
     }
 
     @supports (height: 100dvh) {
-      html, body {
+      html,
+      body {
         height: min(100dvh, var(--app-height, 100dvh));
       }
+    }
+
+    #app-splash {
+      position: fixed;
+      inset: 0;
+      z-index: 999999;
+      overflow: hidden;
+      pointer-events: none;
+      background: var(--app-splash-bg);
+      transition:
+        opacity var(--app-splash-fade-ms) ease,
+        visibility var(--app-splash-fade-ms) ease;
+    }
+
+    #app-splash.app-splash--hidden {
+      opacity: 0;
+      visibility: hidden;
+    }
+
+    #app-splash.app-splash--video-ready #app-splash-video {
+      opacity: 1;
+    }
+
+    #app-splash-video {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center center;
+      opacity: 0;
+      background: var(--app-splash-bg);
+      transition: opacity 220ms ease;
+    }
+
+    flutter-view,
+    flt-glass-pane,
+    flt-scene-host,
+    flt-scene {
+      background: transparent !important;
     }
   </style>
 </head>
 
 <body>
+  <div id="app-splash" aria-hidden="true">
+    <video
+      id="app-splash-video"
+      autoplay
+      muted
+      playsinline
+      preload="auto"
+      disablePictureInPicture
+      disableremoteplayback
+    >
+      <source src="assets/assets/videos/splash.mp4" type="video/mp4" />
+    </video>
+  </div>
+
   <script>
     (function () {
       function applyAppHeight() {
@@ -147,6 +205,132 @@
         window.visualViewport.addEventListener('resize', applyAppHeight);
         window.visualViewport.addEventListener('scroll', applyAppHeight);
       }
+    })();
+  </script>
+
+  <script>
+    (function () {
+      var overlay = document.getElementById('app-splash');
+      var video = document.getElementById('app-splash-video');
+      if (!overlay || !video) {
+        return;
+      }
+
+      var minVisualMs = 1500;
+      var targetVideoMs = 1150;
+      var maxVisualMs = 1700;
+      var fadeMs = 180;
+      var appReady = false;
+      var visualReady = false;
+      var hidden = false;
+      var startedAt = performance.now();
+      var visualTimerId = null;
+
+      window.__appSplashMetrics = {
+        startedAt: startedAt,
+        targetVideoMs: targetVideoMs,
+        minVisualMs: minVisualMs,
+        maxVisualMs: maxVisualMs,
+        fadeMs: fadeMs,
+        firstFrameAt: null,
+        appReadyAt: null,
+        hiddenAt: null,
+        removedAt: null
+      };
+
+      function maybeHide() {
+        if (hidden || !appReady || !visualReady) {
+          return;
+        }
+
+        hidden = true;
+        window.__appSplashMetrics.hiddenAt = performance.now();
+        overlay.classList.add('app-splash--hidden');
+        window.setTimeout(function () {
+          window.__appSplashMetrics.removedAt = performance.now();
+          overlay.remove();
+          window.dispatchEvent(new Event('delivery-mat3mk-web-splash-removed'));
+        }, fadeMs + 40);
+      }
+
+      function markVisualReady() {
+        if (visualReady) {
+          return;
+        }
+
+        visualReady = true;
+        maybeHide();
+      }
+
+      function scheduleVisualReady() {
+        if (visualTimerId !== null || hidden || visualReady) {
+          return;
+        }
+        visualTimerId = window.setTimeout(markVisualReady, targetVideoMs);
+      }
+
+      window.addEventListener(
+        'delivery-mat3mk-web-splash-ready',
+        function () {
+          appReady = true;
+          window.__appSplashMetrics.appReadyAt = performance.now();
+          maybeHide();
+        },
+        { once: true }
+      );
+
+      video.addEventListener(
+        'loadeddata',
+        function () {
+          if (window.__appSplashMetrics.firstFrameAt === null) {
+            window.__appSplashMetrics.firstFrameAt = performance.now();
+          }
+          overlay.classList.add('app-splash--video-ready');
+          scheduleVisualReady();
+        },
+        { once: true }
+      );
+
+      video.addEventListener(
+        'playing',
+        function () {
+        },
+        { once: true }
+      );
+
+      video.addEventListener(
+        'ended',
+        function () {
+          markVisualReady();
+        },
+        { once: true }
+      );
+
+      video.addEventListener(
+        'error',
+        function () {
+          var elapsed = performance.now() - startedAt;
+          var remaining = Math.max(0, minVisualMs - elapsed);
+          window.setTimeout(markVisualReady, remaining);
+        },
+        { once: true }
+      );
+
+      window.setTimeout(markVisualReady, maxVisualMs);
+
+      window.setTimeout(function () {
+        if (!video.paused || hidden || visualReady) {
+          return;
+        }
+        var playPromise = video.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch(function () {
+            var elapsed = performance.now() - startedAt;
+            var remaining = Math.max(0, minVisualMs - elapsed);
+            window.setTimeout(markVisualReady, remaining);
+          });
+        }
+      }, 120);
     })();
   </script>
 
@@ -177,14 +361,14 @@
         .then(function (registration) {
           console.log(
             '[FCM][web] firebase-messaging-sw.js registered:',
-            registration.scope,
+            registration.scope
           );
           return navigator.serviceWorker.ready;
         })
         .then(function (readyRegistration) {
           console.log(
             '[FCM][web] firebase-messaging-sw.js ready:',
-            readyRegistration.scope,
+            readyRegistration.scope
           );
           return readyRegistration;
         })
@@ -197,9 +381,6 @@
     })();
   </script>
 
-  <!-- ===================== -->
-  <!-- Flutter bootstrap -->
-  <!-- ===================== -->
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

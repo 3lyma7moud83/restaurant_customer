@@ -1,2 +1,0 @@
-Listening on http://localhost:8000/
-{"type":"send_fcm_unhandled_error","worker_id":"send-fcm:cb7c932d-b864-408e-8306-f12ed1cb4cd9","error":"Firebase service account private_key appears redacted. Replace with the full key."}

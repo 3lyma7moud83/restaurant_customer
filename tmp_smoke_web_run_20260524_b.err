@@ -1,2 +1,0 @@
-Failed to exit Chromium (pid: 25176) using SIGTERM. Will try sending SIGKILL instead.
-Failed to exit Chromium (pid: 25176) using SIGKILL. Giving up. Will continue, assuming Chromium has exited successfully, but it is possible that this left a dangling Chromium process running on the system.

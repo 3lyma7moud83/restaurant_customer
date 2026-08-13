@@ -45,7 +45,7 @@ void main() {
 
     test('exposes customer-facing labels and active-order helpers', () {
       expect(resolveOrderStatus('accepted').text, 'قيد التحضير');
-      expect(resolveOrderStatus('delivered').text, 'في الطريق');
+      expect(resolveOrderStatus('delivered').text, 'الطيار استلم الطلب');
       expect(
         resolveOrderStatus('awaiting_customer_confirmation').text,
         'تم التسليم - بانتظار تأكيد الاستلام',

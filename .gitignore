@@ -55,5 +55,9 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+android/key.properties
+upload-keystore.jks
+android/app/*.jks
+android/app/*.keystore
 assets/env/app.env
 .env

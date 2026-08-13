@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart';
@@ -389,9 +390,16 @@ class _LoginPageState extends State<LoginPage>
                 child: LayoutBuilder(
                   builder: (context, viewportConstraints) {
                     final mediaQuery = MediaQuery.of(context);
+                    final view = View.of(context);
                     final width = viewportConstraints.maxWidth;
-                    final keyboardVisible = mediaQuery.viewInsets.bottom > 0;
-                    final bottomInset = mediaQuery.viewInsets.bottom;
+                    final bottomInset = math.max(
+                      mediaQuery.viewInsets.bottom,
+                      view.viewInsets.bottom / view.devicePixelRatio,
+                    );
+                    final keyboardVisible = bottomInset > 0 ||
+                        (!kIsWeb &&
+                            defaultTargetPlatform == TargetPlatform.android &&
+                            viewportConstraints.maxHeight < 1100);
                     final isCompact = width < 360;
                     final basePadding = AppResponsive.pagePadding(width);
                     final formMaxWidth = width >= 1024
@@ -417,7 +425,7 @@ class _LoginPageState extends State<LoginPage>
                       controller: _formScrollController,
                       physics: AppTheme.bouncingScrollPhysics,
                       keyboardDismissBehavior:
-                          ScrollViewKeyboardDismissBehavior.onDrag,
+                          ScrollViewKeyboardDismissBehavior.manual,
                       padding: contentPadding,
                       child: ConstrainedBox(
                         constraints: BoxConstraints(minHeight: minHeight),
@@ -434,9 +442,12 @@ class _LoginPageState extends State<LoginPage>
                                     icon: const Icon(Icons.arrow_back_rounded),
                                   ),
                                 ),
-                                SizedBox(height: keyboardVisible ? 8 : 12),
-                                const _LoginHero(),
-                                SizedBox(height: keyboardVisible ? 14 : 24),
+                                if (!keyboardVisible) ...[
+                                  const SizedBox(height: 12),
+                                  const _LoginHero(),
+                                  const SizedBox(height: 24),
+                                ] else
+                                  const SizedBox(height: 6),
                                 AppCard(
                                   padding: cardPadding,
                                   child: AutofillGroup(

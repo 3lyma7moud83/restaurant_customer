@@ -1,6 +1,0 @@
-2026/06/25-15:55:01.232 1394 Creating DB C:\Users\saudi\Desktop\delivery\restaurant_customer\tmp_playwright_chrome_login6\Default\IndexedDB\http_127.0.0.1_7357.indexeddb.leveldb since it was missing.
-2026/06/25-15:55:01.244 1394 Reusing MANIFEST C:\Users\saudi\Desktop\delivery\restaurant_customer\tmp_playwright_chrome_login6\Default\IndexedDB\http_127.0.0.1_7357.indexeddb.leveldb/MANIFEST-000001
-2026/06/25-15:55:01.280 4e1c Level-0 table #5: started
-2026/06/25-15:55:01.283 4e1c Level-0 table #5: 1580 bytes OK
-2026/06/25-15:55:01.286 4e1c Delete type=0 #3
-2026/06/25-15:55:01.287 4e1c Manual compaction at level-0 from '\x00\x02\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x03\x00\x00\x00' @ 0 : 0; will stop at (end)

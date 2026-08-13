@@ -315,12 +315,14 @@ class AppInput extends StatefulWidget {
 class _AppInputState extends State<AppInput> {
   late final FocusNode _internalFocusNode = widget.focusNode ?? FocusNode();
   late bool _obscured = widget.obscureText;
+  bool _focused = false;
 
   FocusNode get _focusNode => widget.focusNode ?? _internalFocusNode;
 
   @override
   void initState() {
     super.initState();
+    _focused = _focusNode.hasFocus;
     _focusNode.addListener(_handleFocusChanged);
   }
 
@@ -337,8 +339,9 @@ class _AppInputState extends State<AppInput> {
   }
 
   void _handleFocusChanged() {
-    if (mounted) {
-      setState(() {});
+    final nextFocused = _focusNode.hasFocus;
+    if (mounted && _focused != nextFocused) {
+      setState(() => _focused = nextFocused);
     }
   }
 
@@ -353,7 +356,7 @@ class _AppInputState extends State<AppInput> {
 
   @override
   Widget build(BuildContext context) {
-    final focused = _focusNode.hasFocus;
+    final focused = _focused;
     final showLines = widget.obscureText ? 1 : widget.maxLines;
     final showMinLines = widget.obscureText ? 1 : widget.minLines;
     final mobileWebInputFix = kIsWeb &&
@@ -375,9 +378,7 @@ class _AppInputState extends State<AppInput> {
       );
     }
 
-    return AnimatedContainer(
-      duration: kIsWeb ? Duration.zero : AppTheme.sectionTransitionDuration,
-      curve: AppTheme.emphasizedCurve,
+    return Container(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
       decoration: BoxDecoration(
         color: widget.enabled ? Colors.white : AppTheme.surfaceMuted,
@@ -423,7 +424,14 @@ class _AppInputState extends State<AppInput> {
                   enabled: widget.enabled,
                   readOnly: widget.readOnly,
                   obscureText: _obscured,
-                  onTapOutside: (_) => InputFocusGuard.dismiss(),
+                  onTapOutside: (_) {
+                    if (kIsWeb ||
+                        defaultTargetPlatform == TargetPlatform.windows ||
+                        defaultTargetPlatform == TargetPlatform.macOS ||
+                        defaultTargetPlatform == TargetPlatform.linux) {
+                      InputFocusGuard.dismiss();
+                    }
+                  },
                   scrollPadding: EdgeInsets.only(
                     top: 20,
                     bottom: mobileWebInputFix ? 140 : 90,
