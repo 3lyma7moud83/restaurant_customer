@@ -61,3 +61,10 @@ android/app/*.jks
 android/app/*.keystore
 assets/env/app.env
 .env
+
+# Local browser automation state and captured customer data must never be committed.
+tmp_playwright_cashier/cashier_storage.json
+tmp_playwright_driver/driver_storage.json
+tmp_notification_verify_live_e2e_*/32_customer_session.json
+tmp_supabase_session.json
+tmp_web_session_current.json
