@@ -68,12 +68,21 @@ importScripts(
   'https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js',
 );
 
+// This optional build-time file contains only Firebase's public web config.
+// Loading it synchronously lets the SDK register its internal Push handlers
+// while this worker is still undergoing its initial evaluation.
+try {
+  importScripts('firebase-messaging-config.js');
+} catch (_) {
+  // Local development without generated config retains the env-file fallback.
+}
+
 async function ensureMessagingInitialized() {
   if (initialized) {
     return messaging;
   }
 
-  const firebaseConfig = await loadFirebaseConfig();
+  const firebaseConfig = self.__firebaseMessagingConfig || await loadFirebaseConfig();
   if (!firebaseConfig) {
     console.warn(
       '[FCM][sw] Firebase web config is missing or invalid.',

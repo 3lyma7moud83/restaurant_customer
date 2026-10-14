@@ -21,6 +21,7 @@ Thumbs.db
 .env.*
 !.env.example
 assets/env/app.env
+web/firebase-messaging-config.js
 # Runtime environment files can contain Supabase JWTs or third-party client tokens.
 **/env/*.env
 !**/env/*.env.example

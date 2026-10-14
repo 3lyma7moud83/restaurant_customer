@@ -123,6 +123,42 @@ EOF
   log "Generated $env_file from environment variables."
 }
 
+write_firebase_messaging_worker_config() {
+  # Keep this validation with the writer as a defence in depth measure.  The
+  # runtime-env writer above validates the wider application configuration,
+  # but this asset must never be emitted with an empty Firebase config if this
+  # function is reused or its call order changes.
+  local worker_required_vars=(
+    "FIREBASE_API_KEY"
+    "FIREBASE_PROJECT_ID"
+    "FIREBASE_MESSAGING_SENDER_ID"
+    "FIREBASE_WEB_APP_ID"
+    "FIREBASE_AUTH_DOMAIN"
+  )
+  local worker_missing=()
+  local key
+  for key in "${worker_required_vars[@]}"; do
+    if [ -z "${!key:-}" ]; then
+      worker_missing+=("$key")
+    fi
+  done
+
+  if [ ${#worker_missing[@]} -gt 0 ]; then
+    log "Cannot generate web/firebase-messaging-config.js; missing required Firebase variables: ${worker_missing[*]}"
+    exit 1
+  fi
+
+  cat > "web/firebase-messaging-config.js" <<EOF
+// Generated at build time. Firebase web configuration is public client config.
+self.__firebaseMessagingConfig = {
+  apiKey: "${FIREBASE_API_KEY:-}", authDomain: "${FIREBASE_AUTH_DOMAIN:-}",
+  projectId: "${FIREBASE_PROJECT_ID:-}", storageBucket: "${FIREBASE_STORAGE_BUCKET:-}",
+  messagingSenderId: "${FIREBASE_MESSAGING_SENDER_ID:-}", appId: "${FIREBASE_WEB_APP_ID:-}",
+  measurementId: "${FIREBASE_MEASUREMENT_ID:-}"
+};
+EOF
+}
+
 build_web() {
   flutter config --enable-web
   flutter pub get
@@ -132,4 +168,5 @@ build_web() {
 ensure_flutter
 load_local_env
 write_runtime_env_asset
+write_firebase_messaging_worker_config
 build_web
