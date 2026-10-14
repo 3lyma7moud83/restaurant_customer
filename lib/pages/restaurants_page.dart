@@ -258,13 +258,8 @@ class _RestaurantsPageState extends State<RestaurantsPage>
       _userLat = location.lat;
       _userLng = location.lng;
 
-      final ranged = RestaurantFeedUtils.filterByRange(
-        source: fetchedRestaurants,
-        customerLat: _userLat,
-        customerLng: _userLng,
-      );
       _applyRestaurantsSnapshot(
-        ranged,
+        fetchedRestaurants,
         isLoading: false,
         hasLoadError: false,
       );
@@ -652,7 +647,7 @@ class _RestaurantsSearchField extends StatelessWidget {
 
       return DecoratedBox(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Theme.of(context).colorScheme.surface,
           borderRadius: BorderRadius.circular(borderRadius),
           boxShadow: [
             BoxShadow(
@@ -671,20 +666,20 @@ class _RestaurantsSearchField extends StatelessWidget {
             bottom: mobileWebInputFix ? 132 : 92,
           ),
           style: TextStyle(
-            color: AppTheme.text,
+            color: Theme.of(context).colorScheme.onSurface,
             fontWeight: FontWeight.w700,
             fontSize: compact ? 14.5 : 15.5,
           ),
           decoration: InputDecoration(
             hintText: context.tr('common.search_restaurant_hint'),
             hintStyle: TextStyle(
-              color: AppTheme.textMuted,
+              color: AppTheme.colorsOf(context).textSecondary,
               fontWeight: FontWeight.w600,
               fontSize: compact ? 14.0 : 15.0,
             ),
             prefixIcon: Icon(
               Icons.search_rounded,
-              color: AppTheme.primaryDeep,
+              color: Theme.of(context).colorScheme.primary,
               size: iconSize,
             ),
             prefixIconConstraints: BoxConstraints(
@@ -731,7 +726,7 @@ class _RestaurantsEmptyState extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             context.tr('restaurants.empty_subtitle'),
-            style: TextStyle(color: Color(0xFF667085)),
+            style: TextStyle(color: AppTheme.colorsOf(context).textSecondary),
             textAlign: TextAlign.center,
           ),
           if (onRetry != null) ...[
@@ -775,7 +770,7 @@ class _RestaurantsErrorState extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             context.tr('restaurants.error_subtitle'),
-            style: TextStyle(color: Color(0xFF667085)),
+            style: TextStyle(color: AppTheme.colorsOf(context).textSecondary),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 12),

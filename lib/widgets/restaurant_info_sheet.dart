@@ -115,7 +115,6 @@ class _RestaurantQuickActionsSheetState
     try {
       final details = await RestaurantsService.getManagerDetailsByRestaurantId(
         restaurantId,
-        forceRefresh: true,
       );
       return details;
     } catch (error, stack) {
@@ -163,9 +162,9 @@ class _RestaurantQuickActionsSheetState
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: const BoxDecoration(
-        color: AppTheme.surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
       ),
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
@@ -366,7 +365,7 @@ class _InfoFactRow extends StatelessWidget {
               child: Icon(
                 icon,
                 size: 18,
-                color: AppTheme.primaryDeep,
+                color: Theme.of(context).colorScheme.primary,
               ),
             ),
             const SizedBox(width: 10),
@@ -377,8 +376,8 @@ class _InfoFactRow extends StatelessWidget {
                   Text(
                     title,
                     textAlign: TextAlign.right,
-                    style: const TextStyle(
-                      color: AppTheme.textMuted,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                       fontWeight: FontWeight.w700,
                       fontSize: 12,
                     ),
@@ -389,8 +388,8 @@ class _InfoFactRow extends StatelessWidget {
                     maxLines: maxLines,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.right,
-                    style: const TextStyle(
-                      color: AppTheme.text,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
                       fontWeight: FontWeight.w800,
                       fontSize: 13.5,
                     ),
@@ -423,7 +422,7 @@ class _SheetActionTile extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Material(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(18),
         child: InkWell(
           borderRadius: BorderRadius.circular(18),
@@ -432,7 +431,9 @@ class _SheetActionTile extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: AppTheme.border),
+              border: Border.all(
+                color: Theme.of(context).colorScheme.outlineVariant,
+              ),
             ),
             child: Row(
               children: [
@@ -440,7 +441,7 @@ class _SheetActionTile extends StatelessWidget {
                   isRtl
                       ? Icons.chevron_left_rounded
                       : Icons.chevron_right_rounded,
-                  color: Color(0xFF98A2B3),
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -452,8 +453,8 @@ class _SheetActionTile extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.right,
-                        style: const TextStyle(
-                          color: AppTheme.text,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurface,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
@@ -468,7 +469,11 @@ class _SheetActionTile extends StatelessWidget {
                     color: AppTheme.primary.withValues(alpha: 0.10),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Icon(icon, size: 19, color: AppTheme.primaryDeep),
+                  child: Icon(
+                    icon,
+                    size: 19,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
                 ),
               ],
             ),
@@ -605,18 +610,18 @@ class _ComplaintComposerSheetState extends State<_ComplaintComposerSheet> {
               Text(
                 heading,
                 textAlign: isRtl ? TextAlign.right : TextAlign.left,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 19,
                   fontWeight: FontWeight.w900,
-                  color: AppTheme.text,
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
               const SizedBox(height: 8),
               Text(
                 context.tr('complaint.subtitle'),
                 textAlign: isRtl ? TextAlign.right : TextAlign.left,
-                style: const TextStyle(
-                  color: Color(0xFF667085),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                   height: 1.45,
                   fontWeight: FontWeight.w600,
                 ),

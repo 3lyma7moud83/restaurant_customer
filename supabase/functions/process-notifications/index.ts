@@ -26,7 +26,15 @@ interface PushTokenRow {
   fcm_token: string;
   platform: string;
   is_active: boolean;
+  source_table: PushTokenTable;
 }
+
+type PushTokenTable = "customer_device_tokens" | "notification_tokens";
+
+const pushTokenTables: readonly PushTokenTable[] = [
+  "customer_device_tokens",
+  "notification_tokens",
+];
 
 interface DeliveryLogInsert {
   notification_id: string;
@@ -52,6 +60,7 @@ interface ProcessorSummary {
 }
 
 interface ProcessRequestBody {
+  notification_id?: string;
   simulate?: {
     mode?: SimulationMode;
   };
@@ -68,6 +77,42 @@ interface FcmClient {
 
 const maxRetries = 3;
 const queueBatchSize = 50;
+const uuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isUuid(value: string): boolean {
+  return uuidPattern.test(value);
+}
+
+function constantTimeEqual(left: string, right: string): boolean {
+  const encoder = new TextEncoder();
+  const leftBytes = encoder.encode(left);
+  const rightBytes = encoder.encode(right);
+  if (leftBytes.length !== rightBytes.length) return false;
+  let different = 0;
+  for (let index = 0; index < leftBytes.length; index += 1) {
+    different |= leftBytes[index] ^ rightBytes[index];
+  }
+  return different === 0;
+}
+
+function isAuthorizedProcessorRequest(
+  request: Request,
+  serviceRoleKey: string,
+): boolean {
+  const bearer =
+    request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ??
+      "";
+  if (bearer && constantTimeEqual(bearer, serviceRoleKey)) return true;
+  const sharedSecret = Deno.env.get("PROCESS_NOTIFICATIONS_SHARED_SECRET")
+    ?.trim();
+  const suppliedSecret =
+    request.headers.get("x-process-notifications-secret")?.trim() ?? "";
+  return Boolean(
+    sharedSecret && suppliedSecret &&
+      constantTimeEqual(suppliedSecret, sharedSecret),
+  );
+}
 
 Deno.serve(async (request) => {
   try {
@@ -80,15 +125,29 @@ Deno.serve(async (request) => {
 
     const supabaseUrl = mustGetEnv("SUPABASE_URL");
     const serviceRoleKey = mustGetEnv("SUPABASE_SERVICE_ROLE_KEY");
+    if (!isAuthorizedProcessorRequest(request, serviceRoleKey)) {
+      console.warn(
+        JSON.stringify({
+          type: "process_notifications_unauthorized",
+          has_authorization: request.headers.has("authorization"),
+        }),
+      );
+      return jsonResponse({ error: "unauthorized" }, 401);
+    }
 
     const supabase = createClient(supabaseUrl, serviceRoleKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
     let simulationMode: SimulationMode | undefined;
+    let notificationId: string | undefined;
     if (request.method === "POST") {
       const body = await safeJson(request) as ProcessRequestBody;
       simulationMode = body?.simulate?.mode;
+      notificationId = body?.notification_id?.trim();
+      if (notificationId && !isUuid(notificationId)) {
+        return jsonResponse({ error: "invalid_notification_id" }, 400);
+      }
     }
 
     const fcmClient = simulationMode
@@ -96,7 +155,9 @@ Deno.serve(async (request) => {
       : new GoogleFcmClient();
 
     const processor = new NotificationProcessor(supabase, fcmClient);
-    const summary = await processor.processAllPendingNotifications();
+    const summary = await processor.processAllPendingNotifications(
+      notificationId,
+    );
 
     return jsonResponse(
       {
@@ -130,7 +191,9 @@ class NotificationProcessor {
     private readonly fcmClient: FcmClient,
   ) {}
 
-  async processAllPendingNotifications(): Promise<ProcessorSummary> {
+  async processAllPendingNotifications(
+    notificationId?: string,
+  ): Promise<ProcessorSummary> {
     const summary: ProcessorSummary = {
       processed: 0,
       sent: 0,
@@ -148,7 +211,9 @@ class NotificationProcessor {
         );
       }
 
-      const notifications = await this.fetchDeliverableNotifications();
+      const notifications = await this.fetchDeliverableNotifications(
+        notificationId,
+      );
       if (notifications.length === 0) {
         return summary;
       }
@@ -171,16 +236,23 @@ class NotificationProcessor {
     }
   }
 
-  private async fetchDeliverableNotifications(): Promise<NotificationRow[]> {
-    const { data, error } = await this.supabase
+  private async fetchDeliverableNotifications(
+    notificationId?: string,
+  ): Promise<NotificationRow[]> {
+    let query = this.supabase
       .from("notifications")
       .select(
         "id, user_id, title, body, status, retries_count, last_attempt_at, payload, error_message",
       )
       .in("status", ["pending", "failed"])
       .lt("retries_count", maxRetries)
-      .order("created_at", { ascending: true })
-      .limit(queueBatchSize);
+      .order("created_at", { ascending: true });
+
+    query = notificationId
+      ? query.eq("id", notificationId).limit(1)
+      : query.limit(queueBatchSize);
+
+    const { data, error } = await query;
 
     if (error) {
       throw new Error(
@@ -229,11 +301,14 @@ class NotificationProcessor {
             current,
             token,
           );
+          const loggedRequestPayload = redactFcmRequest(requestPayload);
 
           await this.insertDeliveryLog({
             notification_id: current.id,
-            token_id: token.id,
-            request_payload: requestPayload,
+            token_id: token.source_table === "notification_tokens"
+              ? token.id
+              : null,
+            request_payload: loggedRequestPayload,
             response_payload: result.responseBody,
             error_message: result.errorMessage ?? null,
           });
@@ -244,8 +319,8 @@ class NotificationProcessor {
               type: "notification_delivery_attempt",
               notification_id: current.id,
               token_id: token.id,
-              token_suffix: token.fcm_token.slice(-8),
-              request_payload: requestPayload,
+              source_table: token.source_table,
+              request_payload: loggedRequestPayload,
               response_payload: result.responseBody,
               error_message: result.errorMessage ?? null,
             }),
@@ -259,7 +334,7 @@ class NotificationProcessor {
           lastErrorMessage = result.errorMessage ?? "Unknown FCM error.";
           if (result.invalidToken) {
             invalidTokenCount += 1;
-            await this.deactivateToken(token.id, lastErrorMessage);
+            await this.deactivateToken(token, lastErrorMessage);
           } else {
             sawRetryableFailure = true;
           }
@@ -268,11 +343,14 @@ class NotificationProcessor {
             ? error.message
             : String(error);
           const requestPayload = buildFcmRequest(current, token.fcm_token);
+          const loggedRequestPayload = redactFcmRequest(requestPayload);
 
           await this.insertDeliveryLog({
             notification_id: current.id,
-            token_id: token.id,
-            request_payload: requestPayload,
+            token_id: token.source_table === "notification_tokens"
+              ? token.id
+              : null,
+            request_payload: loggedRequestPayload,
             response_payload: null,
             error_message: errorMessage,
           });
@@ -283,7 +361,7 @@ class NotificationProcessor {
               type: "notification_delivery_exception",
               notification_id: current.id,
               token_id: token.id,
-              token_suffix: token.fcm_token.slice(-8),
+              source_table: token.source_table,
               error: errorMessage,
             }),
           );
@@ -338,20 +416,40 @@ class NotificationProcessor {
   }
 
   private async fetchActiveTokens(userId: string): Promise<PushTokenRow[]> {
-    const { data, error } = await this.supabase
-      .from("notification_tokens")
-      .select(
-        "id, user_id, fcm_token, platform, is_active",
-      )
-      .eq("user_id", userId)
-      .eq("is_active", true)
-      .order("updated_at", { ascending: false });
+    const tokensByValue = new Map<string, PushTokenRow>();
 
-    if (error) {
-      throw new Error(`Failed to fetch push tokens: ${error.message}`);
+    for (const table of pushTokenTables) {
+      const { data, error } = await this.supabase
+        .from(table)
+        .select(
+          "id, user_id, fcm_token, platform, is_active",
+        )
+        .eq("user_id", userId)
+        .eq("is_active", true)
+        .order("updated_at", { ascending: false });
+
+      if (error) {
+        throw new Error(
+          `Failed to fetch push tokens from ${table}: ${error.message}`,
+        );
+      }
+
+      for (
+        const token of (data ?? []) as Omit<
+          PushTokenRow,
+          "source_table"
+        >[]
+      ) {
+        if (!tokensByValue.has(token.fcm_token)) {
+          tokensByValue.set(token.fcm_token, {
+            ...token,
+            source_table: table,
+          });
+        }
+      }
     }
 
-    return (data ?? []) as PushTokenRow[];
+    return [...tokensByValue.values()];
   }
 
   private async insertDeliveryLog(log: DeliveryLogInsert): Promise<void> {
@@ -413,23 +511,24 @@ class NotificationProcessor {
   }
 
   private async deactivateToken(
-    tokenId: string,
+    token: PushTokenRow,
     errorMessage: string,
   ): Promise<void> {
     const { error } = await this.supabase
-      .from("notification_tokens")
+      .from(token.source_table)
       .update({
         is_active: false,
         last_error: errorMessage,
         last_seen_at: new Date().toISOString(),
       })
-      .eq("id", tokenId);
+      .eq("id", token.id);
 
     if (error) {
       console.error(
         JSON.stringify({
           type: "push_token_deactivate_error",
-          token_id: tokenId,
+          token_id: token.id,
+          source_table: token.source_table,
           error: error.message,
         }),
       );
@@ -679,6 +778,25 @@ function buildFcmRequest(
           link,
         },
       },
+    },
+  };
+}
+
+function redactFcmRequest(
+  requestPayload: Record<string, unknown>,
+): Record<string, unknown> {
+  const message = requestPayload.message;
+  if (
+    message == null || typeof message !== "object" || Array.isArray(message)
+  ) {
+    return requestPayload;
+  }
+
+  return {
+    ...requestPayload,
+    message: {
+      ...(message as Record<string, unknown>),
+      token: "[redacted]",
     },
   };
 }
@@ -992,3 +1110,4 @@ function jsonResponse(body: Record<string, unknown>, status: number): Response {
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+

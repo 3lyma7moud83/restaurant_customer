@@ -75,8 +75,8 @@ class _AppContentPageState extends State<AppContentPage> {
             return Center(
               child: Text(
                 context.tr('drawer.content_unavailable'),
-                style: const TextStyle(
-                  color: AppTheme.textMuted,
+                style: TextStyle(
+                  color: AppTheme.colorsOf(context).textSecondary,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -141,7 +141,7 @@ class _AppContentPageState extends State<AppContentPage> {
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
-                      color: AppTheme.border.withValues(alpha: 0.96),
+                      color: Theme.of(context).colorScheme.outlineVariant,
                     ),
                     boxShadow: const [
                       BoxShadow(
@@ -155,8 +155,8 @@ class _AppContentPageState extends State<AppContentPage> {
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
                     child: Text(
                       entry.content,
-                      style: const TextStyle(
-                        color: AppTheme.text,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurface,
                         fontSize: 14.2,
                         fontWeight: FontWeight.w600,
                         height: 1.6,

@@ -13,6 +13,7 @@ import '../core/location/location_access_controller.dart';
 import '../core/realtime/realtime_channel_controller.dart';
 import '../core/services/error_logger.dart';
 import '../core/theme/app_theme.dart';
+import '../core/theme/theme_controller.dart';
 import '../core/ui/input_focus_guard.dart';
 import '../core/ui/app_snackbar.dart';
 import '../core/ui/responsive.dart';
@@ -308,14 +309,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         return;
       }
 
-      final ranged = RestaurantFeedUtils.filterByRange(
-        source: restaurants,
-        customerLat: userLat,
-        customerLng: userLng,
-      );
-
       _applyRestaurantsSnapshot(
-        ranged,
+        restaurants,
         isLoading: false,
         hasLoadError: false,
       );
@@ -528,14 +523,36 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         centerTitle: true,
         leading: Builder(
           builder: (context) {
-            return IconButton(
-              icon: const Icon(
-                Icons.menu_rounded,
-                size: 28,
-              ),
-              onPressed: () {
-                Scaffold.maybeOf(context)?.openDrawer();
-              },
+            final themeController = AppThemeScope.of(context);
+            final isDark = themeController.themeMode == ThemeMode.dark;
+            return Row(
+              // The leading area itself is on the right in Arabic. Keep the
+              // drawer button at its outer edge and the theme toggle beside it.
+              textDirection: TextDirection.rtl,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: 'القائمة',
+                  icon: const Icon(Icons.menu_rounded, size: 28),
+                  onPressed: () => Scaffold.maybeOf(context)?.openDrawer(),
+                ),
+                IconButton(
+                  key: const Key('home-theme-toggle'),
+                  tooltip: isDark ? 'الوضع الفاتح' : 'الوضع الداكن',
+                  visualDensity: VisualDensity.compact,
+                  icon: AnimatedSwitcher(
+                    duration: AppTheme.microInteractionDuration,
+                    child: Icon(
+                      isDark
+                          ? Icons.light_mode_rounded
+                          : Icons.dark_mode_rounded,
+                      key: ValueKey(isDark),
+                      size: 22,
+                    ),
+                  ),
+                  onPressed: () => unawaited(themeController.toggle()),
+                ),
+              ],
             );
           },
         ),
@@ -776,7 +793,7 @@ class _HomeAppBarTitle extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: AppTheme.text,
+                color: Theme.of(context).colorScheme.onSurface,
                 fontWeight: FontWeight.w900,
                 fontSize: fontSize,
               ),
@@ -792,19 +809,22 @@ class _HomeHeaderMetrics {
   const _HomeHeaderMetrics._();
 
   static double menuSlotWidthFor(double width) {
+    if (width < 390) {
+      return 104;
+    }
     if (width >= 1200) {
-      return 86;
+      return 118;
     }
     if (width >= 900) {
-      return 82;
+      return 114;
     }
     if (width >= 520) {
-      return 78;
+      return 110;
     }
     if (width >= 390) {
-      return 74;
+      return 106;
     }
-    return 72;
+    return 104;
   }
 
   static double contentMaxWidthFor(double width) {
@@ -1051,7 +1071,7 @@ class _HomeDrawerMenuButtonState extends State<HomeDrawerMenuButton> {
     final iconSize = buttonExtent * 0.60;
     final radius = 14.0;
     final borderSide = BorderSide(
-      color: AppTheme.primaryDeep.withValues(alpha: 0.25),
+      color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.25),
       width: 1,
     );
 
@@ -1071,13 +1091,13 @@ class _HomeDrawerMenuButtonState extends State<HomeDrawerMenuButton> {
             icon: Icon(
               Icons.menu_rounded,
               size: iconSize,
-              color: AppTheme.primaryDeep,
+              color: Theme.of(context).colorScheme.primary,
             ),
             splashRadius: buttonExtent * 0.52,
             visualDensity: VisualDensity.standard,
             style: IconButton.styleFrom(
-              backgroundColor: const Color(0xFFFFFBF6),
-              foregroundColor: AppTheme.primaryDeep,
+              backgroundColor: Theme.of(context).colorScheme.surface,
+              foregroundColor: Theme.of(context).colorScheme.primary,
               padding: EdgeInsets.zero,
               fixedSize: Size.square(buttonExtent),
               minimumSize: Size.square(buttonExtent),
@@ -1109,13 +1129,16 @@ class _TopBarActionShell extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Colors.white, Color(0xFFF8F7F4)],
+          colors: [
+            Theme.of(context).colorScheme.surface,
+            Theme.of(context).colorScheme.surfaceContainerHigh,
+          ],
         ),
         borderRadius: BorderRadius.circular(radius),
-        border: Border.all(color: AppTheme.border.withValues(alpha: 0.95)),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
         boxShadow: [
           BoxShadow(
             color: AppTheme.primary.withValues(alpha: 0.10),
@@ -1162,13 +1185,17 @@ class _DrawerTile extends StatelessWidget {
           color: AppTheme.primary.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(10),
         ),
-        child: Icon(icon, size: 19, color: AppTheme.primaryDeep),
+        child: Icon(
+          icon,
+          size: 19,
+          color: Theme.of(context).colorScheme.primary,
+        ),
       ),
       title: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           fontWeight: FontWeight.w700,
-          color: AppTheme.text,
+          color: Theme.of(context).colorScheme.onSurface,
         ),
       ),
       subtitle: subtitle == null
@@ -1177,8 +1204,8 @@ class _DrawerTile extends StatelessWidget {
               subtitle!,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppTheme.textMuted,
+              style: TextStyle(
+                color: AppTheme.colorsOf(context).textSecondary,
                 fontWeight: FontWeight.w600,
                 fontSize: 12,
               ),
@@ -1300,9 +1327,9 @@ class _HomeLanguageToggleButton extends StatelessWidget {
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: borderRadius,
-        border: Border.all(color: AppTheme.border.withValues(alpha: 0.94)),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
         boxShadow: const [
           BoxShadow(
             color: Color(0x12000000),
@@ -1363,7 +1390,8 @@ class _LanguageSegment extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = selected ? AppTheme.primary : Colors.transparent;
-    final textColor = selected ? Colors.white : AppTheme.textMuted;
+    final textColor =
+        selected ? Colors.white : AppTheme.colorsOf(context).textSecondary;
 
     return Material(
       color: Colors.transparent,
@@ -1427,7 +1455,7 @@ class _EmptyState extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               context.tr('home.empty_general_subtitle'),
-              style: const TextStyle(color: Colors.black54),
+              style: TextStyle(color: AppTheme.colorsOf(context).textSecondary),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
@@ -1475,7 +1503,7 @@ class _HomeErrorState extends StatelessWidget {
             Text(
               context.tr('home.error_subtitle'),
               textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFF667085)),
+              style: TextStyle(color: AppTheme.colorsOf(context).textSecondary),
             ),
             const SizedBox(height: 16),
             ElevatedButton(
@@ -1946,11 +1974,11 @@ class _SearchBar extends StatelessWidget {
 
         return DecoratedBox(
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: Theme.of(context).colorScheme.surface,
             borderRadius: BorderRadius.circular(borderRadius),
             boxShadow: [
               BoxShadow(
-                color: const Color(0x14000000),
+                color: Theme.of(context).shadowColor.withValues(alpha: 0.12),
                 blurRadius: compact ? 14 : 20,
                 offset: Offset(0, compact ? 8 : 12),
               ),
@@ -1965,20 +1993,20 @@ class _SearchBar extends StatelessWidget {
               bottom: mobileWebInputFix ? 132 : 92,
             ),
             style: TextStyle(
-              color: AppTheme.text,
+              color: Theme.of(context).colorScheme.onSurface,
               fontWeight: FontWeight.w700,
               fontSize: compact ? 14.5 : 15.5,
             ),
             decoration: InputDecoration(
               hintText: context.tr('common.search_restaurant_hint'),
               hintStyle: TextStyle(
-                color: AppTheme.textMuted,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
                 fontWeight: FontWeight.w600,
                 fontSize: compact ? 14.0 : 15.0,
               ),
               prefixIcon: Icon(
                 Icons.search_rounded,
-                color: AppTheme.primaryDeep,
+                color: Theme.of(context).colorScheme.primary,
                 size: iconSize,
               ),
               prefixIconConstraints: BoxConstraints(

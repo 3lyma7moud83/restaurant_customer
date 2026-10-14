@@ -1,1 +1,195 @@
-<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.example.restaurant_app" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,1529]"><node index="0" text="" resource-id="" class="android.widget.LinearLayout" package="com.example.restaurant_app" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,1529]"><node index="0" text="" resource-id="android:id/content" class="android.widget.FrameLayout" package="com.example.restaurant_app" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,1529]"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.example.restaurant_app" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,1529]"><node index="0" text="" resource-id="" class="android.view.View" package="com.example.restaurant_app" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,1529]"><node index="0" text="" resource-id="" class="android.view.View" package="com.example.restaurant_app" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,1529]"><node index="0" text="" resource-id="" class="android.view.View" package="com.example.restaurant_app" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,1529]"><node index="0" text="" resource-id="" class="android.view.View" package="com.example.restaurant_app" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,1529]"><node index="0" text="" resource-id="" class="android.view.View" package="com.example.restaurant_app" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,356][720,1218]"><node index="0" text="" resource-id="" class="android.view.View" package="com.example.restaurant_app" content-desc="تسجيل دخول الكاشير" checkable="false" checked="false" clickable="false" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[262,560][641,632]" /><node index="1" text="" resource-id="" class="android.view.View" package="com.example.restaurant_app" content-desc="واجهة سريعة ومنظمة للوصول إلى لوحة التشغيل بدون تعقيد." checkable="false" checked="false" clickable="false" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[79,646][641,727]" /><node index="2" text="1777691985@test.com" resource-id="" class="android.widget.EditText" package="com.example.restaurant_app" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[79,769][641,877]" /><node index="3" text="••••••••••••" resource-id="" class="android.widget.EditText" package="com.example.restaurant_app" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="true" selected="false" bounds="[79,902][641,1010]" /><node index="4" text="" resource-id="" class="android.widget.Button" package="com.example.restaurant_app" content-desc="تسجيل الدخول" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[79,1049][641,1140]" /></node></node></node></node></node></node></node></node><node index="1" text="" resource-id="android:id/statusBarBackground" class="android.view.View" package="com.example.restaurant_app" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,45]" /><node index="2" text="" resource-id="android:id/navigationBarBackground" class="android.view.View" package="com.example.restaurant_app" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][0,0]" /></node></hierarchy>
+ce,
+    required this.variablesReference,
+  });
+
+  Scope.fromMap(Map<String, Object?> obj)
+      : column = obj['column'] as int?,
+        endColumn = obj['endColumn'] as int?,
+        endLine = obj['endLine'] as int?,
+        expensive = obj['expensive'] as bool,
+        indexedVariables = obj['indexedVariables'] as int?,
+        line = obj['line'] as int?,
+        name = obj['name'] as String,
+        namedVariables = obj['namedVariables'] as int?,
+        presentationHint = obj['presentationHint'] as String?,
+        source = obj['source'] == null
+            ? null
+            : Source.fromJson(obj['source'] as Map<String, Object?>),
+        variablesReference = obj['variablesReference'] as int;
+
+  static bool canParse(Object? obj) {
+    if (obj is! Map<String, dynamic>) {
+      return false;
+    }
+    if (obj['column'] is! int?) {
+      return false;
+    }
+    if (obj['endColumn'] is! int?) {
+      return false;
+    }
+    if (obj['endLine'] is! int?) {
+      return false;
+    }
+    if (obj['expensive'] is! bool) {
+      return false;
+    }
+    if (obj['indexedVariables'] is! int?) {
+      return false;
+    }
+    if (obj['line'] is! int?) {
+      return false;
+    }
+    if (obj['name'] is! String) {
+      return false;
+    }
+    if (obj['namedVariables'] is! int?) {
+      return false;
+    }
+    if (obj['presentationHint'] is! String?) {
+      return false;
+    }
+    if (!Source.canParse(obj['source'])) {
+      return false;
+    }
+    if (obj['variablesReference'] is! int) {
+      return false;
+    }
+    return true;
+  }
+
+  Map<String, Object?> toJson() => {
+        if (column != null) 'column': column,
+        if (endColumn != null) 'endColumn': endColumn,
+        if (endLine != null) 'endLine': endLine,
+        'expensive': expensive,
+        if (indexedVariables != null) 'indexedVariables': indexedVariables,
+        if (line != null) 'line': line,
+        'name': name,
+        if (namedVariables != null) 'namedVariables': namedVariables,
+        if (presentationHint != null) 'presentationHint': presentationHint,
+        if (source != null) 'source': source,
+        'variablesReference': variablesReference,
+      };
+}
+
+/// Arguments for `scopes` request.
+class ScopesArguments extends RequestArguments {
+  /// Retrieve the scopes for the stack frame identified by `frameId`. The
+  /// `frameId` must have been obtained in the current suspended state. See
+  /// 'Lifetime of Object References' in the Overview section for details.
+  final int frameId;
+
+  static ScopesArguments fromJson(Map<String, Object?> obj) =>
+      ScopesArguments.fromMap(obj);
+
+  ScopesArguments({
+    required this.frameId,
+  });
+
+  ScopesArguments.fromMap(Map<String, Object?> obj)
+      : frameId = obj['frameId'] as int;
+
+  static bool canParse(Object? obj) {
+    if (obj is! Map<String, dynamic>) {
+      return false;
+    }
+    if (obj['frameId'] is! int) {
+      return false;
+    }
+    return RequestArguments.canParse(obj);
+  }
+
+  Map<String, Object?> toJson() => {
+        'frameId': frameId,
+      };
+}
+
+/// Response to `scopes` request.
+class ScopesResponse extends Response {
+  static ScopesResponse fromJson(Map<String, Object?> obj) =>
+      ScopesResponse.fromMap(obj);
+
+  ScopesResponse({
+    required super.body,
+    required super.command,
+    super.message,
+    required super.requestSeq,
+    required super.seq,
+    required super.success,
+  });
+
+  ScopesResponse.fromMap(super.obj) : super.fromMap();
+
+  static bool canParse(Object? obj) {
+    if (obj is! Map<String, dynamic>) {
+      return false;
+    }
+    if (obj['body'] is! Map<String, Object?>) {
+      return false;
+    }
+    return Response.canParse(obj);
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+        ...super.toJson(),
+      };
+}
+
+/// Arguments for `setBreakpoints` request.
+class SetBreakpointsArguments extends RequestArguments {
+  /// The code locations of the breakpoints.
+  final List<SourceBreakpoint>? breakpoints;
+
+  /// Deprecated: The code locations of the breakpoints.
+  final List<int>? lines;
+
+  /// The source location of the breakpoints; either `source.path` or
+  /// `source.sourceReference` must be specified.
+  final Source source;
+
+  /// A value of true indicates that the underlying source has been modified
+  /// which results in new breakpoint locations.
+  final bool? sourceModified;
+
+  static SetBreakpointsArguments fromJson(Map<String, Object?> obj) =>
+      SetBreakpointsArguments.fromMap(obj);
+
+  SetBreakpointsArguments({
+    this.breakpoints,
+    this.lines,
+    required this.source,
+    this.sourceModified,
+  });
+
+  SetBreakpointsArguments.fromMap(Map<String, Object?> obj)
+      : breakpoints = (obj['breakpoints'] as List?)
+            ?.map((item) =>
+                SourceBreakpoint.fromJson(item as Map<String, Object?>))
+            .toList(),
+        lines = (obj['lines'] as List?)?.map((item) => item as int).toList(),
+        source = Source.fromJson(obj['source'] as Map<String, Object?>),
+        sourceModified = obj['sourceModified'] as bool?;
+
+  static bool canParse(Object? obj) {
+    if (obj is! Map<String, dynamic>) {
+      return false;
+    }
+    if ((obj['breakpoints'] is! List ||
+        (obj['breakpoints'].any((item) => !SourceBreakpoint.canParse(item))))) {
+      return false;
+    }
+    if ((obj['lines'] is! List || (obj['lines'].any((item) => item is! int)))) {
+      return false;
+    }
+    if (!Source.canParse(obj['source'])) {
+      return false;
+    }
+    if (obj['sourceModified'] is! bool?) {
+      return false;
+    }
+    return RequestArguments.canParse(obj);
+  }
+
+  Map<String, Object?> toJson() => {
+        if (breakpoints != null) 'breakpoin

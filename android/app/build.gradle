@@ -33,11 +33,12 @@ if (gradle.startParameter.taskNames.any { it.toLowerCase().contains("release") }
 }
 
 android {
-    namespace = "com.example.restaurant_customer"
+    namespace = "com.deliverymat3mk.customer"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
+        coreLibraryDesugaringEnabled true
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
     }
@@ -47,7 +48,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.restaurant_customer"
+        applicationId = "com.deliverymat3mk.customer"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -66,6 +67,10 @@ android {
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".themetest"
+            versionNameSuffix = "-theme-test"
+        }
         release {
             signingConfig = signingConfigs.release
 
@@ -78,4 +83,13 @@ android {
 
 flutter {
     source = "../.."
+}
+
+// Local UI-only debug variant uses explicit FirebaseOptions from Dart.
+tasks.matching { it.name == "processDebugGoogleServices" }.configureEach {
+    enabled = false
+}
+
+dependencies {
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"
 }

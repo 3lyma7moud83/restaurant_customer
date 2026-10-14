@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/error_logger.dart';
@@ -15,7 +13,6 @@ class SecurityObservabilityService {
 
   final Map<String, int> _localCounters = <String, int>{};
   Map<String, dynamic> _remoteSnapshot = <String, dynamic>{};
-  Timer? _refreshTimer;
   bool _initialized = false;
   bool _refreshInFlight = false;
   bool _remoteDisabled = false;
@@ -28,9 +25,7 @@ class SecurityObservabilityService {
     _initialized = true;
     await StabilityMetricsService.instance.initialize();
     await SecurityEventService.instance.initialize();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 45), (_) {
-      unawaited(refreshRemoteSnapshot());
-    });
+    // Customer uses local counters and events; do not poll the remote dashboard.
   }
 
   void incrementLocal(
@@ -80,7 +75,8 @@ class SecurityObservabilityService {
     } catch (error, stack) {
       if (_isMissingDashboardFunction(error)) {
         _remoteDisabled = true;
-        _remoteDisabledReason = 'missing_function_security_observability_dashboard';
+        _remoteDisabledReason =
+            'missing_function_security_observability_dashboard';
         await ErrorLogger.logError(
           module: 'security_observability_service.refresh_remote_snapshot',
           action: 'remote_disabled_$_remoteDisabledReason',
@@ -113,8 +109,6 @@ class SecurityObservabilityService {
   }
 
   Future<void> dispose() async {
-    _refreshTimer?.cancel();
-    _refreshTimer = null;
     await SecurityEventService.instance.dispose();
   }
 

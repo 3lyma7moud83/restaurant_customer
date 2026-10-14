@@ -1,25 +1,41 @@
 import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app_error.dart';
+import 'error_type.dart';
+
+@visibleForTesting
+bool shouldBatchRepeatedError(ErrorSeverity severity) {
+  return severity == ErrorSeverity.low || severity == ErrorSeverity.medium;
+}
+
+@visibleForTesting
+AppError mergeRepeatedErrors(AppError earlier, AppError latest) {
+  return latest.copyWith(occurrences: earlier.occurrences + latest.occurrences);
+}
 
 class ErrorReporter {
   ErrorReporter();
 
   static const String _queueStorageKey = 'error_reporter.queue.v1';
   static const int _maxQueueSize = 300;
+  static const Duration _duplicateBatchWindow = Duration(seconds: 10);
 
   final Connectivity _connectivity = Connectivity();
   final List<AppError> _queue = <AppError>[];
+  final Map<String, AppError> _pendingRepeatedErrors = <String, AppError>{};
 
   SharedPreferences? _prefs;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   Timer? _flushTimer;
+  Timer? _duplicateFlushTimer;
   bool _initialized = false;
   bool _flushInFlight = false;
+  bool _pendingRepeatedFlushInFlight = false;
   List<ConnectivityResult> _lastConnectivity = <ConnectivityResult>[
     ConnectivityResult.none,
   ];
@@ -58,6 +74,10 @@ class ErrorReporter {
     _connectivitySubscription = null;
     _flushTimer?.cancel();
     _flushTimer = null;
+    _duplicateFlushTimer?.cancel();
+    _duplicateFlushTimer = null;
+    await _flushPendingRepeatedErrors();
+    await flushQueue();
   }
 
   Future<String> resolveInternetStatus() async {
@@ -76,16 +96,12 @@ class ErrorReporter {
 
       final currentStatus = await resolveInternetStatus();
       final enriched = error.copyWith(internetStatus: currentStatus);
-      if (!_hasInternet(_lastConnectivity)) {
-        await _enqueue(enriched);
+      if (shouldBatchRepeatedError(enriched.severity)) {
+        _queueRepeatedError(enriched);
         return;
       }
 
-      final inserted = await _upsertRemote(enriched);
-      if (!inserted) {
-        await _enqueue(enriched);
-        return;
-      }
+      await _deliver(enriched);
 
       if (_queue.isNotEmpty) {
         unawaited(flushQueue());
@@ -97,7 +113,12 @@ class ErrorReporter {
 
   Future<void> flushQueue() async {
     try {
-      if (_flushInFlight || _queue.isEmpty) {
+      if (_flushInFlight) {
+        return;
+      }
+
+      await _flushPendingRepeatedErrors();
+      if (_queue.isEmpty) {
         return;
       }
 
@@ -121,11 +142,62 @@ class ErrorReporter {
   }
 
   Future<void> _enqueue(AppError error) async {
-    _queue.add(error);
+    _mergeIntoQueue(error);
+    await _persistQueue();
+  }
+
+  void _mergeIntoQueue(AppError error) {
+    final index = _queue.indexWhere(
+      (queued) => _repeatedErrorKey(queued) == _repeatedErrorKey(error),
+    );
+    if (index == -1) {
+      _queue.add(error);
+    } else {
+      _queue[index] = mergeRepeatedErrors(_queue[index], error);
+    }
     if (_queue.length > _maxQueueSize) {
       _queue.removeRange(0, _queue.length - _maxQueueSize);
     }
-    await _persistQueue();
+  }
+
+  void _queueRepeatedError(AppError error) {
+    final key = _repeatedErrorKey(error);
+    final pending = _pendingRepeatedErrors[key];
+    _pendingRepeatedErrors[key] =
+        pending == null ? error : mergeRepeatedErrors(pending, error);
+    _duplicateFlushTimer ??= Timer(_duplicateBatchWindow, () {
+      _duplicateFlushTimer = null;
+      unawaited(flushQueue());
+    });
+  }
+
+  Future<void> _flushPendingRepeatedErrors() async {
+    if (_pendingRepeatedFlushInFlight || _pendingRepeatedErrors.isEmpty) {
+      return;
+    }
+
+    _pendingRepeatedFlushInFlight = true;
+    final pending = _pendingRepeatedErrors.values.toList(growable: false);
+    _pendingRepeatedErrors.clear();
+    try {
+      for (final error in pending) {
+        await _deliver(error);
+      }
+    } finally {
+      _pendingRepeatedFlushInFlight = false;
+    }
+  }
+
+  Future<void> _deliver(AppError error) async {
+    if (!_hasInternet(_lastConnectivity)) {
+      await _enqueue(error);
+      return;
+    }
+
+    final inserted = await _upsertRemote(error);
+    if (!inserted) {
+      await _enqueue(error);
+    }
   }
 
   Future<void> _persistQueue() async {
@@ -143,15 +215,15 @@ class ErrorReporter {
       return;
     }
     final values = prefs.getStringList(_queueStorageKey) ?? const <String>[];
-    _queue
-      ..clear()
-      ..addAll(
-        values
-            .map(AppError.fromJsonString)
-            .whereType<AppError>()
-            .toList(growable: false),
-      );
+    _queue.clear();
+    for (final error
+        in values.map(AppError.fromJsonString).whereType<AppError>()) {
+      _mergeIntoQueue(error);
+    }
   }
+
+  String _repeatedErrorKey(AppError error) =>
+      '${error.appName}:${error.fingerprint}';
 
   Future<bool> _upsertRemote(AppError error) async {
     final client = _clientOrNull;

@@ -100,10 +100,9 @@ class SecurityEventService {
     StabilityLogger.security(
       '[SECURITY_EVENT] key=$normalizedKey severity=$severity payload=$effectivePayload',
     );
-    StabilityMetricsService.instance.increment(
-      'security_events_buffered',
-      module: 'security_event_service',
-      payload: {'event_key': normalizedKey, 'severity': severity},
+    StabilityMetricsService.instance.incrementSecurityEventsBuffered(
+      eventKey: normalizedKey,
+      severity: severity,
     );
 
     if (flushNow || _buffer.length >= 40) {

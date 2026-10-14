@@ -375,7 +375,7 @@ class _LoginPageState extends State<LoginPage>
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
-      backgroundColor: AppTheme.background,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Stack(
         children: [
           const IgnorePointer(child: _LoginBackground()),
@@ -601,7 +601,9 @@ class _LoginPageState extends State<LoginPage>
                                               child: AppText(
                                                 context.tr('common.or'),
                                                 role: AppTextRole.caption,
-                                                color: AppTheme.textMuted,
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurfaceVariant,
                                               ),
                                             ),
                                             const Expanded(
@@ -637,7 +639,9 @@ class _LoginPageState extends State<LoginPage>
                                     context.tr('auth.terms'),
                                     role: AppTextRole.caption,
                                     align: TextAlign.center,
-                                    color: AppTheme.textMuted,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
                                   ),
                                 ),
                               ],
@@ -707,7 +711,7 @@ class _LoginHero extends StatelessWidget {
             width: 74,
             height: 74,
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: Theme.of(context).colorScheme.surface,
               borderRadius: BorderRadius.circular(26),
               boxShadow: const [
                 BoxShadow(
@@ -735,7 +739,7 @@ class _LoginHero extends StatelessWidget {
           context.tr('auth.hero_subtitle'),
           role: AppTextRole.body,
           align: TextAlign.right,
-          color: AppTheme.textMuted,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
         ),
       ],
     );

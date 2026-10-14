@@ -50,7 +50,7 @@ class LocationPermissionStateView extends StatelessWidget {
                   child: Icon(
                     icon,
                     size: 38,
-                    color: AppTheme.primaryDeep,
+                    color: Theme.of(context).colorScheme.primary,
                   ),
                 ),
                 const SizedBox(height: 18),

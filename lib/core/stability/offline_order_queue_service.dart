@@ -43,7 +43,8 @@ class OfflineOrderQueueService {
   bool _initialized = false;
   bool _flushInFlight = false;
 
-  Stream<OfflineOrderQueueResult> get onSynced => _resultStreamController.stream;
+  Stream<OfflineOrderQueueResult> get onSynced =>
+      _resultStreamController.stream;
 
   Future<void> initialize({
     required OfflineOrderSubmitter submitter,
@@ -140,7 +141,8 @@ class OfflineOrderQueueService {
             'offline_queue_synced',
             module: 'offline_order_queue',
           );
-          StabilityLogger.offlineQueue('Synced queued order token=$token orderId=$orderId');
+          StabilityLogger.offlineQueue(
+              'Synced queued order token=$token orderId=$orderId');
           _resultStreamController.add(
             OfflineOrderQueueResult(
               orderRequestToken: token,
@@ -221,8 +223,7 @@ class OfflineOrderQueueService {
             }
             row['attempts'] = _toInt(row['attempts']) ?? 0;
             row['status'] = row['status']?.toString() ?? 'pending';
-            row['next_retry_at'] ??=
-                DateTime.now().toUtc().toIso8601String();
+            row['next_retry_at'] ??= DateTime.now().toUtc().toIso8601String();
             return row;
           }).where((item) => item.isNotEmpty),
         );

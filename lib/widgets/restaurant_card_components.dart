@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/scheduler.dart';
 
 import '../core/localization/app_localizations.dart';
@@ -227,7 +228,7 @@ class ImageFallback extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final decoration = BoxDecoration(
-      color: const Color(0xFFF1F1F1),
+      color: Theme.of(context).colorScheme.surfaceContainerHigh,
       shape: circular ? BoxShape.circle : BoxShape.rectangle,
       borderRadius: circular ? null : BorderRadius.circular(12),
     );
@@ -295,6 +296,9 @@ class RestaurantListCard extends StatelessWidget {
             final normalizedStatus = statusLabel.trim().isEmpty
                 ? context.tr('common.open_now')
                 : statusLabel.trim();
+            final themeColors = AppTheme.colorsOf(context);
+            final neutralBadgeBackground =
+                Theme.of(context).colorScheme.surfaceContainerHigh;
             final metaWidgets = <Widget>[
               if (minutesText != null)
                 _InlineMetaPill(
@@ -302,7 +306,7 @@ class RestaurantListCard extends StatelessWidget {
                   label: minutesText,
                   fontSize: metrics.metaFontSize,
                   iconSize: metrics.metaIconSize,
-                  iconColor: AppTheme.textMuted,
+                  iconColor: AppTheme.colorsOf(context).textSecondary,
                 ),
             ];
             final infoBadges = <Widget>[
@@ -312,7 +316,7 @@ class RestaurantListCard extends StatelessWidget {
                   fontSize: metrics.badgeFontSize,
                   icon: Icons.local_dining_rounded,
                   iconSize: metrics.badgeIconSize,
-                  background: const Color(0xFFF8F5EF),
+                  background: neutralBadgeBackground,
                 ),
               if (normalizedDistance != null)
                 _InfoBadge(
@@ -320,7 +324,7 @@ class RestaurantListCard extends StatelessWidget {
                   fontSize: metrics.badgeFontSize,
                   icon: Icons.place_rounded,
                   iconSize: metrics.badgeIconSize,
-                  background: const Color(0xFFF4F7FA),
+                  background: neutralBadgeBackground,
                 ),
             ];
             final statusBadge = _InfoBadge(
@@ -331,11 +335,10 @@ class RestaurantListCard extends StatelessWidget {
                   : Icons.pause_circle_rounded,
               iconSize: metrics.badgeIconSize,
               background: statusPositive
-                  ? const Color(0xFFE9F7EF)
-                  : const Color(0xFFF5F0F0),
-              foreground: statusPositive
-                  ? const Color(0xFF177A49)
-                  : const Color(0xFF7A3A3A),
+                  ? themeColors.successContainer
+                  : themeColors.dangerContainer,
+              foreground:
+                  statusPositive ? themeColors.success : themeColors.danger,
             );
             final hasMetaSection =
                 metaWidgets.isNotEmpty || infoBadges.isNotEmpty;
@@ -372,7 +375,8 @@ class RestaurantListCard extends StatelessWidget {
                                   fontSize: metrics.titleFontSize,
                                   height: 1.2,
                                   fontWeight: FontWeight.w800,
-                                  color: AppTheme.text,
+                                  color:
+                                      Theme.of(context).colorScheme.onSurface,
                                 ),
                               ),
                             ),
@@ -454,7 +458,7 @@ class RestaurantGridSkeleton extends StatelessWidget {
       return ListView.separated(
         padding: padding,
         physics: physics ?? const NeverScrollableScrollPhysics(),
-        cacheExtent: 360,
+        scrollCacheExtent: const ScrollCacheExtent.pixels(360),
         itemCount: itemCount,
         separatorBuilder: (_, __) => SizedBox(height: mainAxisSpacing),
         itemBuilder: (_, __) => const _RestaurantSkeletonCard(),
@@ -464,7 +468,7 @@ class RestaurantGridSkeleton extends StatelessWidget {
     return GridView.builder(
       padding: padding,
       physics: physics ?? const NeverScrollableScrollPhysics(),
-      cacheExtent: 360,
+      scrollCacheExtent: const ScrollCacheExtent.pixels(360),
       itemCount: itemCount,
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: crossAxisCount,
@@ -486,7 +490,7 @@ class _RestaurantSkeletonCard extends StatelessWidget {
       alignment: Alignment.topCenter,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Theme.of(context).colorScheme.surface,
           borderRadius: _kRestaurantCardRadius,
           boxShadow: const [
             BoxShadow(
@@ -617,7 +621,7 @@ class _SkeletonLine extends StatelessWidget {
       width: width,
       height: height,
       decoration: BoxDecoration(
-        color: const Color(0xFFE9E9E9),
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(999),
       ),
     );
@@ -639,7 +643,7 @@ class _SkeletonPill extends StatelessWidget {
       width: width,
       height: height,
       decoration: BoxDecoration(
-        color: const Color(0xFFEDEDED),
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(999),
       ),
     );
@@ -784,7 +788,7 @@ class _OverflowActionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: const Color(0xFFFFFAF3),
+      color: Theme.of(context).colorScheme.surface,
       borderRadius: BorderRadius.circular(999),
       elevation: 0,
       shadowColor: Colors.transparent,
@@ -798,7 +802,7 @@ class _OverflowActionButton extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(999),
             border: Border.all(
-              color: AppTheme.border.withValues(alpha: 0.95),
+              color: Theme.of(context).colorScheme.outlineVariant,
             ),
             boxShadow: const [
               BoxShadow(
@@ -811,7 +815,7 @@ class _OverflowActionButton extends StatelessWidget {
           child: Icon(
             Icons.error_outline_rounded,
             size: iconSize,
-            color: AppTheme.primaryDeep,
+            color: Theme.of(context).colorScheme.primary,
           ),
         ),
       ),
@@ -901,8 +905,11 @@ class _MenuCtaBadge extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.menu_book_rounded,
-                  size: iconSize, color: AppTheme.primaryDeep),
+              Icon(
+                Icons.menu_book_rounded,
+                size: iconSize,
+                color: Theme.of(context).colorScheme.primary,
+              ),
               const SizedBox(width: 4),
               Flexible(
                 child: Text(
@@ -910,7 +917,7 @@ class _MenuCtaBadge extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: AppTheme.primaryDeep,
+                    color: Theme.of(context).colorScheme.primary,
                     fontWeight: FontWeight.w800,
                     fontSize: fontSize,
                     height: 1.15,
@@ -944,7 +951,7 @@ class _InlineMetaPill extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0xFFF6F7F9),
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Padding(
@@ -957,7 +964,7 @@ class _InlineMetaPill extends StatelessWidget {
             Text(
               label,
               style: TextStyle(
-                color: AppTheme.text,
+                color: Theme.of(context).colorScheme.onSurface,
                 fontWeight: FontWeight.w700,
                 fontSize: fontSize,
               ),
@@ -988,7 +995,7 @@ class _InfoBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textColor = foreground ?? AppTheme.textMuted;
+    final textColor = foreground ?? AppTheme.colorsOf(context).textSecondary;
     final maxChipWidth =
         (MediaQuery.sizeOf(context).width * 0.40).clamp(110.0, 212.0);
     return ConstrainedBox(
@@ -1141,7 +1148,7 @@ class _InteractiveRestaurantCardState
                 ],
               ),
               child: Material(
-                color: Colors.white,
+                color: Theme.of(context).colorScheme.surface,
                 borderRadius: _kRestaurantCardRadius,
                 clipBehavior: Clip.antiAlias,
                 child: widget.child,

@@ -24,7 +24,7 @@ class LocationPickerSheet extends StatefulWidget {
 
 class _LocationPickerSheetState extends State<LocationPickerSheet> {
   MapboxMap? map;
-  late CameraOptions _camera;
+  late CameraViewportState _camera;
 
   double lat = 30.0444; // القاهرة افتراضي
   double lng = 31.2357;
@@ -32,7 +32,7 @@ class _LocationPickerSheetState extends State<LocationPickerSheet> {
   @override
   void initState() {
     super.initState();
-    _camera = CameraOptions(
+    _camera = CameraViewportState(
       center: Point(coordinates: Position(lng, lat)),
       zoom: 15,
     );
@@ -49,7 +49,7 @@ class _LocationPickerSheetState extends State<LocationPickerSheet> {
             // Map
             // =====================
             MapWidget(
-              cameraOptions: _camera,
+              viewport: _camera,
               onMapCreated: _onMapCreated,
               onCameraChangeListener: _onCameraChanged,
             ),
@@ -81,7 +81,7 @@ class _LocationPickerSheetState extends State<LocationPickerSheet> {
                   vertical: 10,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: Theme.of(context).colorScheme.surface,
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: const [
                     BoxShadow(
@@ -90,9 +90,12 @@ class _LocationPickerSheetState extends State<LocationPickerSheet> {
                     ),
                   ],
                 ),
-                child: const Text(
+                child: Text(
                   'اسحب الخريطة حتى تطابق موقع التوصيل',
                   textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
                 ),
               ),
             ),

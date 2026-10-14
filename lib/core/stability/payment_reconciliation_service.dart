@@ -280,7 +280,8 @@ class PaymentReconciliationService {
         updatedAt: DateTime.now().toUtc(),
       ),
       metricKey: 'payment_failures',
-      logMessage: 'Payment marked failed ref=$paymentReferenceId reason=$reason',
+      logMessage:
+          'Payment marked failed ref=$paymentReferenceId reason=$reason',
     );
   }
 
@@ -301,7 +302,8 @@ class PaymentReconciliationService {
 
     _reconcileInFlight = true;
     try {
-      final pending = _snapshots.where((snapshot) => snapshot.isPending).toList();
+      final pending =
+          _snapshots.where((snapshot) => snapshot.isPending).toList();
       for (final snapshot in pending) {
         if (snapshot.status == 'pending_review' &&
             DateTime.now().toUtc().difference(snapshot.updatedAt) <
@@ -404,7 +406,8 @@ class PaymentReconciliationService {
         }
 
         final age = now.difference(snapshot.createdAt);
-        if (age > _stuckPendingThreshold || nextAttempt > _maxVerificationAttempts) {
+        if (age > _stuckPendingThreshold ||
+            nextAttempt > _maxVerificationAttempts) {
           updated = updated.copyWith(
             status: 'pending_review',
             reconciliationStatus: 'manual_review',
@@ -560,7 +563,8 @@ class PaymentReconciliationService {
         ..addAll(
           decoded
               .whereType<Map>()
-              .map((row) => PaymentSnapshot.fromJson(Map<String, dynamic>.from(row)))
+              .map((row) =>
+                  PaymentSnapshot.fromJson(Map<String, dynamic>.from(row)))
               .whereType<PaymentSnapshot>(),
         );
     } catch (error, stack) {

@@ -54,20 +54,6 @@ class RestaurantsService {
       lng
     ''';
 
-  static const String _nearbySelect = '''
-      
-      user_id,
-      restaurant_id,
-      name,
-      is_paused,
-      image_url,
-      restaurant_type,
-      service_radius_meters,
-      open_time,
-      close_time
-
-    ''';
-
   static const String _orderInfoSelect = '''
       
       user_id,
@@ -222,61 +208,17 @@ class RestaurantsService {
         return const [];
       }
 
-      final snapshots = rpcRows
+      // The RPC is the authorization and visibility authority for the nearby
+      // feed. Do not re-query managers here: that could apply a different RLS
+      // context and make a valid RPC result disappear.
+      final nearbyRestaurants = rpcRows
           .whereType<Map>()
-          .map((row) => Map<String, dynamic>.from(row))
+          .map((row) =>
+              _normalizeManagerRestaurant(Map<String, dynamic>.from(row)))
+          .where((restaurant) => restaurantIdOf(restaurant).isNotEmpty)
           .toList(growable: false);
-      final requestedIds = snapshots
-          .map(
-            (row) =>
-                _stringValue(row['restaurant_id']) ??
-                _stringValue(row['manager_id']) ??
-                '',
-          )
-          .where((id) => id.isNotEmpty)
-          .toList(growable: false);
-
-      final restaurantMap = await _loadRestaurantsByIdentifiers(
-        requestedIds,
-        select: _nearbySelect,
-        requiredScope: _orderScope,
-      );
-
-      final nearbyRestaurants = <Map<String, dynamic>>[];
-      for (final row in snapshots) {
-        final identifier = _stringValue(row['restaurant_id']) ??
-            _stringValue(row['manager_id']) ??
-            '';
-        if (identifier.isEmpty) {
-          continue;
-        }
-
-        final managerRestaurant = restaurantMap[identifier];
-        if (managerRestaurant == null) {
-          continue;
-        }
-
-        final merged = _mergeRestaurantData(
-          restaurantId: identifier,
-          primary: managerRestaurant,
-          fallback: {
-            'id': identifier,
-            'restaurant_id': identifier,
-            'manager_id': _stringValue(row['manager_id']) ?? '',
-            'service_radius_meters': row['service_radius_meters'],
-          },
-        );
-        if (!isVisibilityAllowed(merged)) {
-          continue;
-        }
-        final hasLocation =
-            restaurantLatOf(merged) != null && restaurantLngOf(merged) != null;
-        if (!hasLocation) {
-          continue;
-        }
-
-        _cacheRestaurant(merged, _orderScope);
-        nearbyRestaurants.add(merged);
+      for (final restaurant in nearbyRestaurants) {
+        _cacheRestaurant(restaurant, _orderScope);
       }
       _nearbyCache[cacheKey] = _RestaurantListCacheEntry(
         value: nearbyRestaurants,

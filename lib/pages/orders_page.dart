@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../cart/cart_provider.dart';
@@ -26,6 +27,8 @@ class OrdersPage extends StatefulWidget {
 
 class _OrdersPageState extends State<OrdersPage> {
   final _supabase = Supabase.instance.client;
+  final _scrollController = ScrollController();
+  static const int _pageSize = 25;
 
   late final RealtimeChannelController _ordersChannelController;
   Timer? _ordersRealtimeDebounce;
@@ -36,6 +39,9 @@ class _OrdersPageState extends State<OrdersPage> {
   String? _userId;
   String? _errorMessage;
   List<Map<String, dynamic>> _orders = const [];
+  bool _loadingMore = false;
+  bool _hasMoreOrders = true;
+  int _loadedPages = 0;
 
   @override
   void initState() {
@@ -52,11 +58,15 @@ class _OrdersPageState extends State<OrdersPage> {
     );
 
     unawaited(_initialize());
+    _scrollController.addListener(_maybeLoadMoreOrders);
   }
 
   @override
   void dispose() {
     _ordersRealtimeDebounce?.cancel();
+    _scrollController
+      ..removeListener(_maybeLoadMoreOrders)
+      ..dispose();
     unawaited(_ordersChannelController.dispose());
     super.dispose();
   }
@@ -78,8 +88,12 @@ class _OrdersPageState extends State<OrdersPage> {
   Future<void> _loadOrders({
     bool showLoader = false,
     bool forceRefresh = false,
+    bool loadMore = false,
   }) async {
     final userId = _userId;
+    if (loadMore && (_loadingMore || !_hasMoreOrders)) {
+      return;
+    }
     if (showLoader && mounted) {
       setState(() {
         _loading = true;
@@ -98,10 +112,15 @@ class _OrdersPageState extends State<OrdersPage> {
       return;
     }
 
+    if (loadMore) {
+      _loadingMore = true;
+    }
     try {
       final result = await OrdersService.getCustomerOrders(
         userId,
         forceRefresh: forceRefresh,
+        page: loadMore ? _loadedPages : 0,
+        pageSize: _pageSize,
       );
       if (!mounted) {
         return;
@@ -118,9 +137,21 @@ class _OrdersPageState extends State<OrdersPage> {
         }
       }
 
-      _applyOrdersSnapshot(result, isLoading: false, errorMessage: null);
+      final nextOrders = loadMore ? _mergeOrders(_orders, result) : result;
+      _loadedPages = loadMore ? _loadedPages + 1 : 1;
+      _hasMoreOrders = result.length == _pageSize;
+      _applyOrdersSnapshot(nextOrders, isLoading: false, errorMessage: null);
     } catch (_) {
       if (!mounted) {
+        return;
+      }
+
+      if (loadMore) {
+        _applyOrdersSnapshot(
+          _orders,
+          isLoading: false,
+          errorMessage: _errorMessage,
+        );
         return;
       }
 
@@ -129,7 +160,43 @@ class _OrdersPageState extends State<OrdersPage> {
         isLoading: false,
         errorMessage: 'تعذر تحميل الطلبات حالياً.',
       );
+    } finally {
+      _loadingMore = false;
     }
+  }
+
+  void _maybeLoadMoreOrders() {
+    if (!_scrollController.hasClients ||
+        _scrollController.position.extentAfter > 320) {
+      return;
+    }
+    unawaited(_loadOrders(loadMore: true));
+  }
+
+  List<Map<String, dynamic>> _mergeOrders(
+    List<Map<String, dynamic>> current,
+    List<Map<String, dynamic>> next,
+  ) {
+    final byId = <String, Map<String, dynamic>>{
+      for (final order in current) OrdersService.idOf(order): order,
+    };
+    for (final order in next) {
+      final id = OrdersService.idOf(order);
+      if (id.isNotEmpty) {
+        byId[id] = order;
+      }
+    }
+    final merged = byId.values.toList(growable: false)
+      ..sort((a, b) {
+        final createdAt = OrdersService.createdAtOf(b).compareTo(
+          OrdersService.createdAtOf(a),
+        );
+        if (createdAt != 0) {
+          return createdAt;
+        }
+        return OrdersService.idOf(b).compareTo(OrdersService.idOf(a));
+      });
+    return merged;
   }
 
   void _listenToOrders() {
@@ -310,11 +377,15 @@ class _OrdersPageState extends State<OrdersPage> {
       return order;
     }).toList(growable: false);
 
-    merged.sort(
-      (a, b) => OrdersService.createdAtOf(b).compareTo(
+    merged.sort((a, b) {
+      final createdAt = OrdersService.createdAtOf(b).compareTo(
         OrdersService.createdAtOf(a),
-      ),
-    );
+      );
+      if (createdAt != 0) {
+        return createdAt;
+      }
+      return OrdersService.idOf(b).compareTo(OrdersService.idOf(a));
+    });
 
     return merged;
   }
@@ -376,7 +447,7 @@ class _OrdersPageState extends State<OrdersPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF6F7FB),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('طلباتي'),
         centerTitle: true,
@@ -405,10 +476,17 @@ class _OrdersPageState extends State<OrdersPage> {
                     onRefresh: () => _loadOrders(forceRefresh: true),
                     child: ListView.builder(
                       physics: AppTheme.bouncingScrollPhysics,
-                      cacheExtent: 640,
+                      scrollCacheExtent: const ScrollCacheExtent.pixels(640),
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                      itemCount: _orders.length,
+                      controller: _scrollController,
+                      itemCount: _orders.length + (_hasMoreOrders ? 1 : 0),
                       itemBuilder: (context, index) {
+                        if (index == _orders.length) {
+                          return const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Center(child: CircularProgressIndicator()),
+                          );
+                        }
                         final order = _orders[index];
                         final duration = Duration(
                           milliseconds: 240 + math.min(index * 70, 320),
@@ -508,7 +586,7 @@ class _OrderCard extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFFF9F6F2),
+                color: Theme.of(context).colorScheme.surfaceContainerHigh,
                 borderRadius: BorderRadius.circular(18),
               ),
               child: Row(
@@ -530,10 +608,10 @@ class _OrderCard extends StatelessWidget {
                     child: Text(
                       restaurantName,
                       textAlign: TextAlign.right,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xFF101828),
+                        color: Theme.of(context).colorScheme.onSurface,
                       ),
                     ),
                   ),
@@ -574,14 +652,14 @@ class _InfoRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(icon, size: 18, color: const Color(0xFF667085)),
+        Icon(icon, size: 18, color: AppTheme.colorsOf(context).textSecondary),
         const SizedBox(width: 8),
         Flexible(
           child: Text(
             '$label: ',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               color: Color(0xFF667085),
               fontWeight: FontWeight.w600,
             ),
@@ -593,8 +671,8 @@ class _InfoRow extends StatelessWidget {
             value,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFF101828),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurface,
               fontWeight: FontWeight.w700,
             ),
           ),

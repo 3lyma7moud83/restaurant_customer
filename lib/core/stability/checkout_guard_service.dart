@@ -266,7 +266,8 @@ class CheckoutGuardService {
       _lastAttemptAt = _parseDate(decoded['last_attempt_at']?.toString());
       _lockUntil = _parseDate(decoded['lock_until']?.toString());
       _safeModeUntil = _parseDate(decoded['safe_mode_until']?.toString());
-      _activeOrderRequestToken = _toNullableText(decoded['order_request_token']);
+      _activeOrderRequestToken =
+          _toNullableText(decoded['order_request_token']);
       _activeCheckoutSessionId =
           _toNullableText(decoded['checkout_session_id']);
 

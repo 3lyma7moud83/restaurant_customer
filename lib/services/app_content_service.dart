@@ -14,6 +14,23 @@ enum AppContentSection {
   final String keyName;
 }
 
+@visibleForTesting
+bool shouldFetchEnglishContentFallback({
+  required String language,
+  required bool hasCurrentLanguageEntry,
+}) {
+  return language != 'en' && !hasCurrentLanguageEntry;
+}
+
+@visibleForTesting
+bool isAppContentCacheFresh({
+  required DateTime cachedAt,
+  required DateTime now,
+  Duration ttl = const Duration(minutes: 10),
+}) {
+  return now.difference(cachedAt) <= ttl;
+}
+
 class AppContentEntry {
   const AppContentEntry({
     required this.id,
@@ -124,12 +141,15 @@ class AppContentService {
         section: section,
         language: language,
       );
-      final fallbackEnglishEntry = language == 'en'
-          ? null
-          : await _fetchEntryByLanguage(
+      final fallbackEnglishEntry = shouldFetchEnglishContentFallback(
+        language: language,
+        hasCurrentLanguageEntry: currentLanguageEntry != null,
+      )
+          ? await _fetchEntryByLanguage(
               section: section,
               language: 'en',
-            );
+            )
+          : null;
 
       final resolved = currentLanguageEntry ??
           fallbackEnglishEntry ??
@@ -255,8 +275,11 @@ class _AppContentCacheEntry {
   final AppContentEntry value;
   final DateTime cachedAt;
 
-  bool get isExpired =>
-      DateTime.now().difference(cachedAt) > AppContentService._cacheTtl;
+  bool get isExpired => !isAppContentCacheFresh(
+        cachedAt: cachedAt,
+        now: DateTime.now(),
+        ttl: AppContentService._cacheTtl,
+      );
 }
 
 class _FallbackContent {

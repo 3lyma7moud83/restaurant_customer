@@ -65,7 +65,7 @@ class _MapboxMobileViewState extends State<MapboxMobileView> {
       children: [
         // ================= MAP =================
         MapWidget(
-          cameraOptions: CameraOptions(
+          viewport: CameraViewportState(
             center: Point(
               coordinates: Position(widget.lng, widget.lat),
             ),

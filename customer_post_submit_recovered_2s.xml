@@ -1,1 +1,295 @@
-<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.example.restaurant_customer" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,1529]"><node index="0" text="" resource-id="" class="android.widget.LinearLayout" package="com.example.restaurant_customer" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,1529]"><node index="0" text="" resource-id="android:id/content" class="android.widget.FrameLayout" package="com.example.restaurant_customer" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,1529]"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.example.restaurant_customer" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,1529]"><node index="0" text="" resource-id="" class="android.view.View" package="com.example.restaurant_customer" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,1529]"><node index="0" text="" resource-id="" class="android.view.View" package="com.example.restaurant_customer" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,1529]"><node index="0" text="" resource-id="" class="android.view.View" package="com.example.restaurant_customer" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,1529]"><node index="0" text="" resource-id="" class="android.view.View" package="com.example.restaurant_customer" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,1529]"><node index="0" text="" resource-id="" class="android.view.View" package="com.example.restaurant_customer" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][720,143]"><node index="0" text="" resource-id="" class="android.widget.Button" package="com.example.restaurant_customer" content-desc="رجوع" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[629,52][713,136]" /><node index="1" text="" resource-id="" class="android.view.View" package="com.example.restaurant_customer" content-desc="السلة" checkable="false" checked="false" clickable="false" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[326,64][394,124]" /></node><node index="1" text="" resource-id="" class="android.view.View" package="com.example.restaurant_customer" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[30,168][690,1529]"><node index="0" text="" resource-id="" class="android.view.View" package="com.example.restaurant_customer" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="true" long-clickable="false" password="false" selected="false" bounds="[30,168][690,1529]"><node index="0" text="" resource-id="" class="android.view.View" package="com.example.restaurant_customer" content-desc="عنوان التوصيل&#10;معاينة الموقع المختار&#10;شارع مسجد الهدايه - ناهيا - مركز أوسيم - محافظة الجيزة&#10;‪30.075051, 31.153930‬" checkable="false" checked="false" clickable="false" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[30,168][690,204]" /><node index="1" text="" resource-id="" class="android.view.View" package="com.example.restaurant_customer" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[30,204][690,232]" /><node index="2" text="" resource-id="" class="android.view.View" package="com.example.restaurant_customer" content-desc="طريقة الدفع" checkable="false" checked="false" clickable="false" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[30,232][690,641]"><node index="0" text="" resource-id="" class="android.widget.RadioButton" package="com.example.restaurant_customer" content-desc="الدفع نقدًا&#10;ادفع عند الاستلام" checkable="true" checked="true" clickable="false" enabled="false" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[62,333][658,463]" /><node index="1" text="" resource-id="" class="android.widget.RadioButton" package="com.example.restaurant_customer" content-desc="Visa&#10;قريبًا" checkable="true" checked="false" clickable="false" enabled="false" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[62,480][658,610]" /></node><node index="3" text="" resource-id="" class="android.view.View" package="com.example.restaurant_customer" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[30,641][690,669]" /><node index="4" text="" resource-id="" class="android.view.View" package="com.example.restaurant_customer" content-desc="" checkable="false" checked="false" clickable="false" enabled="false" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[30,669][690,1026]"><node index="0" text="" resource-id="" class="android.widget.Button" package="com.example.restaurant_customer" content-desc="تطبيق" checkable="false" checked="false" clickable="false" enabled="false" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[62,890][658,995]" /></node><node index="5" text="" resource-id="" class="android.view.View" package="com.example.restaurant_customer" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[30,1026][690,1054]" /><node index="6" text="" resource-id="" class="android.view.View" package="com.example.restaurant_customer" content-desc="ملخص السعر&#10;10 ج&#10;سعر الطلب&#10;10 ج&#10;التوصيل&#10;20 ج&#10;الإجمالي" checkable="false" checked="false" clickable="false" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[30,1054][690,1378]" /><node index="7" text="" resource-id="" class="android.view.View" package="com.example.restaurant_customer" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[30,1378][690,1410]" /><node index="8" text="" resource-id="" class="android.view.View" package="com.example.restaurant_customer" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[30,1410][690,1508]"><node index="0" text="" resource-id="" class="android.widget.Button" package="com.example.restaurant_customer" content-desc="" checkable="false" checked="false" clickable="false" enabled="false" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[30,1410][690,1508]" /></node></node></node></node></node></node></node></node></node></node></node></hierarchy>
+abstract    = Pixel height of the third display
+
+name        = hw.display2.density
+type        = integer
+default     = 0
+abstract    = Screen density of the third display
+
+name        = hw.display2.xOffset
+type        = integer
+default     = -1
+abstract    = the horizontal offset of the third display with respect to the host QT window.
+
+name        = hw.display2.yOffset
+type        = integer
+default     = -1
+abstract    = the veritcal offset of the third display with respect to the host QT window.
+
+name        = hw.display2.flag
+type        = integer
+default     = 0
+abstract    = the flag to use when the third display is initialized in the Android system.
+
+name        = hw.display3.width
+type        = integer
+default     = 0
+abstract    = Pixel width of the fourth display
+
+name        = hw.display3.height
+type        = integer
+default     = 0
+abstract    = Pixel height of the fourth display
+
+name        = hw.display3.density
+type        = integer
+default     = 0
+abstract    = Screen density of the fourth display
+
+name        = hw.display3.xOffset
+type        = integer
+default     = -1
+abstract    = the horizontal offset of the fourth display with respect to the host QT window.
+
+name        = hw.display3.yOffset
+type        = integer
+default     = -1
+abstract    = the veritcal offset of the fourth display with respect to the host QT window.
+
+name        = hw.display3.flag
+type        = integer
+default     = 0
+abstract    = the flag touse when the fourth display is initialized in the Android system.
+
+name        = hw.multi_display_window
+type        = boolean
+default     = no
+abstract    = Create a window for each display
+description = When multidisplay enabled, enabling this flag will create a window for each display.
+
+name        = display.settings.xml
+type        = string
+enum        = freeform, ...
+default     =
+abstract    = Configure setting xml file for Android Window Manager
+
+name        = hw.hotplug_multi_display
+type        = boolean
+default     = no
+abstract    = If yes, create multidisplay using HAL hotplug display, otherwise, using Android window manager
+
+# Hardware GPU support
+#
+name        = hw.gpu.enabled
+type        = boolean
+default     = no
+abstract    = GPU emulation
+description = Enable/Disable emulated GPU
+
+name        = hw.gpu.mode
+type        = string
+default     = auto
+enum        = auto, host, software
+abstract    = GPU emulation mode
+description = This value determines how GPU emulation is implemented.
+
+# Configures the initial orientation: portrait or landscape
+#
+name        = hw.initialOrientation
+type        = string
+enum        = portrait, landscape
+default     = portrait
+abstract    = Initial screen orientation
+description = Setup initial screen orientation, can be rotated later on.
+
+# Configures camera facing back
+#
+name        = hw.camera.back
+type        = string
+enum        = emulated, none, webcam0, ...
+default     = emulated
+abstract    = Configures camera facing back
+description = Must be 'emulated' for a fake camera, 'webcam<N>' for a web camera, or 'none' if back camera is disabled.
+
+name        = hw.camera.back.orientation
+type        = integer
+default     = 90
+abstract    = Configures sensor orientation of camera facing back
+description = Must be in increments of 90 degrees
+
+# Configures camera facing front
+#
+name        = hw.camera.front
+type        = string
+enum        = emulated, none, webcam0, ...
+default     = none
+abstract    = Configures camera facing front
+description = Must be 'emulated' for a fake camera, 'webcam<N>' for a web camera, or 'none' if front camera is disabled.
+
+name        = hw.camera.front.orientation
+type        = integer
+default     = 90
+abstract    = Configures sensor orientation of camera facing front
+description = Must be in increments of 90 degrees
+
+# Maximum VM heap size
+# Higher values are required for high-dpi devices
+# Default will depend on RAM size.
+name        = vm.heapSize
+type        = integer
+default     = 0
+abstract    = Max VM application heap size
+description = The maximum heap size a Dalvik application might allocate before being killed by the system. Value is in megabytes.
+
+# Light sensor
+name        = hw.sensors.light
+type        = boolean
+default     = yes
+abstract    = Light support
+description = Whether there is a light sensor in the device
+
+# Pressure sensor
+name        = hw.sensors.pressure
+type        = boolean
+default     = yes
+abstract    = Pressure support
+description = Whether there is a pressure sensor in the device
+
+# Humidity sensor
+name        = hw.sensors.humidity
+type        = boolean
+default     = yes
+abstract    = Humidity support
+description = Whether there is a relative humidity sensor in the device
+
+# Proximity sensor
+name        = hw.sensors.proximity
+type        = boolean
+default     = yes
+abstract    = Proximity support
+description = Whether there is an proximity in the device.
+
+# Magnetic field sensor
+name        = hw.sensors.magnetic_field
+type        = boolean
+default     = yes
+abstract    = Magnetic field support
+description = Provides magnetic field sensor values.
+
+# Uncalibrated magnetometer (used for VR)
+name        = hw.sensors.magnetic_field_uncalibrated
+type        = boolean
+default     = yes
+abstract    = Uncalibrated magnetic field suport
+description = Provides uncalibrated magnetic field sensor values.
+
+# Uncalibrated gyroscope
+name        = hw.sensors.gyroscope_uncalibrated
+type        = boolean
+default     = yes
+abstract    = Uncalibrated gyroscope support
+description = Provides uncalibrated gyroscope sensor values.
+
+# Orientation sensor
+name        = hw.sensors.orientation
+type        = boolean
+default     = yes
+abstract    = Orientation support
+description = Provides orientation sensor values.
+
+# Temperature sensor
+name        = hw.sensors.temperature
+type        = boolean
+default     = yes
+abstract    = Temperature support
+description = Provides temperature sensor values.
+
+# RGBC light sensor
+name        = hw.sensors.rgbclight
+type        = boolean
+default     = no
+abstract    = RGBC light sensor support
+description = Provides RGBC light sensor values.
+
+# Hinge angle sensor
+name        = hw.sensor.hinge
+type        = boolean
+default     = no
+abstract    = Enalbe hinge angle sensor.
+
+name        = hw.sensor.hinge.count
+type        = integer
+default     = 0
+abstract    = Provides hinge angle sensor count.
+
+name        = hw.sensor.hinge.type
+type        = integer
+default     = 0
+abstract    = Provides hinge angle sensor type. 0 (horizontal) and 1 (vertical)
+
+name        = hw.sensor.hinge.sub_type
+type        = integer
+default     = 0
+abstract    = Provides hinge angle sensor sub type. 0 (invisible hinge, fold on screen) and 1 (hinge)
+
+name        = hw.sensor.hinge.resizable.config
+type        = integer
+default     = 1
+abstract    = For resizable only: this indicates the hinge config applies to which avd
+
+name        = hw.sensor.hinge.ranges
+type        = string
+default     =
+abstract    = angel ranges for each hinge sensor, e.g., 0-360, 0-180 for two sensors.
+
+name        = hw.sensor.hinge.defaults
+type        = string
+default     =
+abstract    = default angel for each hinge sensor, e.g., 180, 90 for two sensors.
+
+name        = hw.sensor.hinge.areas
+type        = string
+default     =
+abstract    = hinge areas on the display, format is percentage_of_screen-width, e.g., 33.3-0, 66.6-10 for two sensors. Or x-y-width-height, e.g., 600-0-0-1200, 1200-0-10-1200 for two sensors.
+
+name        = hw.sensor.posture_list
+type        = string
+default     =
+abstract    = list of supported postures by index. 0: unknown, 1: closed, 2: half-open, 3: open, 4: flipped, 5: tent
+
+name        = hw.sensor.hinge_angles_posture_definitions
+type        = string
+default     =
+abstract    = angles ranges for each posture in posture_list.
+description = start-end angle pairs which define each posture. optionally, default angle may be specified for each posture, by providing a third value. default posture angle is used e.g. in quick-jump-to-posture buttons in UI.
+
+name        = hw.sensor.hinge.fold_to_displayRegion.0.1_at_posture
+type        = integer
+default     = 1
+abstract    = set folded status at a certain posture, e.g, fold-out device, posture flipped
+
+name        = hw.sensor.roll
+type        = boolean
+default     = no
+abstract    = Enalbe rollable sensor.
+
+name        = hw.sensor.roll.count
+type        = integer
+default     = 0
+abstract    = rollable sensor count.
+
+name        = hw.sensor.roll.radius
+type        = string
+default     =
+abstract    = roll radious of display width or height.
+
+name        = hw.sensor.roll.ranges
+type        = string
+default     =
+abstract    = the pecentage of display width or height which is rollable.
+
+name        = hw.sensor.roll.direction
+type        = string
+default     =
+abstract    = rolling direction starting from open posture. 0: left-to-right or top-to-buttom, 1: right-to-left or bottom-to-top
+
+name        = hw.sensor.roll.defaults
+type        = string
+default     =
+abstract    = defaults percentage of display width or height which is rolled.
+
+name        = hw.sensor.roll_percentages_posture_definitions
+type        = string
+default     =
+abstract    = angles ranges for each posture in posture_list.
+
+name      

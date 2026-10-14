@@ -1,74 +1,52 @@
-# Secrets Incident Runbook (Production Safe)
+// Copyright 2014 The Flutter Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
-This runbook handles:
-1. Credential rotation without downtime.
-2. Git history cleanup for leaked secret files.
-3. Repository hardening to prevent re-leak.
+/// @docImport 'package:flutter/animation.dart';
+/// @docImport 'package:flutter/widgets.dart';
+library;
 
-## 1) Rotation Order (No Downtime)
+import 'dart:ui' show VoidCallback;
 
-Use this exact order to avoid interruption:
+import 'package:meta/meta.dart';
 
-1. Create replacement credentials first.
-2. Update runtime secrets in production.
-3. Deploy/restart affected backend services.
-4. Verify traffic and delivery health.
-5. Revoke old credentials only after successful verification.
+import 'assertions.dart';
+import 'debug.dart';
+import 'diagnostics.dart';
+import 'memory_allocations.dart';
 
-### Minimum required rotation for this incident
+export 'dart:ui' show VoidCallback;
 
-1. `FIREBASE_SERVICE_ACCOUNT_JSON` key pair (critical).
-2. Any Supabase service-role secret if it was exposed outside secret storage.
-3. Optional: rotate non-secret/public client keys only if policy requires it.
-
-## 2) Git History Cleanup
-
-Run only after step (1) is complete.
-
-### 2.1 Install `git-filter-repo` (if needed)
-
-```powershell
-pip install git-filter-repo
-```
-
-### 2.2 Backup mirror clone
-
-```powershell
-git clone --mirror <YOUR_REMOTE_URL> repo-cleanup.git
-cd repo-cleanup.git
-```
-
-### 2.3 Remove leaked secret paths from history
-
-```powershell
-git filter-repo `
-  --path supabase.env `
-  --path assets/env/app.env `
-  --path assets/assets/env/app.env `
-  --invert-paths
-```
-
-### 2.4 Force-push rewritten history
-
-```powershell
-git push --force --all
-git push --force --tags
-```
-
-### 2.5 Team recovery
-
-All contributors must re-clone (or hard-reset to new history) after rewrite.
-
-## 3) Repo Hardening (implemented)
-
-1. `supabase.env` is ignored.
-2. `assets/**/env/app.env` is ignored.
-3. Build-generated `assets/assets/env/` is ignored.
-4. `supabase.env.example` added as safe template.
-
-## 4) Verification Checklist
-
-1. `git status --short` does not show accidental secret tracking from ignored files.
-2. `git ls-files | rg "supabase\\.env|app\\.env"` returns only safe example files.
-3. Notification processing health remains green after secret rotation.
-4. Old Firebase key is disabled only after successful function verification.
+/// An object that maintains a list of listeners.
+///
+/// The listeners are typically used to notify clients that the object has been
+/// updated.
+///
+/// There are two variants of this interface:
+///
+///  * [ValueListenable], an interface that augments the [Listenable] interface
+///    with the concept of a _current value_.
+///
+///  * [Animation], an interface that augments the [ValueListenable] interface
+///    to add the concept of direction (forward or reverse).
+///
+/// Many classes in the Flutter API use or implement these interfaces. The
+/// following subclasses are especially relevant:
+///
+///  * [ChangeNotifier], which can be subclassed or mixed in to create objects
+///    that implement the [Listenable] interface.
+///
+///  * [ValueNotifier], which implements the [ValueListenable] interface with
+///    a mutable value that triggers the notifications when modified.
+///
+/// The terms "notify clients", "send notifications", "trigger notifications",
+/// and "fire notifications" are used interchangeably.
+///
+/// See also:
+///
+///  * [AnimatedBuilder], a widget that uses a builder callback to rebuild
+///    whenever a given [Listenable] triggers its notifications. This widget is
+///    commonly used with [Animation] subclasses, hence its name, but is by no
+///    means limited to animations, as it can be used with any [Listenable]. It
+///    is a subclass of [AnimatedWidget], which can be used to create widgets
+///    that are driven from a [L

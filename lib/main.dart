@@ -11,6 +11,7 @@ import 'core/localization/locale_controller.dart';
 import 'core/config/env.dart';
 import 'core/services/error_logger.dart';
 import 'core/theme/app_theme.dart';
+import 'core/theme/theme_controller.dart';
 import 'cart/cart_provider.dart';
 import 'pages/home_page.dart';
 import 'services/notifications/app_notification_service.dart';
@@ -23,11 +24,15 @@ Future<void> main() async {
   _bootstrapLog('Global error handling configured.');
 
   final bootstrapResult = await _bootstrap();
+  final initialThemeMode = await ThemeController.loadInitialMode();
   _bootstrapLog(
     'Bootstrap completed. ok=${bootstrapResult.ok}, '
     'message=${bootstrapResult.message ?? 'none'}.',
   );
-  runApp(CustomerApp(bootstrapResult: bootstrapResult));
+  runApp(CustomerApp(
+    bootstrapResult: bootstrapResult,
+    initialThemeMode: initialThemeMode,
+  ));
   _bootstrapLog('runApp executed.');
 }
 
@@ -35,9 +40,11 @@ class CustomerApp extends StatefulWidget {
   const CustomerApp({
     super.key,
     required this.bootstrapResult,
+    this.initialThemeMode = ThemeMode.light,
   });
 
   final BootstrapResult bootstrapResult;
+  final ThemeMode initialThemeMode;
 
   @override
   State<CustomerApp> createState() => _CustomerAppState();
@@ -45,50 +52,69 @@ class CustomerApp extends StatefulWidget {
 
 class _CustomerAppState extends State<CustomerApp> {
   late final LocaleController _localeController = LocaleController();
+  late final ThemeController _themeController = ThemeController(
+    initialMode: widget.initialThemeMode,
+  );
 
   @override
   void initState() {
     super.initState();
     unawaited(_localeController.initialize());
+    // FCM can deliver an initial-message tap before MaterialApp has created
+    // its Navigator. Release the notification service's pending tap queue only
+    // after that first frame, so startup/auth restoration cannot discard the
+    // intended order route.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !widget.bootstrapResult.ok) {
+        return;
+      }
+      AppNotificationService.instance.markUiReadyForNotificationNavigation();
+    });
   }
 
   @override
   void dispose() {
     _localeController.dispose();
+    _themeController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return CartProviderWrapper(
-      child: AppLocaleScope(
-        controller: _localeController,
-        child: AnimatedBuilder(
-          animation: _localeController,
-          builder: (context, _) {
-            return MaterialApp(
-              navigatorKey: SessionManager.navigatorKey,
-              scaffoldMessengerKey: ErrorLogger.scaffoldMessengerKey,
-              debugShowCheckedModeBanner: false,
-              title: 'delivery-mat3mk',
-              theme: AppTheme.light(),
-              scrollBehavior: const _AppScrollBehavior(),
-              locale: _localeController.locale,
-              supportedLocales: AppLocalizations.supportedLocales,
-              localizationsDelegates: const [
-                AppLocalizations.delegate,
-                GlobalMaterialLocalizations.delegate,
-                GlobalWidgetsLocalizations.delegate,
-                GlobalCupertinoLocalizations.delegate,
-              ],
-              home: widget.bootstrapResult.ok
-                  ? const _SessionGate()
-                  : _BootstrapErrorScreen(
-                      messageKey: widget.bootstrapResult.message ??
-                          ErrorLogger.userMessage,
-                    ),
-            );
-          },
+      child: AppThemeScope(
+        controller: _themeController,
+        child: AppLocaleScope(
+          controller: _localeController,
+          child: AnimatedBuilder(
+            animation: Listenable.merge([_localeController, _themeController]),
+            builder: (context, _) {
+              return MaterialApp(
+                navigatorKey: SessionManager.navigatorKey,
+                scaffoldMessengerKey: ErrorLogger.scaffoldMessengerKey,
+                debugShowCheckedModeBanner: false,
+                title: 'delivery-mat3mk',
+                theme: AppTheme.light(),
+                darkTheme: AppTheme.dark(),
+                themeMode: _themeController.themeMode,
+                scrollBehavior: const _AppScrollBehavior(),
+                locale: _localeController.locale,
+                supportedLocales: AppLocalizations.supportedLocales,
+                localizationsDelegates: const [
+                  AppLocalizations.delegate,
+                  GlobalMaterialLocalizations.delegate,
+                  GlobalWidgetsLocalizations.delegate,
+                  GlobalCupertinoLocalizations.delegate,
+                ],
+                home: widget.bootstrapResult.ok
+                    ? const _SessionGate()
+                    : _BootstrapErrorScreen(
+                        messageKey: widget.bootstrapResult.message ??
+                            ErrorLogger.userMessage,
+                      ),
+              );
+            },
+          ),
         ),
       ),
     );
@@ -175,7 +201,7 @@ Future<BootstrapResult> _bootstrap() async {
     if (!_isSupabaseInitialized()) {
       await Supabase.initialize(
         url: AppEnv.supabaseUrl,
-        anonKey: AppEnv.supabaseAnonKey,
+        publishableKey: AppEnv.supabaseAnonKey,
         authOptions: const FlutterAuthClientOptions(
           autoRefreshToken: true,
           detectSessionInUri: true,

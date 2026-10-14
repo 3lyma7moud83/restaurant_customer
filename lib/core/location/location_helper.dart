@@ -31,7 +31,7 @@ class LocationHelper {
         return null;
       }
 
-      return getLocationWithGrantedPermission(
+      return await getLocationWithGrantedPermission(
         mapboxToken: mapboxToken,
         forceRefresh: forceRefresh,
       );

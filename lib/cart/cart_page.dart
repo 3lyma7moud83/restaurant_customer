@@ -1234,7 +1234,7 @@ class _CartLineItem extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF9F6F2),
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(18),
       ),
       child: Column(
@@ -1262,16 +1262,16 @@ class _CartLineItem extends StatelessWidget {
                     Text(
                       item.displayName,
                       textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        color: AppTheme.text,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurface,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       localizedCurrency(context, item.price),
-                      style: const TextStyle(
-                        color: Color(0xFF667085),
+                      style: TextStyle(
+                        color: AppTheme.colorsOf(context).textSecondary,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -1311,8 +1311,8 @@ class _CartLineItem extends StatelessWidget {
               const Spacer(),
               Text(
                 '${item.qty} × ${localizedCurrency(context, item.price)}',
-                style: const TextStyle(
-                  color: Color(0xFF667085),
+                style: TextStyle(
+                  color: AppTheme.colorsOf(context).textSecondary,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -1342,9 +1342,9 @@ class _QuantityStepper extends StatelessWidget {
     return Container(
       height: 40,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppTheme.border),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1362,8 +1362,8 @@ class _QuantityStepper extends StatelessWidget {
             child: Text(
               quantity.toString(),
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: AppTheme.text,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface,
                 fontWeight: FontWeight.w900,
               ),
             ),
@@ -1445,11 +1445,11 @@ class _LocationPreview extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                const Text(
+                Text(
                   'معاينة الموقع المختار',
                   textAlign: TextAlign.right,
                   style: TextStyle(
-                    color: AppTheme.text,
+                    color: Theme.of(context).colorScheme.onSurface,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
@@ -1459,8 +1459,8 @@ class _LocationPreview extends StatelessWidget {
                   textAlign: TextAlign.right,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF475467),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -1468,8 +1468,8 @@ class _LocationPreview extends StatelessWidget {
                 Text(
                   '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}',
                   textDirection: TextDirection.ltr,
-                  style: const TextStyle(
-                    color: Color(0xFF667085),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -1498,7 +1498,7 @@ class _SectionCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(24),
         boxShadow: const [
           BoxShadow(
@@ -1521,8 +1521,8 @@ class _SectionCard extends StatelessWidget {
                   textAlign: TextAlign.right,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppTheme.text,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface,
                     fontSize: 16,
                     fontWeight: FontWeight.w800,
                   ),
@@ -1567,18 +1567,23 @@ class _PaymentMethodTile extends StatelessWidget {
         decoration: BoxDecoration(
           color: selected
               ? AppTheme.primary.withValues(alpha: 0.1)
-              : const Color(0xFFF9F6F2),
+              : Theme.of(context).colorScheme.surfaceContainerHigh,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: selected ? AppTheme.primary : AppTheme.border,
+            color: selected
+                ? AppTheme.primary
+                : Theme.of(context).colorScheme.outlineVariant,
           ),
         ),
         child: Row(
           children: [
-            Radio<bool>(
-              value: true,
-              groupValue: selected,
-              onChanged: enabled ? (_) => onTap() : null,
+            IgnorePointer(
+              ignoring: !enabled,
+              child: RadioGroup<bool>(
+                groupValue: selected,
+                onChanged: enabled ? (_) => onTap() : (_) {},
+                child: const Radio<bool>(value: true),
+              ),
             ),
             const SizedBox(width: 8),
             Expanded(
@@ -1588,15 +1593,17 @@ class _PaymentMethodTile extends StatelessWidget {
                   Text(
                     title,
                     style: TextStyle(
-                      color: enabled ? AppTheme.text : AppTheme.textMuted,
+                      color: enabled
+                          ? Theme.of(context).colorScheme.onSurface
+                          : AppTheme.colorsOf(context).textSecondary,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    style: const TextStyle(
-                      color: Color(0xFF667085),
+                    style: TextStyle(
+                      color: AppTheme.colorsOf(context).textSecondary,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -1606,7 +1613,9 @@ class _PaymentMethodTile extends StatelessWidget {
             const SizedBox(width: 10),
             Icon(
               icon,
-              color: enabled ? AppTheme.primary : AppTheme.textMuted,
+              color: enabled
+                  ? AppTheme.primary
+                  : AppTheme.colorsOf(context).textSecondary,
             ),
           ],
         ),
@@ -1772,8 +1781,10 @@ class _PriceRow extends StatelessWidget {
         Text(
           value,
           style: TextStyle(
-            color:
-                valueColor ?? (emphasized ? AppTheme.primary : AppTheme.text),
+            color: valueColor ??
+                (emphasized
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.onSurface),
             fontWeight: FontWeight.w800,
             fontSize: emphasized ? 16 : 14,
           ),
@@ -1782,7 +1793,9 @@ class _PriceRow extends StatelessWidget {
         Text(
           label,
           style: TextStyle(
-            color: emphasized ? AppTheme.text : const Color(0xFF667085),
+            color: emphasized
+                ? Theme.of(context).colorScheme.onSurface
+                : Theme.of(context).colorScheme.onSurfaceVariant,
             fontWeight: FontWeight.w700,
           ),
         ),
@@ -1851,7 +1864,7 @@ class _ActiveOrderCard extends StatelessWidget {
               Text(
                 context.tr('cart.active_order'),
                 style: TextStyle(
-                  color: AppTheme.text,
+                  color: Theme.of(context).colorScheme.onSurface,
                   fontSize: 17,
                   fontWeight: FontWeight.w800,
                 ),
@@ -1862,8 +1875,8 @@ class _ActiveOrderCard extends StatelessWidget {
           Text(
             context.tr('cart.active_order_locked_message'),
             textAlign: TextAlign.right,
-            style: const TextStyle(
-              color: Color(0xFF475467),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
               height: 1.5,
               fontWeight: FontWeight.w600,
             ),
@@ -1871,8 +1884,8 @@ class _ActiveOrderCard extends StatelessWidget {
           const SizedBox(height: 10),
           Text(
             context.tr('cart.order_number', args: {'id': displayOrderId}),
-            style: const TextStyle(
-              color: AppTheme.text,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurface,
               fontWeight: FontWeight.w800,
             ),
           ),

@@ -1,13 +1,13 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '/core/services/error_logger.dart';
-import '/core/theme/app_theme.dart';
-import '/core/ui/input_focus_guard.dart';
-import '/core/ui/app_snackbar.dart';
-import '/cart/select_address_page.dart';
-import '/services/customer_address_service.dart';
-import '/services/profile_service.dart';
+import '../../../core/services/error_logger.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../core/ui/input_focus_guard.dart';
+import '../../../core/ui/app_snackbar.dart';
+import '../../../cart/select_address_page.dart';
+import '../../../services/customer_address_service.dart';
+import '../../../services/profile_service.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -549,12 +549,12 @@ class _SectionPanel extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: AppTheme.border.withValues(alpha: 0.92)),
-        boxShadow: const [
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        boxShadow: [
           BoxShadow(
-            color: Color(0x12000000),
+            color: Theme.of(context).shadowColor.withValues(alpha: 0.12),
             blurRadius: 16,
             offset: Offset(0, 8),
           ),
@@ -566,8 +566,8 @@ class _SectionPanel extends StatelessWidget {
           Text(
             title,
             textAlign: TextAlign.right,
-            style: const TextStyle(
-              color: AppTheme.text,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurface,
               fontSize: 16,
               fontWeight: FontWeight.w800,
             ),
@@ -576,8 +576,8 @@ class _SectionPanel extends StatelessWidget {
           Text(
             subtitle,
             textAlign: TextAlign.right,
-            style: const TextStyle(
-              color: Color(0xFF667085),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
               fontWeight: FontWeight.w600,
               height: 1.4,
             ),

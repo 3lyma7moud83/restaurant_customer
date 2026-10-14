@@ -41,7 +41,13 @@ class NotificationDedupeService {
 
     final now = DateTime.now().toUtc();
     _recent.removeWhere((_, at) => now.difference(at) > _cacheRetention);
-    final key = '${userId ?? 'guest'}|$source|$fingerprint';
+    // A server notification has one identity regardless of whether Android
+    // delivered it through the foreground or background callback.  Keeping
+    // the callback name in the key allowed the same notification_id to be
+    // displayed twice during a rapid lifecycle transition.
+    final sourceScope =
+        fingerprint.startsWith('notification:') ? 'push_delivery' : source;
+    final key = '${userId ?? 'guest'}|$sourceScope|$fingerprint';
     final seenAt = _recent[key];
     if (seenAt != null && now.difference(seenAt) <= dedupeWindow) {
       StabilityMetricsService.instance.increment(

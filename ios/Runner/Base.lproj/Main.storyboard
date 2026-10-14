@@ -1,26 +1,78 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="10117" systemVersion="15F34" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" useTraitCollections="YES" initialViewController="BYZ-38-t0r">
-    <dependencies>
-        <deployment identifier="iOS"/>
-        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="10085"/>
-    </dependencies>
-    <scenes>
-        <!--Flutter View Controller-->
-        <scene sceneID="tne-QT-ifu">
-            <objects>
-                <viewController id="BYZ-38-t0r" customClass="FlutterViewController" sceneMemberID="viewController">
-                    <layoutGuides>
-                        <viewControllerLayoutGuide type="top" id="y3c-jy-aDJ"/>
-                        <viewControllerLayoutGuide type="bottom" id="wfy-db-euE"/>
-                    </layoutGuides>
-                    <view key="view" contentMode="scaleToFill" id="8bC-Xf-vdC">
-                        <rect key="frame" x="0.0" y="0.0" width="600" height="600"/>
-                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
-                        <color key="backgroundColor" white="1" alpha="1" colorSpace="custom" customColorSpace="calibratedWhite"/>
-                    </view>
-                </viewController>
-                <placeholder placeholderIdentifier="IBFirstResponder" id="dkx-z0-nzr" sceneMemberID="firstResponder"/>
-            </objects>
-        </scene>
-    </scenes>
-</document>
+led]){opacity: ${disabledOpacity}}:host([disabled]) .control{border-color: ${dropdownBorder}}`;
+
+// Copyright (c) Microsoft Corporation.
+/**
+ * The Visual Studio Code text field class.
+ *
+ * @public
+ */
+
+class TextField extends TextField$1 {
+  /**
+   * Component lifecycle method that runs when the component is inserted
+   * into the DOM.
+   *
+   * @internal
+   */
+  connectedCallback() {
+    super.connectedCallback();
+
+    if (this.textContent) {
+      this.setAttribute('aria-label', this.textContent);
+    } else {
+      // Describe the generic component if no label is provided
+      this.setAttribute('aria-label', 'Text field');
+    }
+  }
+
+}
+/**
+ * The Visual Studio Code text field component registration.
+ *
+ * @remarks
+ * HTML Element: `<vscode-text-field>`
+ *
+ * @public
+ */
+
+const vsCodeTextField = TextField.compose({
+  baseName: 'text-field',
+  template: textFieldTemplate,
+  styles: textFieldStyles,
+  shadowOptions: {
+    delegatesFocus: true
+  }
+});
+
+/**
+ * All VSCode Web Components
+ * @public
+ * @remarks
+ * This object can be passed directly to the Design System's `register` method to
+ * statically link and register all available components.
+ */
+
+const allComponents = {
+  vsCodeBadge,
+  vsCodeButton,
+  vsCodeCheckbox,
+  vsCodeDataGrid,
+  vsCodeDataGridCell,
+  vsCodeDataGridRow,
+  vsCodeDivider,
+  vsCodeDropdown,
+  vsCodeLink,
+  vsCodeOption,
+  vsCodePanels,
+  vsCodePanelTab,
+  vsCodePanelView,
+  vsCodeProgressRing,
+  vsCodeRadioGroup,
+  vsCodeRadio,
+  vsCodeTag,
+  vsCodeTextArea,
+  vsCodeTextField,
+
+  register(container, ...rest) {
+    if (!container) {
+      // preserve backward compatibility with 

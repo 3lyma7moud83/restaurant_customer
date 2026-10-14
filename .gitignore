@@ -1,70 +1,69 @@
-# Miscellaneous
-*.class
-*.log
-*.pyc
-*.swp
-.DS_Store
-.atom/
-.build/
-.buildlog/
-.history
-.svn/
-.swiftpm/
-migrate_working_dir/
-
-# IntelliJ related
-*.iml
-*.ipr
-*.iws
-.idea/
-
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
-
-# Flutter/Dart/Pub related
-**/doc/api/
-**/ios/Flutter/.last_build_id
+# Dart / Flutter
 .dart_tool/
-.flutter-plugins
-.flutter-plugins-dependencies
+.packages
 .pub-cache/
 .pub/
-/build/
+build/
+build_*/
+.flutter-plugins
+.flutter-plugins-dependencies
+**/generated_plugin_registrant.dart
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Local configuration and secrets
 .env
-
-# Secrets and local environment files
-supabase.env
-supabase.env.*
-!supabase.env.example
-assets/**/env/app.env
-assets/**/env/app.env.*
-!assets/**/env/app.env.example
-assets/assets/env/
-*.env.local
-*.local.env
-
-# Symbolication related
-app.*.symbols
-
-# Obfuscation related
-app.*.map.json
-
-# Android Studio will place build artifacts here
-/android/app/debug
-/android/app/profile
-/android/app/release
-android/key.properties
-upload-keystore.jks
-android/app/*.jks
-android/app/*.keystore
+.env.*
+!.env.example
 assets/env/app.env
-.env
+# Runtime environment files can contain Supabase JWTs or third-party client tokens.
+**/env/*.env
+!**/env/*.env.example
+supabase.env
+supabase_*.env
+android/key.properties
+**/key.properties
+*.jks
+.e2e-notification-credentials.local
+.e2e-chrome-profile/
+*.keystore
+*service-account*.json
+*service_account*.json
+*firebase-adminsdk*.json
 
-# Local browser automation state and captured customer data must never be committed.
-tmp_playwright_cashier/cashier_storage.json
-tmp_playwright_driver/driver_storage.json
-tmp_notification_verify_live_e2e_*/32_customer_session.json
-tmp_supabase_session.json
-tmp_web_session_current.json
+# Firebase local state and generated hosting output
+.firebase/
+firebase-debug.log
+hosting/
+
+# Android / iOS generated or local files
+android/.gradle/
+android/local.properties
+**/.gradle/
+**/local.properties
+android/app/debug/
+android/app/profile/
+android/app/release/
+ios/Flutter/ephemeral/
+ios/Pods/
+
+# Test captures, logs, and temporary artifacts
+*.log
+*.pid
+*.bak
+*.corrupt
+*.hprof
+*_capture_*.png
+tmp_*
+_tmp_*
+dumpsys_*.txt
+playwright-report/
+test-results/
+
+# Local recovery metadata created when repairing an interrupted Git transfer.
+.git.corrupt-backup-*/

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
 import '../cart/cart_page.dart';
 import '../cart/cart_provider.dart';
@@ -80,12 +81,12 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
     };
   }
 
-  Future<void> _loadCategories() async {
+  Future<void> _loadCategories({bool forceRefresh = false}) async {
     try {
       final fetchedCategories = await CategoriesService.getByRestaurantCached(
         restaurantId: widget.restaurantId,
         managerId: widget.managerId,
-        forceRefresh: true,
+        forceRefresh: forceRefresh,
       );
       if (!mounted) {
         return;
@@ -94,7 +95,7 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
       categories = fetchedCategories;
       if (categories.isNotEmpty) {
         selectedCategoryId ??= categories.first['id']?.toString();
-        await _loadItems();
+        await _loadItems(forceRefresh: forceRefresh);
       }
     } catch (_) {
       if (mounted) {
@@ -120,7 +121,7 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
     );
   }
 
-  Future<void> _loadItems() async {
+  Future<void> _loadItems({bool forceRefresh = false}) async {
     if (selectedCategoryId == null) {
       return;
     }
@@ -130,7 +131,7 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
       final result = await ItemsService.fetchByCategory(
         restaurantId: widget.restaurantId,
         categoryId: selectedCategoryId!,
-        forceRefresh: true,
+        forceRefresh: forceRefresh,
       );
 
       if (!mounted || requestId != _itemsRequestId) {
@@ -452,8 +453,8 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
                                       TextDirection.rtl
                                   ? TextAlign.right
                                   : TextAlign.left,
-                              style: const TextStyle(
-                                color: AppTheme.text,
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.onSurface,
                                 fontWeight: FontWeight.w700,
                                 height: 1.35,
                               ),
@@ -536,7 +537,9 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
 
                         return GridView.builder(
                           physics: AppTheme.bouncingScrollPhysics,
-                          cacheExtent: constraints.maxHeight + 240,
+                          scrollCacheExtent: ScrollCacheExtent.pixels(
+                            constraints.maxHeight + 240,
+                          ),
                           padding: const EdgeInsets.only(bottom: 4),
                           gridDelegate:
                               SliverGridDelegateWithFixedCrossAxisCount(
@@ -616,7 +619,9 @@ class _MenuCategoryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final borderRadius = BorderRadius.circular(13.5);
-    final textColor = selected ? Colors.white : AppTheme.text;
+    final textColor = selected
+        ? Theme.of(context).colorScheme.onPrimary
+        : Theme.of(context).colorScheme.onSurface;
     final horizontalPadding = selected ? 10.2 : 9.2;
 
     return AnimatedContainer(
@@ -714,7 +719,7 @@ class _MenuCartAction extends StatelessWidget {
               ),
               borderRadius: BorderRadius.circular(buttonRadius),
               border: Border.all(
-                color: AppTheme.border.withValues(alpha: 0.95),
+                color: Theme.of(context).colorScheme.outlineVariant,
               ),
               boxShadow: [
                 BoxShadow(
@@ -1056,7 +1061,7 @@ class _ItemCardState extends State<ItemCard> {
                                 fontSize: itemNameFont,
                                 height: 1.14,
                                 fontWeight: FontWeight.w700,
-                                color: AppTheme.text,
+                                color: Theme.of(context).colorScheme.onSurface,
                               ),
                             ),
                             const SizedBox(height: 2),
@@ -1065,7 +1070,7 @@ class _ItemCardState extends State<ItemCard> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: AppTheme.primaryDeep,
+                                color: Theme.of(context).colorScheme.primary,
                                 fontWeight: FontWeight.w900,
                                 fontSize: itemPriceFont,
                               ),
@@ -1238,7 +1243,9 @@ class _VariantMenuItem extends StatelessWidget {
         overlayColor: WidgetStatePropertyAll<Color>(
           AppTheme.primary.withValues(alpha: 0.08),
         ),
-        foregroundColor: const WidgetStatePropertyAll<Color>(AppTheme.text),
+        foregroundColor: WidgetStatePropertyAll<Color>(
+          Theme.of(context).colorScheme.onSurface,
+        ),
       ),
       child: SizedBox(
         width: width - (compact ? 16 : 20),
@@ -1260,7 +1267,7 @@ class _VariantMenuItem extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.start,
                 style: TextStyle(
-                  color: AppTheme.text,
+                  color: Theme.of(context).colorScheme.onSurface,
                   fontSize: compact ? 10.6 : 11.2,
                   fontWeight: FontWeight.w800,
                 ),
@@ -1272,8 +1279,9 @@ class _VariantMenuItem extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color:
-                    selected ? AppTheme.primaryDeep : const Color(0xFF667085),
+                color: selected
+                    ? Theme.of(context).colorScheme.primary
+                    : AppTheme.colorsOf(context).textSecondary,
                 fontSize: compact ? 10.2 : 10.8,
                 fontWeight: FontWeight.w800,
               ),
@@ -1387,7 +1395,7 @@ class _MenuItemSkeletonCard extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(14),
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         boxShadow: const [
           BoxShadow(
             blurRadius: 9,
@@ -1396,23 +1404,24 @@ class _MenuItemSkeletonCard extends StatelessWidget {
           ),
         ],
       ),
-      child: const Column(
+      child: Column(
         children: [
           Expanded(child: _MenuItemImagePlaceholder()),
           Padding(
-            padding: EdgeInsets.fromLTRB(8, 6, 8, 7),
+            padding: const EdgeInsets.fromLTRB(8, 6, 8, 7),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _MenuTextSkeleton(width: 92),
-                SizedBox(height: 4),
+                const _MenuTextSkeleton(width: 92),
+                const SizedBox(height: 4),
                 Row(
                   children: [
                     _MenuTextSkeleton(width: 62),
                     Spacer(),
                     CircleAvatar(
                       radius: 16,
-                      backgroundColor: Color(0xFFECECEC),
+                      backgroundColor:
+                          Theme.of(context).colorScheme.surfaceContainerHigh,
                     ),
                   ],
                 ),

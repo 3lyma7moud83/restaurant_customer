@@ -1,130 +1,105 @@
-#include "my_application.h"
+ack?$media,redirect=noop-1s.mp4,domain=safeframe.googlesyndication.com
+safeframe.googlesyndication.com##.left-container
+! https://github.com/AdguardTeam/AdguardFilters/issues/156301
+@@||g.doubleclick.net/pagead/images/gmob/close-circle-30x30.png$image,domain=safeframe.googlesyndication.com
+@@||gstatic.com/admanager/outstream/rewarded_web_video_$script,domain=safeframe.googlesyndication.com
+@@||google-analytics.com/analytics.js$domain=bihann.com|nehannn.com
 
-#include <flutter_linux/flutter_linux.h>
-#ifdef GDK_WINDOWING_X11
-#include <gdk/gdkx.h>
-#endif
+! https://github.com/easylist/easylist/commit/c1e5cea211d41c5547f58321e5dae56ac834fce0
+||tercept.com^$badfilter
+||tercept.com^$3p
 
-#include "flutter/generated_plugin_registrant.h"
+! broken sportschau.de live stream
+! https://github.com/AdguardTeam/AdguardFilters/issues/145948
+||wdr.de/*/tracker/tracker.min.js$script,redirect=noop.js,domain=sportschau.de
+@@||de-config.sensic.net/sui-connector.js$script,domain=sportschau.de
 
-struct _MyApplication {
-  GtkApplication parent_instance;
-  char** dart_entrypoint_arguments;
-};
+! unbreak https://uiz.io/QfCH from https://github.com/AdguardTeam/AdguardFilters/issues/54339
+@@||bigappboi.com/captchalocker/js/popup.js.php
+@@||bigappboi.com/cp/js/captcha.js.php
 
-G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
+! fix video https://www.pussyspace.com/live/anna_lus/
+! https://github.com/AdguardTeam/AdguardFilters/issues/143346
+@@||chaturbate.com/in/$frame,domain=cbhours.com|pussyspace.*
 
-// Implements GApplication::activate.
-static void my_application_activate(GApplication* application) {
-  MyApplication* self = MY_APPLICATION(application);
-  GtkWindow* window =
-      GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
+! https://www.reddit.com/r/uBlockOrigin/comments/purjil/ubo_prevent_video_from_loading_on/
+@@||tra.scds.pmdstatic.net/advertising-core/$script,domain=businessinsider.fr
 
-  // Use a header bar when running in GNOME as this is the common style used
-  // by applications and is the setup most users will be using (e.g. Ubuntu
-  // desktop).
-  // If running on X and not using GNOME then just use a traditional title bar
-  // in case the window manager does more exotic layout, e.g. tiling.
-  // If running on Wayland assume the header bar will work (may need changing
-  // if future cases occur).
-  gboolean use_header_bar = TRUE;
-#ifdef GDK_WINDOWING_X11
-  GdkScreen* screen = gtk_window_get_screen(window);
-  if (GDK_IS_X11_SCREEN(screen)) {
-    const gchar* wm_name = gdk_x11_screen_get_window_manager_name(screen);
-    if (g_strcmp0(wm_name, "GNOME Shell") != 0) {
-      use_header_bar = FALSE;
-    }
-  }
-#endif
-  if (use_header_bar) {
-    GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
-    gtk_widget_show(GTK_WIDGET(header_bar));
-    gtk_header_bar_set_title(header_bar, "Delivery Mat3mk");
-    gtk_header_bar_set_show_close_button(header_bar, TRUE);
-    gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
-  } else {
-    gtk_window_set_title(window, "Delivery Mat3mk");
-  }
+! https://github.com/uBlockOrigin/uAssets/issues/10078
+@@||googletagmanager.com/gtm.js$script,domain=gall.nl
 
-  gtk_window_set_default_size(window, 1280, 720);
-  gtk_widget_show(GTK_WIDGET(window));
+! https://www.reddit.com/r/uBlockOrigin/comments/pwi2p7/wondrium_what_am_i_doing_wrong/
+@@||wondrium.com/static/version1632408975/frontend/Wondrium/default/en_US/js/analytics.js$script,1p
 
-  g_autoptr(FlDartProject) project = fl_dart_project_new();
-  fl_dart_project_set_dart_entrypoint_arguments(project, self->dart_entrypoint_arguments);
+! https://github.com/uBlockOrigin/uAssets/issues/10093
+xunta.gal#@##anuncio
 
-  FlView* view = fl_view_new(project);
-  gtk_widget_show(GTK_WIDGET(view));
-  gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
+! https://www.reddit.com/r/uBlockOrigin/comments/pyfove/ublock_origin_breaks_corsairs_website_when_using/
+@@||googletagmanager.com/gtm.js$script,redirect-rule,domain=corsair.com
 
-  fl_register_plugins(FL_PLUGIN_REGISTRY(view));
+! https://www.reddit.com/r/firefox/comments/pz3427/why_gamedevelopercom_former_gamasutra_loads_a/
+@@||securepubads.g.doubleclick.net/tag/js/gpt.js$script,redirect-rule,domain=gamedeveloper.com
 
-  gtk_widget_grab_focus(GTK_WIDGET(view));
-}
+! https://github.com/uBlockOrigin/uAssets/issues/10146
+@@tracking/ninja.js$script,domain=olx.ro,badfilter
 
-// Implements GApplication::local_command_line.
-static gboolean my_application_local_command_line(GApplication* application, gchar*** arguments, int* exit_status) {
-  MyApplication* self = MY_APPLICATION(application);
-  // Strip out the first argument as it is the binary name.
-  self->dart_entrypoint_arguments = g_strdupv(*arguments + 1);
+! docs.tealium.com blocked by PL
+||tealium.com^$badfilter
+||tealium.com^$3p
 
-  g_autoptr(GError) error = nullptr;
-  if (!g_application_register(application, nullptr, &error)) {
-     g_warning("Failed to register: %s", error->message);
-     *exit_status = 1;
-     return TRUE;
-  }
+! https://github.com/tofukko/filter/issues/49
+@@||pagead2.googlesyndication.com/pagead/js/adsbygoogle.js$script,redirect-rule,domain=heim.jp
 
-  g_application_activate(application);
-  *exit_status = 0;
+! https://github.com/easylist/easylist/issues/9412 cname blocked by PL
+@@||777partner.com^$image,media,domain=jetztlive.com
 
-  return TRUE;
-}
+! www.23qb.net cname issue by AG Chinese/EL China
+@@||cdn.cloudflare.net^$script,domain=23qb.net
 
-// Implements GApplication::startup.
-static void my_application_startup(GApplication* application) {
-  //MyApplication* self = MY_APPLICATION(object);
+! fix mf-realty.jp top image
+@@||googletagmanager.com/gtm.js$script,redirect-rule,domain=mf-realty.jp
 
-  // Perform any actions required at application startup.
+! https://www.reddit.com/r/uBlockOrigin/comments/qcw76h/ublocks_blocks_then_page_stops_loading/
+myair2.resmed.com##+js(no-xhr-if, cloudflare.com/cdn-cgi/trace)
+||cloudflare.com/cdn-cgi/trace$xhr,3p,redirect-rule=noop.txt,domain=~funimation.com|~1bit.space|~1bitspace.com
 
-  G_APPLICATION_CLASS(my_application_parent_class)->startup(application);
-}
+! https://github.com/uBlockOrigin/uAssets/issues/10285
+@@||d2wy8f7a9ursnm.cloudfront.net/*/bugsnag.min.js$script,domain=crust.com.au
 
-// Implements GApplication::shutdown.
-static void my_application_shutdown(GApplication* application) {
-  //MyApplication* self = MY_APPLICATION(object);
+! https://www.reddit.com/r/uBlockOrigin/comments/qde4r9/video_player_is_blocked_by_ublock/
+||d2r1yp2w7bby2u.cloudfront.net/js/localforage.min.js$script,redirect=noopjs,domain=sonyliv.com
 
-  // Perform any actions required at application shutdown.
+! https://www.reddit.com/r/uBlockOrigin/comments/qeo32a/stooqpl_stooqcom_stopped_working_yesterday/
+@@||fundingchoicesmessages.google.com^$script,domain=stooq.com|stooq.pl
 
-  G_APPLICATION_CLASS(my_application_parent_class)->shutdown(application);
-}
+! https://github.com/easylist/easylist/issues/2436#issuecomment-946886270
+@@*ad2.$image,domain=sophiabushfan.net
+@@_advertisment.$image,domain=gorgeouspfeiffer.com
+@@_advertisement_$image,domain=jennifer-lawrence.com
+@@/advertisements_$image,domain=jessica-biel.at
+@@/advertising_$image,domain=timfahlbusch.com
+@@/advertisment/*$image,domain=taylorpictures.net
+@@/advertisements-$image,domain=jennifer-lawrence.com
+@@/ad_campaigns/*$image,domain=alicia-vikander.com
+@@/adverts/*$image,domain=emily-blunt.com|isla-fisher.net|islafisher.net|reese-witherspoon.org|reesewitherspoon.org
 
-// Implements GObject::dispose.
-static void my_application_dispose(GObject* object) {
-  MyApplication* self = MY_APPLICATION(object);
-  g_clear_pointer(&self->dart_entrypoint_arguments, g_strfreev);
-  G_OBJECT_CLASS(my_application_parent_class)->dispose(object);
-}
+! https://github.com/uBlockOrigin/uAssets/issues/10348
+@@||cloudflare.com/cdn-cgi/trace$xhr,domain=54647.io
 
-static void my_application_class_init(MyApplicationClass* klass) {
-  G_APPLICATION_CLASS(klass)->activate = my_application_activate;
-  G_APPLICATION_CLASS(klass)->local_command_line = my_application_local_command_line;
-  G_APPLICATION_CLASS(klass)->startup = my_application_startup;
-  G_APPLICATION_CLASS(klass)->shutdown = my_application_shutdown;
-  G_OBJECT_CLASS(klass)->dispose = my_application_dispose;
-}
+! travelerdoor blocked request spam
+travelerdoor.com##+js(no-xhr-if, cloudflare.com/cdn-cgi/trace)
 
-static void my_application_init(MyApplication* self) {}
+! Store selection broken https://www.simon.com/mall/king-of-prussia/stores
+@@||googletagmanager.com/gtm.js$script,redirect-rule,domain=simon.com
 
-MyApplication* my_application_new() {
-  // Set the program name to the application ID, which helps various systems
-  // like GTK and desktop environments map this running application to its
-  // corresponding .desktop file. This ensures better integration by allowing
-  // the application to be recognized beyond its binary name.
-  g_set_prgname(APPLICATION_ID);
+! https://www.reddit.com/r/uBlockOrigin/comments/qnoufw/pop_ups/hji42s0/
+@@||wewon.to^$xhr,media,domain=soap2day.*
 
-  return MY_APPLICATION(g_object_new(my_application_get_type(),
-                                     "application-id", APPLICATION_ID,
-                                     "flags", G_APPLICATION_NON_UNIQUE,
-                                     nullptr));
-}
+! https://github.com/uBlockOrigin/uAssets/issues/10441
+pewresearch.org##+js(set, ga, noopFunc)
+
+! https://github.com/uBlockOrigin/uAssets/issues/10444
+@@||asset.fwcdn2.com/js/storyblock.js$script,domain=narcity.com
+
+! https://github.com/uBlockOrigin/uAssets/issues/10594
+@@||cdn.questionpro.com^$css

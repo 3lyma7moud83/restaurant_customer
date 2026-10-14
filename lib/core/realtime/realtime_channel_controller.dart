@@ -28,6 +28,20 @@ enum RealtimeConnectionLifecycle {
   reconnecting,
 }
 
+/// Only subscription states emitted for an actual channel failure should
+/// trigger controller-level recovery. The Realtime client owns WebSocket
+/// heartbeats and closes/reconnects a socket when a heartbeat is missed.
+@visibleForTesting
+bool realtimeStatusRequiresRecovery(RealtimeSubscribeStatus status) {
+  return switch (status) {
+    RealtimeSubscribeStatus.subscribed => false,
+    RealtimeSubscribeStatus.channelError ||
+    RealtimeSubscribeStatus.timedOut ||
+    RealtimeSubscribeStatus.closed =>
+      true,
+  };
+}
+
 class RealtimeChannelController {
   static final Set<RealtimeChannelController> _activeControllers =
       <RealtimeChannelController>{};
@@ -62,7 +76,7 @@ class RealtimeChannelController {
   RealtimeChannelBuilder? _builder;
   StreamSubscription<AuthState>? _authSubscription;
   Timer? _restartTimer;
-  Timer? _heartbeatTimer;
+  Timer? _authRevalidationTimer;
   RealtimeConnectionLifecycle _lifecycle =
       RealtimeConnectionLifecycle.disconnected;
   bool _disposed = false;
@@ -76,7 +90,6 @@ class RealtimeChannelController {
   bool _presenceRegistered = false;
   int _restartAttempts = 0;
   int _subscriptionGeneration = 0;
-  DateTime? _lastStatusAt;
 
   static Map<String, int> debugResourceCounts() {
     if (!kDebugMode) {
@@ -106,7 +119,7 @@ class RealtimeChannelController {
       RealtimePresenceService.instance.register(_topicPrefix);
       _presenceRegistered = true;
     }
-    _startHeartbeatWatcher();
+    _startAuthRevalidationWatcher();
     _cancelRestartTimer();
     _queueReplaceChannel();
   }
@@ -135,7 +148,7 @@ class RealtimeChannelController {
     }
     _builder = null;
     await _disposeAuthListener();
-    _cancelHeartbeatTimer();
+    _cancelAuthRevalidationTimer();
     if (_presenceRegistered) {
       RealtimePresenceService.instance.unregister(_topicPrefix);
       _presenceRegistered = false;
@@ -218,7 +231,6 @@ class RealtimeChannelController {
             generation != _subscriptionGeneration) {
           return;
         }
-        _lastStatusAt = DateTime.now().toUtc();
         RealtimePresenceService.instance.markHeartbeat(_topicPrefix);
 
         switch (status) {
@@ -243,6 +255,9 @@ class RealtimeChannelController {
             break;
           case RealtimeSubscribeStatus.channelError:
           case RealtimeSubscribeStatus.timedOut:
+            if (!realtimeStatusRequiresRecovery(status)) {
+              return;
+            }
             final jwtExpired = _isJwtExpiredSignal(error);
             unawaited(
               ErrorLogger.logError(
@@ -271,6 +286,9 @@ class RealtimeChannelController {
             _scheduleRestart(reason: status.name);
             break;
           case RealtimeSubscribeStatus.closed:
+            if (!realtimeStatusRequiresRecovery(status)) {
+              return;
+            }
             _setLifecycle(RealtimeConnectionLifecycle.disconnected);
             StabilityLogger.realtime(
               'Connection Closed topic=$_topicPrefix',
@@ -414,29 +432,16 @@ class RealtimeChannelController {
     _queueReplaceChannel();
   }
 
-  void _startHeartbeatWatcher() {
-    if (_heartbeatTimer != null) {
+  void _startAuthRevalidationWatcher() {
+    if (_authRevalidationTimer != null) {
       return;
     }
     _incrementDebugTimers();
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 35), (_) {
+    _authRevalidationTimer = Timer.periodic(const Duration(seconds: 35), (_) {
       if (_disposed || _channel == null) {
         return;
       }
       unawaited(_revalidateAuthState());
-      final last = _lastStatusAt;
-      if (last == null) {
-        return;
-      }
-      if (DateTime.now().toUtc().difference(last) >
-          const Duration(seconds: 90)) {
-        StabilityMetricsService.instance.increment(
-          'stale_realtime_subscriptions',
-          module: 'realtime',
-          payload: {'topic': _topicPrefix},
-        );
-        _scheduleRestart(reason: 'heartbeat_stale');
-      }
     });
   }
 
@@ -473,7 +478,7 @@ class RealtimeChannelController {
     _suspendedForMissingSession = false;
     _logCleanupStarted(reason: reason);
     _cancelRestartTimer();
-    _cancelHeartbeatTimer();
+    _cancelAuthRevalidationTimer();
     await clear();
     _logCleanupFinished(reason: reason);
     StabilityLogger.authRevalidation(
@@ -512,7 +517,7 @@ class RealtimeChannelController {
         _authTerminated = false;
         _suspendedForMissingSession = false;
         _restartAttempts = 0;
-        _startHeartbeatWatcher();
+        _startAuthRevalidationWatcher();
         _queueReplaceChannel();
         return;
       }
@@ -532,7 +537,7 @@ class RealtimeChannelController {
     _authTerminated = false;
     _logCleanupStarted(reason: reason);
     _cancelRestartTimer();
-    _cancelHeartbeatTimer();
+    _cancelAuthRevalidationTimer();
     await clear();
     if (alreadySuspended) {
       return;
@@ -615,16 +620,16 @@ class RealtimeChannelController {
     );
   }
 
-  void _cancelHeartbeatTimer() {
-    final timer = _heartbeatTimer;
+  void _cancelAuthRevalidationTimer() {
+    final timer = _authRevalidationTimer;
     if (timer == null) {
       return;
     }
     timer.cancel();
-    _heartbeatTimer = null;
+    _authRevalidationTimer = null;
     _decrementDebugTimers();
     StabilityLogger.realtime(
-      'Timer Cancelled topic=$_topicPrefix timer=heartbeat',
+      'Timer Cancelled topic=$_topicPrefix timer=auth_revalidation',
     );
   }
 

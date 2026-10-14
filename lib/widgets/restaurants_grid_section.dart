@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
 import '../core/localization/app_localizations.dart';
 import '../core/theme/app_theme.dart';
@@ -212,7 +213,7 @@ class _RestaurantGrid extends StatelessWidget {
         physics: physics,
         padding: EdgeInsets.only(bottom: gridMetrics.bottomPadding),
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        cacheExtent: cacheExtent,
+        scrollCacheExtent: ScrollCacheExtent.pixels(cacheExtent),
         itemCount: restaurants.length,
         separatorBuilder: (_, __) =>
             SizedBox(height: gridMetrics.mainAxisSpacing),
@@ -224,7 +225,7 @@ class _RestaurantGrid extends StatelessWidget {
       physics: physics,
       padding: EdgeInsets.only(bottom: gridMetrics.bottomPadding),
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      cacheExtent: cacheExtent,
+      scrollCacheExtent: ScrollCacheExtent.pixels(cacheExtent),
       itemCount: restaurants.length,
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: crossAxisCount,

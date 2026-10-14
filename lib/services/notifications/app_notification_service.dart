@@ -647,7 +647,9 @@ const String _backgroundTapPayloadsStorageKey =
     'customer_pending_notification_tap_payloads';
 const int _maxPersistedBackgroundTapPayloads = 10;
 const int _maxTokenSyncRetries = 12;
-const Duration _foregroundMessageDedupWindow = Duration(seconds: 8);
+// FCM may redeliver after reconnect/restart. A notification_id is immutable,
+// so suppress it for as long as the persisted dedupe cache retains it.
+const Duration _foregroundMessageDedupWindow = Duration(hours: 6);
 const Duration _interactionDedupWindow = Duration(seconds: 3);
 const Duration _redundantTokenSyncWindow = Duration(seconds: 5);
 const Duration _awaitingConfirmationReminderInterval = Duration(minutes: 10);
@@ -931,6 +933,10 @@ class AppNotificationService with WidgetsBindingObserver {
       _lastKnownUserId = user.id;
       unawaited(_syncOrderEventSubscriptionForUser(user.id));
       unawaited(syncTokenIfPossible());
+      // A terminated notification can be received before the persisted
+      // Supabase session is restored. Keep its navigation intent queued until
+      // this authenticated event instead of falling back to Home/login.
+      _scheduleNotificationTapDrain();
     });
 
     _supabaseBindingsInitialized = true;
@@ -944,6 +950,7 @@ class AppNotificationService with WidgetsBindingObserver {
       return;
     }
 
+    _scheduleNotificationTapDrain();
     await _syncOrderEventSubscriptionForUser(currentUser.id);
     if (kIsWeb) {
       debugPrint(
@@ -1886,11 +1893,15 @@ class AppNotificationService with WidgetsBindingObserver {
     _awaitingConfirmationPayload =
         _buildAwaitingCustomerConfirmationPayload(order);
 
+    // The database producer sends the original status notification through
+    // FCM.  Showing another local notification from this Realtime callback
+    // made the same delivery-confirmation event appear twice while the app
+    // was open.  Local notifications below remain exclusively for the
+    // intentional ten-minute reminder cycle when the app is not foregrounded.
     if (notifyImmediately && stateChanged) {
-      await _showAwaitingCustomerConfirmationNotification(
-        payload: _awaitingConfirmationPayload!,
-        isReminder: false,
-        source: source,
+      debugPrint(
+        '[FCM][$source] awaiting confirmation transition observed; '
+        'the original alert is owned by server FCM.',
       );
     }
 
@@ -2304,6 +2315,11 @@ class AppNotificationService with WidgetsBindingObserver {
       source: source,
       messageId: message.messageId,
     );
+    // An Android system-notification tap resumes an already-created activity.
+    // Treat that callback as a navigation-ready signal as well; the drain still
+    // waits for a concrete Navigator and authenticated session when startup is
+    // incomplete.
+    markUiReadyForNotificationNavigation();
     _scheduleNotificationTapDrain();
   }
 
@@ -2396,6 +2412,12 @@ class AppNotificationService with WidgetsBindingObserver {
       return;
     }
 
+    // Do not consume a startup notification before auth restoration finishes.
+    // The auth-state listener schedules another drain once a user exists.
+    if (_currentSupabaseUserOrNull == null) {
+      return;
+    }
+
     while (_pendingNotificationTaps.isNotEmpty) {
       final intent = _pendingNotificationTaps.removeAt(0);
       final screen = _resolveScreenFromData(intent.data);
@@ -2420,7 +2442,8 @@ class AppNotificationService with WidgetsBindingObserver {
     final normalizedScreen = screen.trim().toLowerCase();
     final signedInUser = _currentSupabaseUserOrNull;
     if (signedInUser == null) {
-      await SessionManager.instance.redirectToLogin();
+      // _drainPendingNotificationTaps deliberately keeps this intent queued
+      // until auth is restored. This guard protects direct callers too.
       return;
     }
 
@@ -2570,9 +2593,18 @@ class AppNotificationService with WidgetsBindingObserver {
   }
 
   String? _resolveScreenFromData(Map<String, String> data) {
+    final orderId = _normalizeDataValue(data['order_id']);
     final direct = _normalizeDataValue(data['screen']);
     if (direct != null) {
-      return direct.toLowerCase();
+      final normalizedDirect = direct.toLowerCase();
+      // Older sender templates label every order notification as `/orders`.
+      // A concrete order ID is more specific and must open its tracking page.
+      if (orderId != null &&
+          const <String>{'orders', 'order', 'my_orders'}
+              .contains(normalizedDirect)) {
+        return 'order_tracking';
+      }
+      return normalizedDirect;
     }
 
     for (final key in const [
@@ -3076,7 +3108,7 @@ class AppNotificationService with WidgetsBindingObserver {
       return;
     }
     try {
-      await client!.rpc(
+      await client.rpc(
         _deactivateTokenRpc,
         params: {
           'p_fcm_token': normalizedToken,

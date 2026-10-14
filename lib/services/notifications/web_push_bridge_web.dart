@@ -1,9 +1,10 @@
-// ignore_for_file: avoid_web_libraries_in_flutter
+// ignore_for_file: avoid_web_libraries_in_flutter, deprecated_member_use
 
 import 'dart:async';
 import 'dart:convert';
 import 'dart:html' as html;
-import 'dart:js_util' as js_util;
+import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 
 typedef WebNotificationTapHandler = void Function(Map<String, String> data);
 typedef WebNotificationLifecycleHandler = void Function(
@@ -291,15 +292,13 @@ void _applyLifecycleSideEffects(_LifecycleMessage lifecycle) {
 
 void _vibrateIfSupported() {
   try {
-    if (!js_util.hasProperty(html.window.navigator, 'vibrate')) {
+    final navigator = html.window.navigator as JSObject;
+    if (!navigator.has('vibrate')) {
       return;
     }
-    js_util.callMethod<Object?>(
-      html.window.navigator,
-      'vibrate',
-      [
-        <int>[200, 100, 200],
-      ],
+    navigator.callMethod<JSAny?>(
+      'vibrate'.toJS,
+      <int>[200, 100, 200].jsify(),
     );
   } catch (_) {
     // Browser vibration support is optional.
@@ -308,22 +307,13 @@ void _vibrateIfSupported() {
 
 void _setAppBadge(int count) {
   try {
-    if (count > 0 &&
-        js_util.hasProperty(html.window.navigator, 'setAppBadge')) {
-      js_util.callMethod<Object?>(
-        html.window.navigator,
-        'setAppBadge',
-        [count],
-      );
+    final navigator = html.window.navigator as JSObject;
+    if (count > 0 && navigator.has('setAppBadge')) {
+      navigator.callMethod<JSAny?>('setAppBadge'.toJS, count.toJS);
       return;
     }
-    if (count == 0 &&
-        js_util.hasProperty(html.window.navigator, 'clearAppBadge')) {
-      js_util.callMethod<Object?>(
-        html.window.navigator,
-        'clearAppBadge',
-        const [],
-      );
+    if (count == 0 && navigator.has('clearAppBadge')) {
+      navigator.callMethod<JSAny?>('clearAppBadge'.toJS);
     }
   } catch (_) {
     // The Badging API is optional.
@@ -360,9 +350,10 @@ Future<void> _requestServiceWorkerRecovery(String reason) async {
   try {
     final registration =
         await serviceWorker.ready.timeout(const Duration(seconds: 8));
-    final active = js_util.getProperty<Object?>(registration, 'active');
-    if (active != null) {
-      js_util.callMethod<Object?>(active, 'postMessage', [message]);
+    final active = (registration as JSObject)['active'];
+    if (active.isA<JSObject>()) {
+      final activeObject = active as JSObject;
+      activeObject.callMethod<JSAny?>('postMessage'.toJS, message.toJS);
     }
   } catch (_) {
     // Recovery is best-effort and retried on visibility/online events.
@@ -371,16 +362,12 @@ Future<void> _requestServiceWorkerRecovery(String reason) async {
 
 Future<void> _awaitBootstrapServiceWorkerReadyPromise() async {
   try {
-    final readyPromise = js_util.getProperty<Object?>(
-      html.window,
-      '__fcmServiceWorkerReady',
-    );
-    if (readyPromise == null) {
+    final readyPromise = (html.window as JSObject)['__fcmServiceWorkerReady'];
+    if (!readyPromise.isA<JSPromise<JSAny?>>()) {
       return;
     }
-    await js_util
-        .promiseToFuture<Object?>(readyPromise)
-        .timeout(const Duration(seconds: 8));
+    final typedPromise = readyPromise as JSPromise<JSAny?>;
+    await typedPromise.toDart.timeout(const Duration(seconds: 8));
   } catch (_) {
     // Keep going and register from Dart side.
   }
@@ -418,14 +405,12 @@ String _resolveMessagingServiceWorkerScope() {
 
 String? _stringFromBootstrapMeta(String key) {
   try {
-    final meta = js_util.getProperty<Object?>(
-      html.window,
-      '__fcmServiceWorkerMeta',
-    );
-    if (meta == null) {
+    final meta = (html.window as JSObject)['__fcmServiceWorkerMeta'];
+    if (!meta.isA<JSObject>()) {
       return null;
     }
-    final value = js_util.getProperty<Object?>(meta, key);
+    final metaObject = meta as JSObject;
+    final value = metaObject[key];
     if (value == null) {
       return null;
     }

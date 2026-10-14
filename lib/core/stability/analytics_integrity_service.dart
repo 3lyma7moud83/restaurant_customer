@@ -12,7 +12,8 @@ import 'stability_metrics_service.dart';
 class AnalyticsIntegrityService {
   AnalyticsIntegrityService._();
 
-  static final AnalyticsIntegrityService instance = AnalyticsIntegrityService._();
+  static final AnalyticsIntegrityService instance =
+      AnalyticsIntegrityService._();
 
   static const String _storageKey = 'analytics_integrity_queue.v1';
   static const Duration _dedupeWindow = Duration(seconds: 15);
@@ -207,9 +208,8 @@ class AnalyticsIntegrityService {
   }) {
     final normalizedPayload = Map<String, dynamic>.from(payload);
     final sortedKeys = normalizedPayload.keys.toList(growable: false)..sort();
-    final joined = sortedKeys
-        .map((key) => '$key=${normalizedPayload[key]}')
-        .join('&');
+    final joined =
+        sortedKeys.map((key) => '$key=${normalizedPayload[key]}').join('&');
     final input = '${userId ?? 'guest'}|$eventName|$joined';
     return sha256.convert(utf8.encode(input)).toString();
   }

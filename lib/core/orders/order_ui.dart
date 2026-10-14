@@ -105,10 +105,10 @@ class _OrderSectionCardState extends State<OrderSectionCard> {
         curve: AppTheme.emphasizedCurve,
         padding: widget.padding,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Theme.of(context).colorScheme.surface,
           borderRadius: BorderRadius.circular(24),
           border: Border.all(
-            color: AppTheme.border.withValues(alpha: _hovered ? 0.95 : 0.75),
+            color: Theme.of(context).colorScheme.outlineVariant,
           ),
           boxShadow: [
             BoxShadow(

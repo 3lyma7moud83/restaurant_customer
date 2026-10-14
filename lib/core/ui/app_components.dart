@@ -45,7 +45,7 @@ class AppText extends StatelessWidget {
         ),
       AppTextRole.caption => textTheme.bodyMedium?.copyWith(
           fontSize: 13,
-          color: AppTheme.textMuted,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
           fontWeight: FontWeight.w600,
           height: 1.45,
         ),
@@ -104,11 +104,13 @@ class AppCard extends StatelessWidget {
       margin: margin,
       padding: padding,
       decoration: BoxDecoration(
-        color: gradient == null ? backgroundColor ?? Colors.white : null,
+        color: gradient == null
+            ? backgroundColor ?? Theme.of(context).colorScheme.surface
+            : null,
         gradient: gradient,
         borderRadius: BorderRadius.circular(radius),
         border: Border.all(
-          color: borderColor ?? AppTheme.border.withValues(alpha: 0.85),
+          color: borderColor ?? Theme.of(context).colorScheme.outlineVariant,
         ),
         boxShadow: const [
           BoxShadow(
@@ -175,13 +177,15 @@ class _AppButtonState extends State<AppButton> {
 
     final foreground = switch (widget.variant) {
       AppButtonVariant.filled => Colors.white,
-      AppButtonVariant.secondary => AppTheme.text,
-      AppButtonVariant.ghost => enabled ? AppTheme.text : AppTheme.textMuted,
+      AppButtonVariant.secondary => Theme.of(context).colorScheme.onSurface,
+      AppButtonVariant.ghost => enabled
+          ? Theme.of(context).colorScheme.onSurface
+          : AppTheme.colorsOf(context).textSecondary,
     };
 
     final borderColor = switch (widget.variant) {
       AppButtonVariant.filled => Colors.transparent,
-      AppButtonVariant.secondary => AppTheme.border,
+      AppButtonVariant.secondary => Theme.of(context).colorScheme.outline,
       AppButtonVariant.ghost => Colors.transparent,
     };
 
@@ -372,7 +376,9 @@ class _AppInputState extends State<AppInput> {
             : null,
         icon: Icon(
           _obscured ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-          color: focused ? AppTheme.primary : AppTheme.textMuted,
+          color: focused
+              ? Theme.of(context).colorScheme.primary
+              : Theme.of(context).colorScheme.onSurfaceVariant,
           size: 20,
         ),
       );
@@ -381,10 +387,14 @@ class _AppInputState extends State<AppInput> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
       decoration: BoxDecoration(
-        color: widget.enabled ? Colors.white : AppTheme.surfaceMuted,
+        color: widget.enabled
+            ? Theme.of(context).colorScheme.surface
+            : Theme.of(context).colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(22),
         border: Border.all(
-          color: focused ? AppTheme.primary : AppTheme.border,
+          color: focused
+              ? AppTheme.primary
+              : Theme.of(context).colorScheme.outline,
           width: focused ? 1.2 : 1,
         ),
         boxShadow: [
@@ -404,7 +414,9 @@ class _AppInputState extends State<AppInput> {
             AppText(
               widget.label!,
               role: AppTextRole.caption,
-              color: focused ? AppTheme.primary : AppTheme.textMuted,
+              color: focused
+                  ? Theme.of(context).colorScheme.primary
+                  : Theme.of(context).colorScheme.onSurfaceVariant,
             ),
             const SizedBox(height: 8),
           ],
@@ -446,7 +458,7 @@ class _AppInputState extends State<AppInput> {
                   textAlignVertical: TextAlignVertical.center,
                   autofillHints: widget.autofillHints,
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        color: AppTheme.text,
+                        color: Theme.of(context).colorScheme.onSurface,
                         fontWeight: FontWeight.w700,
                         fontSize: mobileWebInputFix ? 16 : null,
                         height: 1.25,
@@ -454,7 +466,7 @@ class _AppInputState extends State<AppInput> {
                   decoration: InputDecoration.collapsed(
                     hintText: widget.hint,
                     hintStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: AppTheme.textMuted,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                           fontWeight: FontWeight.w600,
                         ),
                   ),
@@ -464,7 +476,9 @@ class _AppInputState extends State<AppInput> {
                 const SizedBox(width: 12),
                 Icon(
                   widget.prefixIcon,
-                  color: focused ? AppTheme.primary : AppTheme.textMuted,
+                  color: focused
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
                   size: 20,
                 ),
               ],

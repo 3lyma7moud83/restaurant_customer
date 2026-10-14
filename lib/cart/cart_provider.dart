@@ -183,7 +183,7 @@ class _CartProviderWrapperState extends State<CartProviderWrapper> {
 class CartController extends ChangeNotifier {
   static const String _storageKey = 'customer_cart_state_v3';
   static const String _backupStorageKey = 'customer_cart_state_v3_backup';
-  static const int _snapshotVersion = 4;
+  static const int _snapshotVersion = 5;
 
   final Map<String, CartItem> _items = {};
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -200,6 +200,7 @@ class CartController extends ChangeNotifier {
   String _checkoutNotes = '';
   double _deliveryCost = 0;
   String? _activeOrderId;
+  String? _stateOwnerUserId;
   CartPaymentMethod? _selectedPaymentMethod;
   String? _appliedCouponCode;
   String? _pendingOrderRequestToken;
@@ -210,6 +211,7 @@ class CartController extends ChangeNotifier {
   bool _persistPending = false;
   bool _disposed = false;
   StreamSubscription<OfflineOrderQueueResult>? _offlineSyncSubscription;
+  StreamSubscription<AuthState>? _authSubscription;
 
   CartController() {
     _offlineSyncSubscription =
@@ -218,6 +220,9 @@ class CartController extends ChangeNotifier {
         unawaited(_handleOfflineOrderSynced(result));
       },
     );
+    _authSubscription = _supabase.auth.onAuthStateChange.listen((event) {
+      unawaited(_handleAuthStateChanged(event));
+    });
     unawaited(_restoreState());
   }
 
@@ -606,6 +611,16 @@ class CartController extends ChangeNotifier {
   }
 
   Future<void> refreshActiveOrderStatus() async {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null || userId.isEmpty) {
+      await _clearStaleOrderState(reason: 'no_authenticated_user');
+      return;
+    }
+    if (_stateOwnerUserId != null && _stateOwnerUserId != userId) {
+      await _clearStaleOrderState(reason: 'snapshot_owner_mismatch');
+    }
+    _stateOwnerUserId = userId;
+
     if (_activeOrderId == null || _activeOrderId!.isEmpty) {
       await _resolvePendingOrderFromToken();
     }
@@ -621,8 +636,17 @@ class CartController extends ChangeNotifier {
     }
 
     try {
-      final order = await OrdersService.getOrderById(orderId);
-      if (order == null) {
+      // The persisted order id is only a hint.  Always reconcile it against
+      // the current authenticated customer and bypass the in-memory cache.
+      final order = await OrdersService.getOrderById(
+        orderId,
+        userId: userId,
+        forceRefresh: true,
+      );
+      if (order == null ||
+          !isBlockingActiveOrderStatus(order['status']?.toString())) {
+        await _clearStaleOrderState(
+            reason: 'missing_or_non_active_server_order');
         await _resolveLatestActiveOrderFromServer();
         return;
       }
@@ -649,6 +673,7 @@ class CartController extends ChangeNotifier {
         forceRefresh: true,
       );
       if (order == null) {
+        await _clearStaleOrderState(reason: 'no_active_server_order');
         return;
       }
 
@@ -658,6 +683,7 @@ class CartController extends ChangeNotifier {
       }
 
       _activeOrderId = orderId;
+      _stateOwnerUserId = userId;
       syncOrderStatusFromRow(order);
       if (_activeOrderId == orderId) {
         _notify();
@@ -679,7 +705,8 @@ class CartController extends ChangeNotifier {
     }
 
     final stage = OrdersService.statusStageOf(order);
-    if (stage == OrderStatusStage.completed ||
+    if (!isBlockingActiveOrderStatus(order['status']?.toString()) ||
+        stage == OrderStatusStage.completed ||
         stage == OrderStatusStage.cancelled) {
       clear();
       return;
@@ -731,6 +758,8 @@ class CartController extends ChangeNotifier {
       _schedulePersist();
     }
 
+    // Do not let a restored local order lock the UI until its server-side
+    // ownership and status have been verified for the current session.
     await refreshActiveOrderStatus();
   }
 
@@ -826,6 +855,7 @@ class CartController extends ChangeNotifier {
 
     final orderId = (snapshot['active_order_id'] ?? '').toString().trim();
     _activeOrderId = orderId.isEmpty ? null : orderId;
+    _stateOwnerUserId = _normalizeNullableText(snapshot['state_owner_user_id']);
     _pendingOrderRequestToken =
         _normalizeNullableText(snapshot['pending_order_request_token']);
     _checkoutSessionId =
@@ -875,6 +905,7 @@ class CartController extends ChangeNotifier {
         'checkout_notes': _checkoutNotes,
         'delivery_cost': _deliveryCost,
         'active_order_id': _activeOrderId,
+        'state_owner_user_id': _supabase.auth.currentUser?.id,
         'payment_method': _selectedPaymentMethod?.value,
         'applied_coupon_code': _appliedCouponCode,
         'pending_order_request_token': _pendingOrderRequestToken,
@@ -914,6 +945,9 @@ class CartController extends ChangeNotifier {
           .limit(1)
           .maybeSingle();
       if (row is! Map<String, dynamic>) {
+        // A successful server response with no matching token means this
+        // device is holding an obsolete checkout lock; it is not an order.
+        await _clearStaleOrderState(reason: 'missing_server_request_token');
         return;
       }
       final status = row['status']?.toString().trim().toLowerCase();
@@ -924,6 +958,10 @@ class CartController extends ChangeNotifier {
         _checkoutSessionId = null;
         _notify();
         await _persistStateNow();
+      } else if (status == 'failed' ||
+          status == 'cancelled' ||
+          status == 'expired') {
+        await _clearStaleOrderState(reason: 'terminal_server_request_token');
       }
     } catch (error, stack) {
       await ErrorLogger.logError(
@@ -932,6 +970,22 @@ class CartController extends ChangeNotifier {
         stack: stack,
       );
     }
+  }
+
+  Future<void> _clearStaleOrderState({required String reason}) async {
+    final hadOrderState = _activeOrderId != null ||
+        _pendingOrderRequestToken != null ||
+        _checkoutSessionId != null;
+    _activeOrderId = null;
+    _pendingOrderRequestToken = null;
+    _checkoutSessionId = null;
+    _stateOwnerUserId = _supabase.auth.currentUser?.id;
+    if (!hadOrderState) {
+      return;
+    }
+    StabilityLogger.cart('Cleared stale order state: $reason');
+    _notify();
+    await _persistStateNow();
   }
 
   Future<void> _handleOfflineOrderSynced(OfflineOrderQueueResult result) async {
@@ -950,6 +1004,21 @@ class CartController extends ChangeNotifier {
     StabilityLogger.cart(
       'Pending queued order synced token=${result.orderRequestToken} orderId=${result.orderId}',
     );
+  }
+
+  Future<void> _handleAuthStateChanged(AuthState event) async {
+    final userId = event.session?.user.id;
+    if (userId == null || userId.isEmpty) {
+      await _clearStaleOrderState(reason: 'auth_signed_out');
+      return;
+    }
+    if (_stateOwnerUserId != null && _stateOwnerUserId != userId) {
+      await _clearStaleOrderState(reason: 'auth_user_changed');
+    }
+    _stateOwnerUserId = userId;
+    if (_restored) {
+      await refreshActiveOrderStatus();
+    }
   }
 
   static double? _toNullableDouble(dynamic value) {
@@ -988,6 +1057,7 @@ class CartController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _persistDebounce?.cancel();
+    unawaited(_authSubscription?.cancel());
     unawaited(_offlineSyncSubscription?.cancel());
     super.dispose();
   }

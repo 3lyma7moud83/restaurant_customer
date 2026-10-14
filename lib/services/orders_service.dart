@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
+
 import '../core/stability/offline_order_queue_service.dart';
 import '../core/stability/rpc_security_service.dart';
 import '../core/stability/stability_logger.dart';
@@ -63,6 +65,50 @@ class OrderQueuedOfflineException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// Shares a backend read only while an identical request is still running.
+/// Entries are removed on completion, so this is not a time-based cache.
+@visibleForTesting
+Future<T> coalesceInFlightOrderRead<T>({
+  required Map<String, Future<T>> requests,
+  required String key,
+  required Future<T> Function() load,
+}) {
+  final existing = requests[key];
+  if (existing != null) {
+    return existing;
+  }
+
+  final request = Future<T>.sync(load);
+  requests[key] = request;
+  unawaited(
+    request.then<void>(
+      (_) {
+        if (identical(requests[key], request)) {
+          requests.remove(key);
+        }
+      },
+      onError: (_, __) {
+        if (identical(requests[key], request)) {
+          requests.remove(key);
+        }
+      },
+    ),
+  );
+  return request;
+}
+
+/// The inclusive PostgREST range for a page of order-history rows.
+@visibleForTesting
+({int from, int to}) orderHistoryPageRange({
+  required int page,
+  required int pageSize,
+}) {
+  final safePage = page < 0 ? 0 : page;
+  final safePageSize = pageSize <= 0 ? 25 : pageSize;
+  final from = safePage * safePageSize;
+  return (from: from, to: from + safePageSize - 1);
 }
 
 class CreateOrderItemInput {
@@ -300,6 +346,8 @@ class OrdersService {
       {};
   static final Map<String, _OrderCacheEntry<List<Map<String, dynamic>>>>
       _orderItemsCache = {};
+  static final Map<String, Future<Map<String, dynamic>?>> _inFlightOrderReads =
+      {};
   static final Set<String> _inFlightOrderRequestTokens = <String>{};
   static final Map<String, DateTime> _lastCheckoutAttemptAtByUser =
       <String, DateTime>{};
@@ -313,12 +361,39 @@ class OrdersService {
     'profiles',
   ];
   static const String _orderSelect = '*';
+  static const String _orderListSelect = '''
+    id,
+    customer_id,
+    restaurant_id,
+    status,
+    total,
+    total_price,
+    delivery_cost,
+    receipt_number,
+    created_at,
+    order_version,
+    authoritative_state_version
+  ''';
   static Future<List<Map<String, dynamic>>> getCustomerOrders(
     String userId, {
     bool forceRefresh = false,
+    int page = 0,
+    int pageSize = 25,
   }) async {
     try {
-      final cacheKey = userId.trim();
+      final normalizedUserId = userId.trim();
+      final safePage = page < 0 ? 0 : page;
+      final safePageSize = pageSize <= 0 ? 25 : pageSize;
+      final range = orderHistoryPageRange(
+        page: safePage,
+        pageSize: safePageSize,
+      );
+      final cacheKey = '$normalizedUserId::$safePage::$safePageSize';
+      if (forceRefresh) {
+        _customerOrdersCache.removeWhere(
+          (key, _) => key.startsWith('$normalizedUserId::'),
+        );
+      }
       final cached = _readCache(
         _customerOrdersCache,
         cacheKey,
@@ -332,13 +407,18 @@ class OrdersService {
           await SessionManager.instance.runWithValidSession<List<dynamic>>(
         () => _client
             .from('orders')
-            .select(_orderSelect)
+            .select(_orderListSelect)
             .eq('customer_id', userId)
-            .order('created_at', ascending: false),
+            .order('created_at', ascending: false)
+            .order('id', ascending: false)
+            .range(range.from, range.to),
         requireSession: true,
       );
 
-      final orders = await _hydrateOrders(_mapRows(rows));
+      final orders = await _hydrateOrders(
+        _mapRows(rows),
+        includeCustomer: false,
+      );
       _writeCache(_customerOrdersCache, cacheKey, orders);
       for (final order in orders) {
         _writeOrderCache(order);
@@ -358,6 +438,28 @@ class OrdersService {
     String orderId, {
     String? userId,
     bool forceRefresh = false,
+  }) async {
+    final normalizedOrderId = orderId.trim();
+    final effectiveUserId =
+        _stringValue(userId) ?? _client.auth.currentUser?.id ?? '';
+    final requestKey =
+        '$normalizedOrderId|$effectiveUserId|forceRefresh:$forceRefresh';
+
+    return coalesceInFlightOrderRead(
+      requests: _inFlightOrderReads,
+      key: requestKey,
+      load: () => _getOrderById(
+        orderId: orderId,
+        userId: userId,
+        forceRefresh: forceRefresh,
+      ),
+    );
+  }
+
+  static Future<Map<String, dynamic>?> _getOrderById({
+    required String orderId,
+    required String? userId,
+    required bool forceRefresh,
   }) async {
     try {
       final cacheKey = orderId.trim();
@@ -1443,8 +1545,9 @@ class OrdersService {
   }
 
   static Future<List<Map<String, dynamic>>> _hydrateOrders(
-    List<Map<String, dynamic>> orders,
-  ) async {
+    List<Map<String, dynamic>> orders, {
+    bool includeCustomer = true,
+  }) async {
     if (orders.isEmpty) {
       return const [];
     }
@@ -1453,14 +1556,18 @@ class OrdersService {
         .map((order) => _stringValue(order['restaurant_id']) ?? '')
         .where((id) => id.isNotEmpty)
         .toList(growable: false);
-    final customerIds = orders
-        .map(customerIdOf)
-        .whereType<String>()
-        .where((id) => id.isNotEmpty)
-        .toList(growable: false);
+    final customerIds = includeCustomer
+        ? orders
+            .map(customerIdOf)
+            .whereType<String>()
+            .where((id) => id.isNotEmpty)
+            .toList(growable: false)
+        : const <String>[];
     final restaurantMap =
         await RestaurantsService.getOrderRestaurantsByIds(restaurantIds);
-    final customerMap = await _loadCustomerRelationsByIds(customerIds);
+    final customerMap = includeCustomer
+        ? await _loadCustomerRelationsByIds(customerIds)
+        : const <String, Map<String, dynamic>>{};
 
     final hydratedOrders = orders
         .map(

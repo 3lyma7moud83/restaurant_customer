@@ -9,6 +9,36 @@ import '../core/ui/app_snackbar.dart';
 import '../core/ui/input_focus_guard.dart';
 import '../services/session_manager.dart';
 
+@visibleForTesting
+List<Map<String, dynamic>> mergeOrderChatMessages(
+  List<Map<String, dynamic>> current,
+  List<Map<String, dynamic>> next,
+) {
+  final byId = <String, Map<String, dynamic>>{
+    for (final message in current)
+      if ((message['id']?.toString() ?? '').isNotEmpty)
+        message['id'].toString(): message,
+  };
+  for (final message in next) {
+    final id = message['id']?.toString() ?? '';
+    if (id.isNotEmpty) {
+      byId[id] = message;
+    }
+  }
+
+  final merged = byId.values.toList(growable: false)
+    ..sort((a, b) {
+      final createdAt = (a['created_at']?.toString() ?? '').compareTo(
+        b['created_at']?.toString() ?? '',
+      );
+      if (createdAt != 0) {
+        return createdAt;
+      }
+      return (a['id']?.toString() ?? '').compareTo(b['id']?.toString() ?? '');
+    });
+  return merged;
+}
+
 class OrderChatPage extends StatefulWidget {
   const OrderChatPage({super.key, required this.orderId});
 
@@ -20,11 +50,16 @@ class OrderChatPage extends StatefulWidget {
 
 class _OrderChatPageState extends State<OrderChatPage> {
   final _controller = TextEditingController();
+  final _scrollController = ScrollController();
   final _supabase = Supabase.instance.client;
   final Set<String> _messageIds = <String>{};
+  static const int _pageSize = 50;
 
   late final RealtimeChannelController _chatChannelController;
   List<Map<String, dynamic>> messages = [];
+  bool _loadingOlderMessages = false;
+  bool _hasOlderMessages = true;
+  int _loadedMessagePages = 0;
 
   @override
   void initState() {
@@ -40,23 +75,38 @@ class _OrderChatPageState extends State<OrderChatPage> {
     );
     _listenRealtime();
     unawaited(_load());
+    _scrollController.addListener(_maybeLoadOlderMessages);
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    _scrollController
+      ..removeListener(_maybeLoadOlderMessages)
+      ..dispose();
     unawaited(_chatChannelController.dispose());
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool loadOlder = false}) async {
+    if (loadOlder && (_loadingOlderMessages || !_hasOlderMessages)) {
+      return;
+    }
+    if (loadOlder) {
+      _loadingOlderMessages = true;
+    }
     try {
-      final res = await SessionManager.instance.runWithValidSession<List<dynamic>>(
+      final page = loadOlder ? _loadedMessagePages : 0;
+      final from = page * _pageSize;
+      final res =
+          await SessionManager.instance.runWithValidSession<List<dynamic>>(
         () => _supabase
             .from('order_messages')
             .select('id, sender_id, message, created_at')
             .eq('order_id', widget.orderId)
-            .order('created_at'),
+            .order('created_at', ascending: false)
+            .order('id', ascending: false)
+            .range(from, from + _pageSize - 1),
         requireSession: true,
       );
       if (res == null || !mounted) {
@@ -68,15 +118,15 @@ class _OrderChatPageState extends State<OrderChatPage> {
           .map((row) => Map<String, dynamic>.from(row))
           .toList(growable: false);
 
-      _messageIds
-        ..clear()
-        ..addAll(
-          nextMessages
-              .map((m) => m['id']?.toString() ?? '')
-              .where((id) => id.isNotEmpty),
-        );
-
-      setState(() => messages = nextMessages);
+      final merged = mergeOrderChatMessages(messages, nextMessages);
+      _messageIds.addAll(
+        merged.map((m) => m['id']?.toString() ?? '').where(
+              (id) => id.isNotEmpty,
+            ),
+      );
+      _loadedMessagePages = loadOlder ? _loadedMessagePages + 1 : 1;
+      _hasOlderMessages = nextMessages.length == _pageSize;
+      setState(() => messages = merged);
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'order_chat_page.load',
@@ -86,7 +136,17 @@ class _OrderChatPageState extends State<OrderChatPage> {
       if (mounted) {
         _toast(ErrorLogger.userMessage);
       }
+    } finally {
+      _loadingOlderMessages = false;
     }
+  }
+
+  void _maybeLoadOlderMessages() {
+    if (!_scrollController.hasClients ||
+        _scrollController.position.extentBefore > 120) {
+      return;
+    }
+    unawaited(_load(loadOlder: true));
   }
 
   void _listenRealtime() {
@@ -109,9 +169,10 @@ class _OrderChatPageState extends State<OrderChatPage> {
               if (id.isEmpty || _messageIds.contains(id)) {
                 return;
               }
+              final merged = mergeOrderChatMessages(messages, [newMsg]);
               _messageIds.add(id);
               setState(() {
-                messages.add(newMsg);
+                messages = merged;
               });
             },
           );
@@ -169,6 +230,7 @@ class _OrderChatPageState extends State<OrderChatPage> {
         children: [
           Expanded(
             child: ListView.builder(
+              controller: _scrollController,
               itemCount: messages.length,
               itemBuilder: (_, i) {
                 final msg = messages[i];

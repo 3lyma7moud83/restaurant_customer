@@ -9,6 +9,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../realtime/realtime_channel_controller.dart';
 import '../services/error_logger.dart';
+import '../../services/notifications/app_notification_service.dart';
 import 'security_event_service.dart';
 import 'security_observability_service.dart';
 import 'stability_logger.dart';
@@ -29,6 +30,39 @@ class SessionSecurityVerdict {
       : this._(allowed: false, reason: reason);
 }
 
+@visibleForTesting
+bool shouldRunRevocationFallbackCheck({
+  required bool hasSession,
+  required bool realtimeHealthy,
+}) {
+  return hasSession && !realtimeHealthy;
+}
+
+@visibleForTesting
+bool shouldMaintainRemoteSession({
+  required bool remoteRecordExists,
+  required DateTime? lastMaintenanceAt,
+  required DateTime now,
+  Duration interval = const Duration(minutes: 10),
+}) {
+  return !remoteRecordExists ||
+      lastMaintenanceAt == null ||
+      now.difference(lastMaintenanceAt) >= interval;
+}
+
+@visibleForTesting
+bool revocationSignalApplies({
+  required bool globalRevoke,
+  required String remoteSessionId,
+  required String localSessionId,
+  required String remoteFingerprint,
+  required String localFingerprint,
+}) {
+  return globalRevoke ||
+      (remoteSessionId.isNotEmpty && remoteSessionId == localSessionId) ||
+      (remoteFingerprint.isNotEmpty && remoteFingerprint == localFingerprint);
+}
+
 class SessionSecurityService {
   SessionSecurityService._();
 
@@ -36,6 +70,7 @@ class SessionSecurityService {
 
   static const String _storageKey = 'session_security_state.v1';
   static const Duration _remoteValidationInterval = Duration(minutes: 2);
+  static const Duration _remoteMaintenanceInterval = Duration(minutes: 10);
   static const Duration _staleSessionTtl = Duration(days: 30);
 
   SharedPreferences? _prefs;
@@ -44,11 +79,13 @@ class SessionSecurityService {
   String? _lastSessionUserId;
   String? _lastRefreshTokenHash;
   DateTime? _lastRemoteValidationAt;
+  DateTime? _lastRemoteMaintenanceAt;
   int _sameRefreshHashHits = 0;
   int _sessionTrustScore = 100;
   RealtimeChannel? _revocationChannel;
   String? _revocationUserId;
   Timer? _revocationPollTimer;
+  bool _revocationRealtimeHealthy = false;
   bool _initialized = false;
 
   String? get deviceFingerprint => _deviceFingerprint;
@@ -148,7 +185,9 @@ class SessionSecurityService {
       session: currentSession,
       refreshHash: refreshHash,
     );
-    _lastRemoteValidationAt = DateTime.now().toUtc();
+    final now = DateTime.now().toUtc();
+    _lastRemoteValidationAt = now;
+    _lastRemoteMaintenanceAt = now;
     await _cleanupStaleRemoteSessions(currentUserId);
     await _persist();
   }
@@ -273,7 +312,8 @@ class SessionSecurityService {
           .limit(1)
           .maybeSingle();
 
-      if (row is Map<String, dynamic>) {
+      final remoteRecordExists = row is Map<String, dynamic>;
+      if (remoteRecordExists) {
         final isActive = row['is_active'] == true;
         final suspiciousScore = _toInt(row['suspicious_score']) ?? 0;
         final remoteSessionId = row['session_id']?.toString().trim() ?? '';
@@ -307,9 +347,9 @@ class SessionSecurityService {
           );
           return const SessionSecurityVerdict.denied('high_suspicion_score');
         }
-StabilityLogger.session(
-  'LOCAL_SESSION_ID=${_sessionIdOf(session.accessToken)}',
-);
+        StabilityLogger.session(
+          'LOCAL_SESSION_ID=${_sessionIdOf(session.accessToken)}',
+        );
         final localSessionId = _sessionIdOf(session.accessToken);
         if (remoteSessionId.isNotEmpty && remoteSessionId != localSessionId) {
           await markSuspicious(
@@ -335,13 +375,21 @@ StabilityLogger.session(
         }
       }
 
-      await _upsertRemoteSession(
-        userId: session.user.id,
-        session: session,
-        refreshHash: _hash(session.refreshToken ?? ''),
-      );
       _lastRemoteValidationAt = now;
-      await _cleanupStaleRemoteSessions(session.user.id);
+      if (shouldMaintainRemoteSession(
+        remoteRecordExists: remoteRecordExists,
+        lastMaintenanceAt: _lastRemoteMaintenanceAt,
+        now: now,
+        interval: _remoteMaintenanceInterval,
+      )) {
+        await _upsertRemoteSession(
+          userId: session.user.id,
+          session: session,
+          refreshHash: _hash(session.refreshToken ?? ''),
+        );
+        _lastRemoteMaintenanceAt = now;
+        await _cleanupStaleRemoteSessions(session.user.id);
+      }
       await _persist();
       return const SessionSecurityVerdict.allowed();
     } catch (error, stack) {
@@ -361,6 +409,11 @@ StabilityLogger.session(
     }
     await _clearRevocationSubscription();
     try {
+      // Forced revocation must not leave this installation's push token bound
+      // to the previous account.
+      await AppNotificationService.instance.deactivateCurrentTokenBeforeSignOut(
+        reason: 'forced_sign_out:$reason',
+      );
       await client.auth.signOut(scope: SignOutScope.local);
     } catch (error, stack) {
       await ErrorLogger.logError(
@@ -539,14 +592,18 @@ StabilityLogger.session(
         final globalRevoke = _toBool(row['global_revoke']) ?? false;
         final remoteSessionId = row['session_id']?.toString().trim() ?? '';
         StabilityLogger.session(
-  'REMOTE_SESSION_ID=$remoteSessionId',
-);
+          'REMOTE_SESSION_ID=$remoteSessionId',
+        );
         final remoteFingerprint =
             row['device_fingerprint']?.toString().trim() ?? '';
 
-        final applies = globalRevoke ||
-            (remoteSessionId.isNotEmpty && remoteSessionId == sessionId) ||
-            (remoteFingerprint.isNotEmpty && remoteFingerprint == fingerprint);
+        final applies = revocationSignalApplies(
+          globalRevoke: globalRevoke,
+          remoteSessionId: remoteSessionId,
+          localSessionId: sessionId,
+          remoteFingerprint: remoteFingerprint,
+          localFingerprint: fingerprint,
+        );
         if (!applies) {
           return;
         }
@@ -560,15 +617,18 @@ StabilityLogger.session(
     )
         .subscribe((status, [error]) {
       if (status == RealtimeSubscribeStatus.subscribed) {
+        _revocationRealtimeHealthy = true;
         StabilityLogger.revocation(
           '[REVOCATION] Subscription Created topic=security-revocation-$userId',
         );
       } else if (status == RealtimeSubscribeStatus.channelError ||
           status == RealtimeSubscribeStatus.timedOut) {
+        _revocationRealtimeHealthy = false;
         StabilityLogger.authRevalidation(
           '[AUTH_REVALIDATION] Revocation feed status=$status error=${error ?? '-'}',
         );
       } else if (status == RealtimeSubscribeStatus.closed) {
+        _revocationRealtimeHealthy = false;
         StabilityLogger.revocation(
           '[REVOCATION] Connection Closed topic=security-revocation-$userId',
         );
@@ -598,6 +658,7 @@ StabilityLogger.session(
     final channel = _revocationChannel;
     _revocationChannel = null;
     _revocationUserId = null;
+    _revocationRealtimeHealthy = false;
     StabilityLogger.revocation(
       '[REVOCATION] Realtime Cleanup Started topic=security-revocation',
     );
@@ -628,12 +689,15 @@ StabilityLogger.session(
     _revocationPollTimer = Timer.periodic(const Duration(seconds: 40), (_) {
       final client = _clientOrNull;
       final session = client?.auth.currentSession;
-      if (session == null) {
+      if (!shouldRunRevocationFallbackCheck(
+        hasSession: session != null,
+        realtimeHealthy: _revocationRealtimeHealthy,
+      )) {
         return;
       }
       unawaited(
         validateCurrentSession(
-          session: session,
+          session: session!,
           forceRemoteCheck: true,
         ),
       );
@@ -657,9 +721,10 @@ StabilityLogger.session(
     return sha256.convert(utf8.encode(source)).toString();
   }
 
- String _sessionIdOf(String accessToken) {
-  return _deviceFingerprint ?? 'unknown';
-}
+  String _sessionIdOf(String accessToken) {
+    return _deviceFingerprint ?? 'unknown';
+  }
+
   String _generateDeviceSeed() {
     final random = Random.secure();
     final bytes = List<int>.generate(16, (_) => random.nextInt(256));

@@ -1,8 +1,38 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/error_logger.dart';
+
+class SecurityEventMetricSample {
+  const SecurityEventMetricSample({
+    required this.eventKey,
+    required this.severity,
+    required this.value,
+  });
+
+  final String eventKey;
+  final String severity;
+  final int value;
+}
+
+@visibleForTesting
+List<SecurityEventMetricSample> aggregateSecurityEventMetricSamples(
+  Iterable<SecurityEventMetricSample> samples,
+) {
+  final aggregated = <String, SecurityEventMetricSample>{};
+  for (final sample in samples) {
+    final key = '${sample.eventKey}\u0000${sample.severity}';
+    final existing = aggregated[key];
+    aggregated[key] = SecurityEventMetricSample(
+      eventKey: sample.eventKey,
+      severity: sample.severity,
+      value: sample.value + (existing?.value ?? 0),
+    );
+  }
+  return aggregated.values.toList(growable: false);
+}
 
 class StabilityMetricsService {
   StabilityMetricsService._();
@@ -11,6 +41,8 @@ class StabilityMetricsService {
 
   final Map<String, int> _counters = <String, int>{};
   final List<Map<String, dynamic>> _buffer = <Map<String, dynamic>>[];
+  final Map<String, SecurityEventMetricSample> _securityEventMetrics =
+      <String, SecurityEventMetricSample>{};
   Timer? _flushTimer;
   bool _initialized = false;
   bool _flushInFlight = false;
@@ -61,10 +93,45 @@ class StabilityMetricsService {
 
   int valueOf(String key) => _counters[key] ?? 0;
 
+  /// Aggregates the redundant metric emitted beside every detailed event.
+  /// Detailed security events remain in [SecurityEventService].
+  void incrementSecurityEventsBuffered({
+    required String eventKey,
+    required String severity,
+  }) {
+    final normalizedEventKey = eventKey.trim();
+    final normalizedSeverity =
+        severity.trim().isEmpty ? 'medium' : severity.trim();
+    if (normalizedEventKey.isEmpty || _remoteDisabled) {
+      return;
+    }
+
+    _counters.update(
+      'security_events_buffered',
+      (value) => value + 1,
+      ifAbsent: () => 1,
+    );
+    final sample = SecurityEventMetricSample(
+      eventKey: normalizedEventKey,
+      severity: normalizedSeverity,
+      value: 1,
+    );
+    final key = '$normalizedEventKey\u0000$normalizedSeverity';
+    _securityEventMetrics[key] = aggregateSecurityEventMetricSamples([
+      if (_securityEventMetrics[key] case final existing?) existing,
+      sample,
+    ]).single;
+  }
+
   Map<String, int> snapshot() => Map<String, int>.from(_counters);
 
   Future<void> flush() async {
-    if (_remoteDisabled || _flushInFlight || _buffer.isEmpty) {
+    if (_remoteDisabled || _flushInFlight) {
+      return;
+    }
+
+    _drainSecurityEventMetrics();
+    if (_buffer.isEmpty) {
       return;
     }
 
@@ -106,6 +173,29 @@ class StabilityMetricsService {
     }
   }
 
+  void _drainSecurityEventMetrics() {
+    if (_securityEventMetrics.isEmpty) {
+      return;
+    }
+    final now = DateTime.now().toUtc().toIso8601String();
+    for (final sample in _securityEventMetrics.values) {
+      _buffer.add({
+        'metric_key': 'security_events_buffered',
+        'metric_value': sample.value,
+        'module': 'security_event_service',
+        'payload': {
+          'event_key': sample.eventKey,
+          'severity': sample.severity,
+        },
+        'created_at': now,
+      });
+    }
+    _securityEventMetrics.clear();
+    if (_buffer.length > 1500) {
+      _buffer.removeRange(0, _buffer.length - 1500);
+    }
+  }
+
   SupabaseClient? get _clientOrNull {
     try {
       return Supabase.instance.client;
@@ -119,10 +209,11 @@ class StabilityMetricsService {
     final code = error is PostgrestException
         ? (error.code ?? '').trim().toUpperCase()
         : '';
-    final tableMissing = message.contains('public.customer_stability_metrics') &&
-        (message.contains('could not find the table') ||
-            message.contains('does not exist') ||
-            message.contains('schema cache'));
+    final tableMissing =
+        message.contains('public.customer_stability_metrics') &&
+            (message.contains('could not find the table') ||
+                message.contains('does not exist') ||
+                message.contains('schema cache'));
     return code == 'PGRST205' || code == '42P01' || tableMissing;
   }
 }

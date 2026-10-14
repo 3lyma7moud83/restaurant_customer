@@ -71,7 +71,7 @@ class _DeliveryIssuePageState extends State<DeliveryIssuePage> {
     final orderId = OrdersService.shortIdOf(widget.order);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF6F7FB),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('اعتراض على التسليم'),
         centerTitle: true,
@@ -87,17 +87,17 @@ class _DeliveryIssuePageState extends State<DeliveryIssuePage> {
                 children: [
                   Text(
                     orderId.isEmpty ? 'اختر سبب الاعتراض' : 'طلب #$orderId',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w900,
-                      color: Color(0xFF101828),
+                      color: Theme.of(context).colorScheme.onSurface,
                     ),
                   ),
                   const SizedBox(height: 8),
-                  const Text(
+                  Text(
                     'اختر السبب الأقرب لما حدث حتى يتمكن فريق الدعم من المتابعة.',
                     style: TextStyle(
-                      color: Color(0xFF667085),
+                      color: AppTheme.colorsOf(context).textSecondary,
                       fontWeight: FontWeight.w700,
                       height: 1.5,
                     ),
@@ -148,10 +148,12 @@ class _DeliveryIssueReasonTile extends StatelessWidget {
         curve: AppTheme.emphasizedCurve,
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Theme.of(context).colorScheme.surface,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: selected ? AppTheme.primary : AppTheme.border,
+            color: selected
+                ? Theme.of(context).colorScheme.primary
+                : Theme.of(context).colorScheme.outlineVariant,
             width: selected ? 1.4 : 1,
           ),
         ),
@@ -175,10 +177,10 @@ class _DeliveryIssueReasonTile extends StatelessWidget {
               child: Text(
                 reason,
                 textAlign: TextAlign.right,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w800,
-                  color: Color(0xFF101828),
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
             ),

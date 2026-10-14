@@ -1,4 +1,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.8";
+import {
+  OAuthAccessTokenCache,
+  type CachedOAuthAccessToken,
+} from "./oauth_token_cache.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim();
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim();
@@ -127,12 +131,253 @@ type CustomerTokenDeliveryAttempt = {
   latencyMs: number;
 };
 
+
+
+// Cashier and admin role queues use the existing role-specific tables.  Their
+// implementation intentionally shares the HTTP v1 sender and payload builder
+// used by the established driver/customer/manager pipelines.
+type CashierQueueRow = {
+  id: string; notification_id: string; cashier_id: string; status: string;
+  attempts: number; max_attempts: number; next_retry_at: string;
+};
+type CashierNotificationRow = {
+  id: string; cashier_id: string; title: string; body: string; type: string;
+  data: Record<string, unknown> | null;
+};
+type CashierTokenRow = TokenRow & { failure_count: number; is_valid: boolean };
+
+function uuidQueueId(value: unknown): string | null {
+  return managerQueueId(value);
+}
+
+function redactFcmPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const message = safeRecord(payload.message);
+  return { ...payload, message: { ...message, token: "[redacted]" } };
+}
+
+async function finishCashierQueue(
+  row: CashierQueueRow,
+  args: { status: "sent" | "retry" | "failed"; attempts: number; error: string | null; response: Record<string, unknown> | null }
+): Promise<void> {
+  const now = new Date().toISOString();
+  const patch: Record<string, unknown> = {
+    status: args.status, attempts: args.attempts, last_error: args.error,
+    response_payload: args.response, processed_at: now, updated_at: now,
+    processing_started_at: null,
+  };
+  if (args.status === "sent") patch.sent_at = now;
+  if (args.status === "retry") patch.next_retry_at = computeNextRetryAt(args.attempts);
+  const { error } = await supabase.from("queue_cashier_fcm").update(patch)
+    .eq("id", row.id).eq("status", "processing");
+  if (error) throw new Error("cashier_queue_finish_failed:" + error.message);
+}
+
+async function processCashierQueue(row: CashierQueueRow, fcmUrl: string, accessToken: string): Promise<Record<string, unknown>> {
+  const attempts = (row.attempts ?? 0) + 1;
+  const { data: notification, error: notificationError } = await supabase
+    .from("cashier_notifications")
+    .select("id,cashier_id,title,body,type,data")
+    .eq("id", row.notification_id).eq("cashier_id", row.cashier_id).maybeSingle();
+  if (notificationError || !notification) {
+    await finishCashierQueue(row, { status: "failed", attempts, error: notificationError?.message ?? "cashier_notification_not_found", response: null });
+    return { queue_id: row.id, status: "failed" };
+  }
+  const { data: rawTokens, error: tokenError } = await supabase
+    .from("cashier_device_tokens")
+    .select("id,token,platform,android_version,manufacturer,supports_http_v1,is_active,failure_count,is_valid")
+    .eq("cashier_id", row.cashier_id).eq("is_active", true).eq("is_valid", true)
+    .is("invalidated_at", null).order("updated_at", { ascending: false });
+  if (tokenError) throw new Error("cashier_tokens_load_failed:" + tokenError.message);
+  const tokens = ((rawTokens ?? []) as CashierTokenRow[]).filter((token) => sanitizeText(token.token).length > 0);
+  if (!tokens.length) {
+    const status = attempts >= row.max_attempts ? "failed" : "retry";
+    await finishCashierQueue(row, { status, attempts, error: "no_active_cashier_tokens", response: null });
+    return { queue_id: row.id, status };
+  }
+
+  const n = notification as CashierNotificationRow;
+  const content = resolveNotificationContent({
+    title: n.title, body: n.body, type: n.type,
+    data: { ...safeRecord(n.data), notification_id: n.id, route: sanitizeText(safeRecord(n.data).route) || "/orders" },
+  });
+  let sent = 0, failed = 0, invalid = 0, retryable = false;
+  let lastError: string | null = null;
+  const responses: Record<string, unknown>[] = [];
+  for (const token of tokens) {
+    let result: DispatchResult;
+    try {
+      result = await sendHttpV1(fcmUrl, accessToken, buildMessagePayload({ token, content }));
+    } catch (error) {
+      result = { ok: false, invalidToken: false, retryable: true, statusCode: 0,
+        errorMessage: error instanceof Error ? error.message : "cashier_fcm_network_error",
+        requestPayload: {}, responsePayload: {} };
+    }
+    responses.push({ token_id: token.id, ok: result.ok, status_code: result.statusCode, error: result.errorMessage });
+    await supabase.from("cashier_notification_delivery_logs").insert({
+      queue_id: row.id, notification_id: n.id, token_id: token.id, token: null,
+      request_payload: redactFcmPayload(result.requestPayload), response_payload: result.responsePayload,
+      delivery_status: result.ok ? "sent" : "failed", error_message: result.errorMessage,
+    });
+    if (result.ok) { sent++; continue; }
+    failed++; lastError = result.errorMessage ?? "cashier_fcm_delivery_failed";
+    retryable = retryable || result.retryable;
+    const patch: Record<string, unknown> = {
+      failure_count: (token.failure_count ?? 0) + 1, updated_at: new Date().toISOString(),
+    };
+    if (result.invalidToken) {
+      invalid++;
+      patch.is_active = false; patch.is_valid = false; patch.invalidated_at = new Date().toISOString();
+    }
+    await supabase.from("cashier_device_tokens").update(patch).eq("id", token.id).eq("cashier_id", row.cashier_id);
+  }
+  const status = sent > 0 ? "sent" : (retryable && attempts < row.max_attempts ? "retry" : "failed");
+  await finishCashierQueue(row, { status, attempts, error: sent && failed ? "partial_failed" : lastError, response: { deliveries: responses } });
+  return { queue_id: row.id, status, sent, failed, invalid_tokens: invalid };
+}
+
+async function processCashierTarget(id: string | null, limit: number): Promise<Record<string, unknown>> {
+  const { data, error } = await supabase.rpc("claim_cashier_fcm_queue", {
+    p_process_single_queue_id: id, p_batch_limit: id ? 1 : limit, p_worker_id: WORKER_ID,
+  });
+  if (error) throw new Error("cashier_queue_claim_failed:" + error.message);
+  const rows = (data ?? []) as CashierQueueRow[];
+  if (!rows.length) return { success: true, target: "cashier", claimed: 0, processed: 0, sent: 0, retry: 0, failed: 0, queue_ids: [] };
+  const account = loadServiceAccount();
+  const accessToken = await getAccessToken(account);
+  const fcmUrl = "https://fcm.googleapis.com/v1/projects/" + account.project_id + "/messages:send";
+  const outcomes = [];
+  for (const row of rows) outcomes.push(await processCashierQueue(row, fcmUrl, accessToken));
+  return { success: true, target: "cashier", claimed: rows.length, processed: outcomes.length,
+    sent: outcomes.filter((o: any) => o.status === "sent").length,
+    retry: outcomes.filter((o: any) => o.status === "retry").length,
+    failed: outcomes.filter((o: any) => o.status === "failed").length,
+    queue_ids: outcomes.map((o: any) => o.queue_id), outcomes };
+}
+
+type AdminQueueRow = {
+  id: string; admin_notification_id: string; admin_id: string; title: string; body: string;
+  type: string; data: Record<string, unknown> | null; status: string; attempt_count: number;
+};
+async function finishAdminQueue(row: AdminQueueRow, status: "pending" | "sent" | "failed", attempts: number, errorMessage: string | null): Promise<void> {
+  const now = new Date().toISOString();
+  const patch: Record<string, unknown> = { status, attempt_count: attempts, last_error: errorMessage, last_attempt_at: now, updated_at: now };
+  if (status === "pending") patch.next_retry_at = computeNextRetryAt(attempts);
+  if (status === "sent") patch.sent_at = now;
+  const { error } = await supabase.from("queue_admin_fcm").update(patch).eq("id", row.id).eq("status", "processing");
+  if (error) throw new Error("admin_queue_finish_failed:" + error.message);
+}
+async function processAdminQueue(row: AdminQueueRow, fcmUrl: string, accessToken: string): Promise<Record<string, unknown>> {
+  const attempts = (row.attempt_count ?? 0) + 1;
+  const { data: rawTokens, error: tokenError } = await supabase.from("admin_device_tokens")
+    .select("id,token,platform,android_version,manufacturer,supports_http_v1,is_active,failure_count")
+    .eq("admin_id", row.admin_id).eq("is_active", true).order("updated_at", { ascending: false });
+  if (tokenError) throw new Error("admin_tokens_load_failed:" + tokenError.message);
+  const tokens = ((rawTokens ?? []) as Array<TokenRow & { failure_count: number }>).filter((token) => sanitizeText(token.token).length > 0);
+  if (!tokens.length) {
+    const status = attempts >= 6 ? "failed" : "pending";
+    await finishAdminQueue(row, status, attempts, "no_active_admin_tokens");
+    return { queue_id: row.id, status };
+  }
+  const content = resolveNotificationContent({
+    title: row.title, body: row.body, type: row.type,
+    data: { ...safeRecord(row.data), notification_id: row.admin_notification_id, route: sanitizeText(safeRecord(row.data).route) || "/notifications" },
+  });
+  let sent = 0, failed = 0, retryable = false, invalid = 0; let lastError: string | null = null;
+  for (const token of tokens) {
+    let result: DispatchResult;
+    try { result = await sendHttpV1(fcmUrl, accessToken, buildMessagePayload({ token, content })); }
+    catch (error) { result = { ok: false, invalidToken: false, retryable: true, statusCode: 0, errorMessage: error instanceof Error ? error.message : "admin_fcm_network_error", requestPayload: {}, responsePayload: {} }; }
+    if (result.ok) { sent++; continue; }
+    failed++; lastError = result.errorMessage ?? "admin_fcm_delivery_failed"; retryable = retryable || result.retryable;
+    const patch: Record<string, unknown> = { failure_count: (token.failure_count ?? 0) + 1, updated_at: new Date().toISOString() };
+    if (result.invalidToken) { invalid++; patch.is_active = false; patch.invalidated_at = new Date().toISOString(); }
+    await supabase.from("admin_device_tokens").update(patch).eq("id", token.id).eq("admin_id", row.admin_id);
+  }
+  const status = sent > 0 ? "sent" : (retryable && attempts < 6 ? "pending" : "failed");
+  await finishAdminQueue(row, status, attempts, sent && failed ? "partial_failed" : lastError);
+  return { queue_id: row.id, status, sent, failed, invalid_tokens: invalid };
+}
+async function processAdminTarget(id: string | null, limit: number): Promise<Record<string, unknown>> {
+  let query = supabase.from("queue_admin_fcm").select("id,admin_notification_id,admin_id,title,body,type,data,status,attempt_count")
+    .eq("status", "pending").or("next_retry_at.is.null,next_retry_at.lte." + new Date().toISOString())
+    .order("created_at", { ascending: true }).limit(id ? 1 : limit);
+  if (id) query = query.eq("id", id);
+  const { data, error } = await query;
+  if (error) throw new Error("admin_queue_load_failed:" + error.message);
+  const claimed: AdminQueueRow[] = [];
+  for (const candidate of (data ?? []) as AdminQueueRow[]) {
+    const { data: row, error: claimError } = await supabase.from("queue_admin_fcm").update({ status: "processing", updated_at: new Date().toISOString() })
+      .eq("id", candidate.id).eq("status", "pending").select("id,admin_notification_id,admin_id,title,body,type,data,status,attempt_count").maybeSingle();
+    if (claimError) throw new Error("admin_queue_claim_failed:" + claimError.message);
+    if (row) claimed.push(row as AdminQueueRow);
+  }
+  if (!claimed.length) return { success: true, target: "admin", claimed: 0, processed: 0, sent: 0, retry: 0, failed: 0, queue_ids: [] };
+  const account = loadServiceAccount(); const accessToken = await getAccessToken(account);
+  const fcmUrl = "https://fcm.googleapis.com/v1/projects/" + account.project_id + "/messages:send";
+  const outcomes = []; for (const row of claimed) outcomes.push(await processAdminQueue(row, fcmUrl, accessToken));
+  return { success: true, target: "admin", claimed: claimed.length, processed: outcomes.length,
+    sent: outcomes.filter((o: any) => o.status === "sent").length,
+    retry: outcomes.filter((o: any) => o.status === "pending").length,
+    failed: outcomes.filter((o: any) => o.status === "failed").length,
+    queue_ids: outcomes.map((o: any) => o.queue_id), outcomes };
+}
+
+type ManagerQueueRow = { id:string; manager_notification_id:string; manager_id:string; status:string; attempts:number; max_attempts:number; last_error:string|null; next_retry_at:string; processing_started_at:string|null; processor_id:string|null };
+type ManagerNotificationRow = { id:string; manager_id:string; title:string; body:string; type:string; data:Record<string,unknown>|null };
+function managerQueueId(value:unknown):string|null { const v=sanitizeText(value); return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v)?v:null; }
+function hasAnonJwt(token:string|null):boolean { if(!token)return false; const raw=base64UrlDecode(token.split(".")[1]??""); if(!raw)return false; try{return JSON.parse(raw).role==="anon";}catch{return false;} }
+async function managerTiming(row:ManagerQueueRow, phase:string, details:Record<string,unknown>, tokenId?:string, elapsed?:number):Promise<void> {
+ const {error}=await supabase.from("manager_fcm_timing_events").insert({queue_id:row.id,notification_id:row.manager_notification_id,manager_id:row.manager_id,token_id:tokenId??null,phase,elapsed_ms:elapsed??null,details});
+ if(error) console.error("[send-fcm][manager] timing failed",error.message);
+}
+async function finishManager(row:ManagerQueueRow,status:"sent"|"retry"|"failed",reason:string|null):Promise<void> {
+ const now=new Date().toISOString();
+ const patch:Record<string,unknown>={status,last_error:reason,updated_at:now,processing_started_at:null,processor_id:null};
+ if(status==="sent"){patch.sent_at=now;patch.next_retry_at=now;}
+ if(status==="retry")patch.next_retry_at=computeNextRetryAt(row.attempts);
+ if(status==="failed"){patch.failed_at=now;patch.next_retry_at=now;}
+ const {error}=await supabase.from("queue_manager_fcm").update(patch).eq("id",row.id).eq("status","processing").eq("processor_id",WORKER_ID);
+ if(error) throw new Error("manager_queue_finish_failed:"+error.message);
+}
+async function processManager(row:ManagerQueueRow,fcmUrl:string,accessToken:string):Promise<Record<string,unknown>> {
+ const {data:notification,error:notificationError}=await supabase.from("manager_notifications").select("id,manager_id,title,body,type,data").eq("id",row.manager_notification_id).eq("manager_id",row.manager_id).maybeSingle();
+ if(notificationError||!notification){const reason=notificationError?.message??"manager_notification_not_found";await finishManager(row,"failed",reason);return {queue_id:row.id,status:"failed"};}
+ const {data:tokenRows,error:tokenError}=await supabase.from("manager_device_tokens").select("id,token,platform,android_version,manufacturer,supports_http_v1,is_active,fail_count").eq("manager_id",row.manager_id).eq("is_active",true).order("updated_at",{ascending:false});
+ if(tokenError) throw new Error("manager_tokens_load_failed:"+tokenError.message);
+ const tokens=(tokenRows??[]).filter((t:TokenRow)=>sanitizeText(t.token).length>0) as Array<TokenRow&{fail_count:number}>;
+ if(!tokens.length){const status=row.attempts>=row.max_attempts?"failed":"retry";await finishManager(row,status,"no_active_manager_tokens");await managerTiming(row,"EDGE_NO_ACTIVE_TOKENS",{status});return {queue_id:row.id,status};}
+ const n=notification as ManagerNotificationRow; const content=resolveNotificationContent({title:n.title,body:n.body,type:n.type,data:{...safeRecord(n.data),notification_id:n.id}});
+ let sent=0,failed=0,invalid=0,retryable=false,lastError:string|null=null;
+ for(const token of tokens){const began=Date.now();let result:DispatchResult;try{result=await sendHttpV1(fcmUrl,accessToken,buildMessagePayload({token,content}));}catch(error){result={ok:false,invalidToken:false,retryable:true,statusCode:0,errorMessage:error instanceof Error?error.message:"manager_fcm_network_error",requestPayload:{},responsePayload:{}};}const elapsed=Date.now()-began;
+  await managerTiming(row,result.ok?"EDGE_FCM_SENT":"EDGE_FCM_FAILED",{status_code:result.statusCode,invalid_token:result.invalidToken,retryable:result.retryable,error:result.errorMessage},token.id,elapsed);
+  if(result.ok){sent++;continue;} failed++;lastError=result.errorMessage??"manager_fcm_delivery_failed";retryable=retryable||result.retryable;
+  const update:Record<string,unknown>={fail_count:(token.fail_count??0)+1,updated_at:new Date().toISOString()};
+  if(result.invalidToken){invalid++;update.is_active=false;update.invalidated_at=new Date().toISOString();update.invalidation_reason="fcm_invalid_token";}
+  await supabase.from("manager_device_tokens").update(update).eq("id",token.id).eq("manager_id",row.manager_id).eq("is_active",true);
+ }
+ const status=sent>0?"sent":(retryable&&row.attempts<row.max_attempts?"retry":"failed");await finishManager(row,status,sent&&failed?"partial_failed":lastError);return {queue_id:row.id,status,sent,failed,invalid_tokens:invalid};
+}
+async function processManagerTarget(id:string|null,limit:number):Promise<Record<string,unknown>> {
+ const {error:recoverError}=await supabase.rpc("recover_stale_manager_fcm_jobs");if(recoverError)throw new Error("manager_queue_recover_failed:"+recoverError.message);
+ const now=new Date().toISOString();
+ let query=supabase.from("queue_manager_fcm").select("id,manager_notification_id,manager_id,status,attempts,max_attempts,last_error,next_retry_at,processing_started_at,processor_id").in("status",["pending","retry"]).lte("next_retry_at",now).order("created_at",{ascending:true}).limit(id?1:limit);
+ if(id)query=query.eq("id",id); const {data,error}=await query;if(error)throw new Error("manager_queue_load_failed:"+error.message);
+ const claimed:ManagerQueueRow[]=[];for(const row of (data??[]) as ManagerQueueRow[]){const claimedAt=new Date().toISOString();const {data:one,error:claimError}=await supabase.from("queue_manager_fcm").update({status:"processing",attempts:row.attempts+1,processing_started_at:claimedAt,processor_id:WORKER_ID,updated_at:claimedAt}).eq("id",row.id).in("status",["pending","retry"]).lte("next_retry_at",claimedAt).select("id,manager_notification_id,manager_id,status,attempts,max_attempts,last_error,next_retry_at,processing_started_at,processor_id").maybeSingle();if(claimError)throw new Error("manager_queue_claim_failed:"+claimError.message);if(one)claimed.push(one as ManagerQueueRow);}
+ if(!claimed.length)return {success:true,target:"manager",claimed:0,processed:0,sent:0,retry:0,failed:0,queue_ids:[]};
+ const account=loadServiceAccount(),accessToken=await getAccessToken(account),fcmUrl="https://fcm.googleapis.com/v1/projects/"+account.project_id+"/messages:send";const outcomes=[];for(const row of claimed)outcomes.push(await processManager(row,fcmUrl,accessToken));
+ return {success:true,target:"manager",claimed:claimed.length,processed:outcomes.length,sent:outcomes.filter((o:any)=>o.status==="sent").length,retry:outcomes.filter((o:any)=>o.status==="retry").length,failed:outcomes.filter((o:any)=>o.status==="failed").length,queue_ids:outcomes.map((o:any)=>o.queue_id)};
+}
+
 type ServiceAccount = {
   project_id: string;
   client_email: string;
   private_key: string;
   token_uri?: string;
 };
+
+// Edge Function module state survives warm invocations only. It deliberately
+// holds the short-lived OAuth access token, never the service-account secret.
+const accessTokenCache = new OAuthAccessTokenCache();
 
 type QueueOutcomeStatus = "sent" | "retry" | "failed" | "dead" | "poisoned";
 
@@ -795,9 +1040,23 @@ async function createJwtAssertion(
   return `${unsigned}.${base64UrlEncode(new Uint8Array(signatureBuffer))}`;
 }
 
+function accessTokenAccountKey(serviceAccount: ServiceAccount): string {
+  return [
+    serviceAccount.project_id,
+    serviceAccount.client_email,
+    serviceAccount.token_uri ?? "https://oauth2.googleapis.com/token",
+  ].join("|");
+}
+
+function refreshLeadTimeMs(expiresInMs: number): number {
+  // Refresh five minutes early for normal one-hour Google tokens. For a
+  // shorter valid lifetime retain at least half of it before refreshing.
+  return Math.min(5 * 60 * 1000, Math.max(30 * 1000, Math.floor(expiresInMs / 2)));
+}
+
 async function createAccessToken(
   serviceAccount: ServiceAccount,
-): Promise<string> {
+): Promise<CachedOAuthAccessToken> {
   const now = Math.floor(Date.now() / 1000);
   const assertion = await createJwtAssertion(serviceAccount, now);
   const tokenResponse = await fetch(
@@ -816,11 +1075,31 @@ async function createAccessToken(
     !tokenResponse.ok || typeof json.access_token !== "string" ||
     !json.access_token
   ) {
-    throw new Error(
-      `Failed to obtain Firebase access token: ${JSON.stringify(json)}`,
-    );
+    // OAuth responses can contain sensitive fields; keep diagnostics to the
+    // HTTP status so neither an access token nor error payload is logged.
+    throw new Error(`Failed to obtain Firebase access token (HTTP ${tokenResponse.status})`);
   }
-  return json.access_token;
+
+  const expiresInSeconds = typeof json.expires_in === "number" &&
+      Number.isFinite(json.expires_in) && json.expires_in > 0
+    ? json.expires_in
+    : 3600;
+  const expiresInMs = Math.floor(expiresInSeconds * 1000);
+  const issuedAtMs = Date.now();
+  return {
+    accountKey: accessTokenAccountKey(serviceAccount),
+    token: json.access_token,
+    expiresAtMs: issuedAtMs + expiresInMs,
+    refreshAtMs: issuedAtMs + Math.max(0, expiresInMs - refreshLeadTimeMs(expiresInMs)),
+  };
+}
+
+async function getAccessToken(serviceAccount: ServiceAccount): Promise<string> {
+  const accountKey = accessTokenAccountKey(serviceAccount);
+  return accessTokenCache.get({
+    accountKey,
+    refresh: () => createAccessToken(serviceAccount),
+  });
 }
 
 function parseFcmResponseError(responseJson: Record<string, unknown>): {
@@ -1777,7 +2056,7 @@ async function processCustomerTarget(args: {
   }
 
   const serviceAccount = loadServiceAccount();
-  const accessToken = await createAccessToken(serviceAccount);
+  const accessToken = await getAccessToken(serviceAccount);
   const fcmUrl =
     `https://fcm.googleapis.com/v1/projects/${serviceAccount.project_id}/messages:send`;
 
@@ -1820,8 +2099,12 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const body = (await req.json().catch(() => ({}))) as SendFcmRequest;
+    const target = sanitizeText(body.target ?? "driver").toLowerCase();
+    const managerId = managerQueueId(body.process_single_queue_id);
+    const internalManagerDispatch = target === "manager" && managerId !== null && hasAnonJwt(extractBearerToken(req.headers.get("authorization")));
     const authorization = authorizeRequest(req);
-    if (!authorization.ok) {
+    if (!authorization.ok && !internalManagerDispatch) {
       console.error("[send-fcm] unauthorized", {
         reason: authorization.reason ?? "unauthorized",
         has_authorization: req.headers.has("authorization"),
@@ -1834,9 +2117,7 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const body = (await req.json().catch(() => ({}))) as SendFcmRequest;
-    const target = sanitizeText(body.target ?? "driver").toLowerCase();
-    if (target !== "customer" && target !== "driver") {
+    if (target !== "customer" && target !== "driver" && target !== "manager" && target !== "cashier" && target !== "admin") {
       return Response.json({ success: false, error: "unsupported_target" }, {
         status: 400,
       });
@@ -1844,6 +2125,12 @@ Deno.serve(async (req: Request) => {
 
     const processSingleQueueId = normalizeQueueId(body.process_single_queue_id);
     const fallbackMode = body.fallback_mode === true;
+
+    if (target === "manager") return Response.json(await processManagerTarget(managerId, managerId === null ? parseBatchLimit(body.batch_limit) : 1));
+
+    const roleQueueId = uuidQueueId(body.process_single_queue_id);
+    if (target === "cashier") return Response.json(await processCashierTarget(roleQueueId, roleQueueId === null ? parseBatchLimit(body.batch_limit) : 1));
+    if (target === "admin") return Response.json(await processAdminTarget(roleQueueId, roleQueueId === null ? parseBatchLimit(body.batch_limit) : 1));
 
     if (target === "customer") {
       const summary = await processCustomerTarget({
@@ -1891,7 +2178,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const serviceAccount = loadServiceAccount();
-    const accessToken = await createAccessToken(serviceAccount);
+    const accessToken = await getAccessToken(serviceAccount);
     const fcmUrl =
       `https://fcm.googleapis.com/v1/projects/${serviceAccount.project_id}/messages:send`;
 
@@ -1936,3 +2223,5 @@ Deno.serve(async (req: Request) => {
     });
   }
 });
+
+

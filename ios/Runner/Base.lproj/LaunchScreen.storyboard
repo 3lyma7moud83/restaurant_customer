@@ -1,37 +1,51 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="12121" systemVersion="16G29" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" colorMatched="YES" initialViewController="01J-lp-oVM">
-    <dependencies>
-        <deployment identifier="iOS"/>
-        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="12089"/>
-    </dependencies>
-    <scenes>
-        <!--View Controller-->
-        <scene sceneID="EHf-IW-A2E">
-            <objects>
-                <viewController id="01J-lp-oVM" sceneMemberID="viewController">
-                    <layoutGuides>
-                        <viewControllerLayoutGuide type="top" id="Ydg-fD-yQy"/>
-                        <viewControllerLayoutGuide type="bottom" id="xbc-2k-c8Z"/>
-                    </layoutGuides>
-                    <view key="view" contentMode="scaleToFill" id="Ze5-6b-2t3">
-                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
-                        <subviews>
-                            <imageView opaque="NO" clipsSubviews="YES" multipleTouchEnabled="YES" contentMode="center" image="LaunchImage" translatesAutoresizingMaskIntoConstraints="NO" id="YRO-k0-Ey4">
-                            </imageView>
-                        </subviews>
-                        <color key="backgroundColor" red="1" green="1" blue="1" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
-                        <constraints>
-                            <constraint firstItem="YRO-k0-Ey4" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="1a2-6s-vTC"/>
-                            <constraint firstItem="YRO-k0-Ey4" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="4X2-HB-R7a"/>
-                        </constraints>
-                    </view>
-                </viewController>
-                <placeholder placeholderIdentifier="IBFirstResponder" id="iYj-Kq-Ea1" userLabel="First Responder" sceneMemberID="firstResponder"/>
-            </objects>
-            <point key="canvasLocation" x="53" y="375"/>
-        </scene>
-    </scenes>
-    <resources>
-        <image name="LaunchImage" width="168" height="185"/>
-    </resources>
-</document>
+{designUnit} * 2px + 1px);width: 100%;min-width: ${inputMinWidth};resize: none}.control:hover:enabled{background: ${inputBackground};border-color: ${dropdownBorder}}.control:active:enabled{background: ${inputBackground};border-color: ${focusBorder}}.control:hover,	.control:${focusVisible},	.control:disabled,	.control:active{outline: none}.control::-webkit-scrollbar{width: ${scrollbarWidth};height: ${scrollbarHeight}}.control::-webkit-scrollbar-corner{background: ${inputBackground}}.control::-webkit-scrollbar-thumb{background: ${scrollbarSliderBackground}}.control::-webkit-scrollbar-thumb:hover{background: ${scrollbarSliderHoverBackground}}.control::-webkit-scrollbar-thumb:active{background: ${scrollbarSliderActiveBackground}}:host(:focus-within:not([disabled])) .control{border-color: ${focusBorder}}:host([resize='both']) .control{resize: both}:host([resize='horizontal']) .control{resize: horizontal}:host([resize='vertical']) .control{resize: vertical}.label{display: block;color: ${foreground};cursor: pointer;font-size: ${typeRampBaseFontSize};line-height: ${typeRampBaseLineHeight};margin-bottom: 2px}.label__hidden{display: none;visibility: hidden}:host([disabled]) .label,	:host([readonly]) .label,	:host([readonly]) .control,	:host([disabled]) .control{cursor: ${disabledCursor}}:host([disabled]){opacity: ${disabledOpacity}}:host([disabled]) .control{border-color: ${dropdownBorder}}`;
+
+// Copyright (c) Microsoft Corporation.
+/**
+ * The Visual Studio Code text area class.
+ *
+ * @remarks
+ * HTML Element: `<vscode-text-area>`
+ *
+ * @public
+ */
+
+class TextArea extends TextArea$1 {
+  /**
+   * Component lifecycle method that runs when the component is inserted
+   * into the DOM.
+   *
+   * @internal
+   */
+  connectedCallback() {
+    super.connectedCallback();
+
+    if (this.textContent) {
+      this.setAttribute('aria-label', this.textContent);
+    } else {
+      // Describe the generic component if no label is provided
+      this.setAttribute('aria-label', 'Text area');
+    }
+  }
+
+}
+/**
+ * The Visual Studio Code text area component registration.
+ *
+ * @remarks
+ * HTML Element: `<vscode-text-area>`
+ *
+ * @public
+ */
+
+const vsCodeTextArea = TextArea.compose({
+  baseName: 'text-area',
+  template: textAreaTemplate,
+  styles: textAreaStyles,
+  shadowOptions: {
+    delegatesFocus: true
+  }
+});
+
+// Copyright (c) Microsoft Corporation.
+const textFieldStyles = (context, definition) => css`

@@ -180,27 +180,27 @@ class _DeliveryConfirmationSheetState
                 width: 42,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFD0D5DD),
+                  color: Theme.of(context).colorScheme.outline,
                   borderRadius: BorderRadius.circular(999),
                 ),
               ),
             ),
             const SizedBox(height: 18),
-            const Text(
+            Text(
               'هل استلمت الطلب؟',
               textAlign: TextAlign.right,
               style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.w900,
-                color: Color(0xFF101828),
+                color: Theme.of(context).colorScheme.onSurface,
               ),
             ),
             const SizedBox(height: 10),
-            const Text(
+            Text(
               'أكد السائق أنه قام بتسليم الطلب.\nلن تتغير الحالة إلى مكتمل إلا بعد تأكيدك أنت.',
               textAlign: TextAlign.right,
               style: TextStyle(
-                color: Color(0xFF667085),
+                color: AppTheme.colorsOf(context).textSecondary,
                 height: 1.55,
                 fontWeight: FontWeight.w700,
               ),

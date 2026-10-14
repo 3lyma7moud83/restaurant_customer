@@ -12,6 +12,14 @@ class ItemsService {
   static const String _variantSelectColumns =
       'id, item_id, name, price, sort_order, created_at';
 
+  @visibleForTesting
+  static bool isCacheFresh({
+    required DateTime cachedAt,
+    DateTime? now,
+  }) {
+    return !((now ?? DateTime.now()).difference(cachedAt) > _cacheTtl);
+  }
+
   static void _ensureManager() {
     final role = _client.auth.currentUser?.userMetadata?['role'];
     if (role != 'manager') {
@@ -565,8 +573,7 @@ class _ItemsCacheEntry {
   final List<Map<String, dynamic>> value;
   final DateTime cachedAt;
 
-  bool get isExpired =>
-      DateTime.now().difference(cachedAt) > ItemsService._cacheTtl;
+  bool get isExpired => !ItemsService.isCacheFresh(cachedAt: cachedAt);
 }
 
 class _ItemInsertContext {

@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -15,6 +16,7 @@ import '../core/realtime/realtime_channel_controller.dart';
 import '../core/services/error_logger.dart';
 import '../core/stability/stability_logger.dart';
 import '../core/theme/app_theme.dart';
+import '../core/theme/theme_controller.dart';
 import '../core/ui/app_snackbar.dart';
 import '../services/orders_service.dart';
 import '../services/session_manager.dart';
@@ -913,24 +915,45 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
     final showDriverRoute = normalizedStatus == 'delivered';
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF6F7FB),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        leadingWidth: 72,
+        leadingWidth: 112,
         title: const Text('تتبع الطلب'),
         centerTitle: true,
         leading: Builder(
           builder: (scaffoldContext) {
             final tooltip =
                 MaterialLocalizations.of(scaffoldContext).openAppDrawerTooltip;
-            return IconButton(
-              key: const Key('tracking-drawer-menu-button'),
-              tooltip: tooltip,
-              icon: const Icon(
-                Icons.menu_rounded,
-                size: 28,
-              ),
-              onPressed: () => Scaffold.of(scaffoldContext).openDrawer(),
+            final themeController = AppThemeScope.of(scaffoldContext);
+            final isDark = themeController.themeMode == ThemeMode.dark;
+            return Row(
+              textDirection: TextDirection.ltr,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  key: const Key('tracking-theme-toggle'),
+                  tooltip: isDark ? 'الوضع الفاتح' : 'الوضع الداكن',
+                  visualDensity: VisualDensity.compact,
+                  icon: AnimatedSwitcher(
+                    duration: AppTheme.microInteractionDuration,
+                    child: Icon(
+                      isDark
+                          ? Icons.light_mode_rounded
+                          : Icons.dark_mode_rounded,
+                      key: ValueKey(isDark),
+                      size: 21,
+                    ),
+                  ),
+                  onPressed: () => unawaited(themeController.toggle()),
+                ),
+                IconButton(
+                  key: const Key('tracking-drawer-menu-button'),
+                  tooltip: tooltip,
+                  icon: const Icon(Icons.menu_rounded, size: 28),
+                  onPressed: () => Scaffold.of(scaffoldContext).openDrawer(),
+                ),
+              ],
             );
           },
         ),
@@ -966,7 +989,7 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
                     onRefresh: () => _loadData(forceRefresh: true),
                     child: ListView(
                       physics: AppTheme.bouncingScrollPhysics,
-                      cacheExtent: 540,
+                      scrollCacheExtent: const ScrollCacheExtent.pixels(540),
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                       children: [
                         _AnimatedTrackingSection(
@@ -1342,9 +1365,9 @@ class _TrackingMetricPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFD9E2EC)),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
       ),
       child: Row(
         children: [
@@ -1364,7 +1387,7 @@ class _TrackingMetricPill extends StatelessWidget {
               children: [
                 Text(
                   label,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Color(0xFF667085),
                     fontWeight: FontWeight.w700,
                     fontSize: 12,
@@ -1375,8 +1398,8 @@ class _TrackingMetricPill extends StatelessWidget {
                   value,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF101828),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface,
                     fontWeight: FontWeight.w800,
                     height: 1.35,
                   ),
@@ -1725,10 +1748,12 @@ class _TrackingItemsCard extends StatelessWidget {
                         margin: const EdgeInsets.only(bottom: 12),
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFF8FAFC),
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHigh,
                           borderRadius: BorderRadius.circular(14),
                           border: Border.all(
-                            color: const Color(0xFFD9E2EC),
+                            color: Theme.of(context).colorScheme.outlineVariant,
                           ),
                         ),
                         child: Column(
@@ -1771,8 +1796,8 @@ class _TrackingItemsCard extends StatelessWidget {
                               alignment: AlignmentDirectional.centerEnd,
                               child: Text(
                                 'الإجمالي: ${formatPrice(lineTotal)}',
-                                style: const TextStyle(
-                                  color: AppTheme.primaryDeep,
+                                style: TextStyle(
+                                  color: Theme.of(context).colorScheme.primary,
                                   fontWeight: FontWeight.w800,
                                 ),
                               ),
@@ -1788,7 +1813,7 @@ class _TrackingItemsCard extends StatelessWidget {
             children: [
               Text(
                 formatPrice(subtotal),
-                style: const TextStyle(
+                style: TextStyle(
                   color: Color(0xFF475467),
                   fontWeight: FontWeight.w700,
                 ),
@@ -1858,7 +1883,7 @@ class _TrackingMetaRow extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 18, color: const Color(0xFF667085)),
+        Icon(icon, size: 18, color: AppTheme.colorsOf(context).textSecondary),
         const SizedBox(width: 8),
         Expanded(
           child: Column(
@@ -1876,8 +1901,8 @@ class _TrackingMetaRow extends StatelessWidget {
                 value,
                 maxLines: maxValueLines,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFF101828),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurface,
                   fontWeight: FontWeight.w700,
                   height: 1.4,
                 ),

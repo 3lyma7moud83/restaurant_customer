@@ -847,7 +847,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
                             Text(
                               'حدد موقعك',
                               style: TextStyle(
-                                color: AppTheme.text,
+                                color: Theme.of(context).colorScheme.onSurface,
                                 fontWeight: FontWeight.w800,
                               ),
                             ),
@@ -942,7 +942,7 @@ class _CoordinatePill extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(14),
         boxShadow: const [
           BoxShadow(
@@ -957,8 +957,8 @@ class _CoordinatePill extends StatelessWidget {
         child: Text(
           '${point.latitude.toStringAsFixed(6)}, ${point.longitude.toStringAsFixed(6)}',
           textDirection: TextDirection.ltr,
-          style: const TextStyle(
-            color: AppTheme.text,
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurface,
             fontSize: 12,
             fontWeight: FontWeight.w800,
           ),
@@ -1008,8 +1008,8 @@ class _AccuracySummary extends StatelessWidget {
           Text(
             accuracyText,
             textAlign: TextAlign.right,
-            style: const TextStyle(
-              color: AppTheme.text,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurface,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -1031,7 +1031,7 @@ class _MapControlButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surface,
       borderRadius: BorderRadius.circular(16),
       elevation: 3,
       child: InkWell(
@@ -1042,8 +1042,8 @@ class _MapControlButton extends StatelessWidget {
           height: 48,
           child: Center(
             child: IconTheme(
-              data: const IconThemeData(
-                color: AppTheme.text,
+              data: IconThemeData(
+                color: Theme.of(context).colorScheme.onSurface,
                 size: 22,
               ),
               child: icon,

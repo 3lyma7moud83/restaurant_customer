@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -649,7 +650,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
     final order = _order;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF6F7FB),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('تفاصيل الطلب'),
         centerTitle: true,
@@ -673,7 +674,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
                     onRefresh: () => _loadData(forceRefresh: true),
                     child: ListView(
                       physics: AppTheme.bouncingScrollPhysics,
-                      cacheExtent: 540,
+                      scrollCacheExtent: const ScrollCacheExtent.pixels(540),
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                       children: [
                         _HeaderCard(order: order),
@@ -750,7 +751,7 @@ class _HeaderCard extends StatelessWidget {
           const SizedBox(height: 14),
           Text(
             OrdersService.restaurantNameOf(order),
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w800,
             ),
@@ -1023,7 +1024,7 @@ class _MetaRow extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 18, color: const Color(0xFF667085)),
+        Icon(icon, size: 18, color: AppTheme.colorsOf(context).textSecondary),
         const SizedBox(width: 8),
         Flexible(
           child: Text(
@@ -1042,8 +1043,8 @@ class _MetaRow extends StatelessWidget {
             value,
             maxLines: 3,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFF101828),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurface,
               fontWeight: FontWeight.w700,
             ),
           ),

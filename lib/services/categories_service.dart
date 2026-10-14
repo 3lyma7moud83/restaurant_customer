@@ -10,6 +10,14 @@ class CategoriesService {
   static final Map<String, _CategoriesCacheEntry> _categoriesCache = {};
   static const int _defaultPageSize = 80;
 
+  @visibleForTesting
+  static bool isCacheFresh({
+    required DateTime cachedAt,
+    DateTime? now,
+  }) {
+    return !((now ?? DateTime.now()).difference(cachedAt) > _cacheTtl);
+  }
+
   /// جلب الأنواع حسب المطعم (manager).
   static Future<List<Map<String, dynamic>>> getByManager(
     String managerId,
@@ -176,6 +184,5 @@ class _CategoriesCacheEntry {
   final List<Map<String, dynamic>> value;
   final DateTime cachedAt;
 
-  bool get isExpired =>
-      DateTime.now().difference(cachedAt) > CategoriesService._cacheTtl;
+  bool get isExpired => !CategoriesService.isCacheFresh(cachedAt: cachedAt);
 }
