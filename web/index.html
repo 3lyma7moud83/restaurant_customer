@@ -222,6 +222,7 @@
       var fadeMs = 180;
       var appReady = false;
       var visualReady = false;
+      var forceHide = false;
       var hidden = false;
       var startedAt = performance.now();
       var visualTimerId = null;
@@ -235,11 +236,12 @@
         firstFrameAt: null,
         appReadyAt: null,
         hiddenAt: null,
-        removedAt: null
+        removedAt: null,
+        forcedAt: null
       };
 
       function maybeHide() {
-        if (hidden || !appReady || !visualReady) {
+        if (hidden || !visualReady || (!appReady && !forceHide)) {
           return;
         }
 
@@ -317,6 +319,19 @@
       );
 
       window.setTimeout(markVisualReady, maxVisualMs);
+
+      // Never allow a document-level splash to become a permanent black
+      // screen. Normally Flutter dispatches the ready event after its first
+      // frame; this only covers an unexpected startup failure before that
+      // event can be emitted, leaving the actual runtime error inspectable.
+      window.setTimeout(function () {
+        if (hidden) {
+          return;
+        }
+        forceHide = true;
+        window.__appSplashMetrics.forcedAt = performance.now();
+        maybeHide();
+      }, 8000);
 
       window.setTimeout(function () {
         if (!video.paused || hidden || visualReady) {

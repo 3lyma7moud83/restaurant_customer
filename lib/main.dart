@@ -12,6 +12,7 @@ import 'core/config/env.dart';
 import 'core/services/error_logger.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/theme_controller.dart';
+import 'core/ui/web_startup_splash.dart';
 import 'cart/cart_provider.dart';
 import 'pages/home_page.dart';
 import 'services/notifications/app_notification_service.dart';
@@ -65,6 +66,12 @@ class _CustomerAppState extends State<CustomerApp> {
     // after that first frame, so startup/auth restoration cannot discard the
     // intended order route.
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // The HTML splash overlay is above Flutter's surface. Signal only after
+      // Flutter has rendered its first frame so a successful bootstrap cannot
+      // leave a black document-level overlay over the running application.
+      // This is a no-op on non-web platforms via the conditional export.
+      notifyWebStartupSplashReady();
+
       if (!mounted || !widget.bootstrapResult.ok) {
         return;
       }

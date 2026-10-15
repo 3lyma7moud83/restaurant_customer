@@ -124,6 +124,40 @@ EOF
 }
 
 write_firebase_messaging_worker_config() {
+  # Local builds may intentionally reuse the ignored runtime asset when the
+  # developer has not exported every Firebase value into the shell.  Vercel
+  # and CI must still receive their configuration explicitly so a production
+  # build can never inherit an undeclared local file.
+  if [ "${VERCEL:-}" != "1" ] && [ "${CI:-}" != "true" ] && [ -f "assets/env/app.env" ]; then
+    local runtime_env_file="assets/env/app.env"
+    local runtime_value
+    local key
+    for key in \
+      "FIREBASE_API_KEY" \
+      "FIREBASE_PROJECT_ID" \
+      "FIREBASE_MESSAGING_SENDER_ID" \
+      "FIREBASE_WEB_APP_ID" \
+      "FIREBASE_AUTH_DOMAIN" \
+      "FIREBASE_STORAGE_BUCKET" \
+      "FIREBASE_MEASUREMENT_ID"; do
+      if [ -n "${!key:-}" ]; then
+        continue
+      fi
+
+      runtime_value="$(
+        sed -n "s/^${key}=//p" "$runtime_env_file" | head -n 1 | tr -d '\r'
+      )"
+      if [ -n "$runtime_value" ]; then
+        if [[ "${runtime_value:0:1}" == '"' && "${runtime_value: -1}" == '"' ]] ||
+          [[ "${runtime_value:0:1}" == "'" && "${runtime_value: -1}" == "'" ]]; then
+          runtime_value="${runtime_value:1:${#runtime_value}-2}"
+        fi
+        printf -v "$key" '%s' "$runtime_value"
+        export "$key"
+      fi
+    done
+  fi
+
   # Keep this validation with the writer as a defence in depth measure.  The
   # runtime-env writer above validates the wider application configuration,
   # but this asset must never be emitted with an empty Firebase config if this
