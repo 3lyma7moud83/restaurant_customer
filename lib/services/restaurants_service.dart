@@ -1,8 +1,10 @@
 import 'dart:math' as math;
+import 'dart:async';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/services/error_logger.dart';
+import '../core/cache/local_reference_cache.dart';
 import 'session_manager.dart';
 
 class RestaurantsService {
@@ -12,17 +14,18 @@ class RestaurantsService {
   static final Map<String, _RestaurantCacheEntry> _restaurantCache = {};
   static const Duration _listCacheTtl = Duration(minutes: 2);
   static const Duration _restaurantCacheTtl = Duration(minutes: 10);
-  static List<Map<String, dynamic>>? _allActiveCache;
-  static DateTime? _allActiveCacheAt;
+  static final _listCache = LocalReferenceCache('customer_restaurants');
   static final Map<String, _RestaurantListCacheEntry> _nearbyCache = {};
+  static int _nearbyGeneration = 0;
 
   static const int _orderScope = 2;
   static const int _detailsScope = 3;
   static const double _cityMotorcycleSpeedKmPerHour = 35;
 
   static void invalidateListCaches() {
-    _allActiveCache = null;
-    _allActiveCacheAt = null;
+    unawaited(_listCache.invalidate(
+        _client.auth.currentUser?.id ?? 'anonymous', 'all'));
+    _nearbyGeneration++;
     _nearbyCache.clear();
   }
 
@@ -31,7 +34,7 @@ class RestaurantsService {
     if (id.isEmpty) {
       return;
     }
-    _restaurantCache.remove(id);
+    _restaurantCache.remove(_scopedKey(id));
   }
 
   static const String _listSelect = '''
@@ -104,27 +107,24 @@ class RestaurantsService {
   static Future<List<Map<String, dynamic>>> getAllActive({
     bool forceRefresh = false,
   }) async {
-    try {
-      final hasValidAllActiveCache = !forceRefresh &&
-          _allActiveCache != null &&
-          _allActiveCacheAt != null &&
-          DateTime.now().difference(_allActiveCacheAt!) <= _listCacheTtl;
-      if (hasValidAllActiveCache) {
-        final visibleRestaurants =
-            _allActiveCache!.where(isVisibilityAllowed).toList(growable: false);
-        if (visibleRestaurants.length != _allActiveCache!.length) {
-          _allActiveCache = visibleRestaurants;
-          _allActiveCacheAt = DateTime.now();
-        }
-        return visibleRestaurants;
-      }
+    final user = _client.auth.currentUser?.id ?? 'anonymous';
+    return _listCache.read(
+        scope: user,
+        key: 'all',
+        ttl: _listCacheTtl,
+        forceRefresh: forceRefresh,
+        isCurrent: () => (_client.auth.currentUser?.id ?? 'anonymous') == user,
+        load: _loadAllActive);
+  }
 
+  static Future<List<Map<String, dynamic>>> _loadAllActive() async {
+    try {
       final res =
           await SessionManager.instance.runWithValidSession<List<dynamic>>(
         () => _client.from('managers').select(_listSelect),
       );
 
-      if (res == null) return [];
+      if (res == null) throw StateError('Restaurant read unavailable');
 
       final managerRows = res
           .whereType<Map>()
@@ -154,8 +154,6 @@ class RestaurantsService {
           )
           .where(isVisibilityAllowed)
           .toList(growable: false);
-      _allActiveCache = restaurants;
-      _allActiveCacheAt = DateTime.now();
       return restaurants;
     } catch (error, stack) {
       await ErrorLogger.logError(
@@ -175,10 +173,13 @@ class RestaurantsService {
     bool forceRefresh = false,
   }) async {
     try {
-      final cacheKey = _nearbyCacheKey(
+      final user = _client.auth.currentUser?.id ?? 'anonymous';
+      final generation = _nearbyGeneration;
+      final cacheKey = '$user:'
+          '${_nearbyCacheKey(
         latitude: latitude,
         longitude: longitude,
-      );
+      )}';
       final cachedNearby = forceRefresh ? null : _nearbyCache[cacheKey];
       if (cachedNearby != null && !cachedNearby.isExpired) {
         final visibleNearby = cachedNearby.value
@@ -205,7 +206,11 @@ class RestaurantsService {
       );
 
       if (rpcRows == null) {
-        return const [];
+        throw StateError('Nearby restaurants unavailable');
+      }
+      if (generation != _nearbyGeneration ||
+          (_client.auth.currentUser?.id ?? 'anonymous') != user) {
+        throw StateError('Nearby restaurants read superseded');
       }
 
       // The RPC is the authorization and visibility authority for the nearby
@@ -224,6 +229,9 @@ class RestaurantsService {
         value: nearbyRestaurants,
         cachedAt: DateTime.now(),
       );
+      if (_nearbyCache.length > 40) {
+        _nearbyCache.remove(_nearbyCache.keys.first);
+      }
       return nearbyRestaurants;
     } catch (error, stack) {
       await ErrorLogger.logError(
@@ -978,13 +986,14 @@ class RestaurantsService {
 
   static Map<String, dynamic>? _cachedRestaurant(
       String identifier, int minScope) {
-    final entry = _restaurantCache[identifier];
+    final key = _scopedKey(identifier);
+    final entry = _restaurantCache[key];
     if (entry == null) {
       return null;
     }
 
     if (entry.isExpired) {
-      _restaurantCache.remove(identifier);
+      _restaurantCache.remove(key);
       return null;
     }
 
@@ -992,8 +1001,11 @@ class RestaurantsService {
       return null;
     }
 
-    return entry.value;
+    return Map<String, dynamic>.from(entry.value);
   }
+
+  static String _scopedKey(String identifier) =>
+      '${_client.auth.currentUser?.id ?? 'anonymous'}::$identifier';
 
   static void _cacheRestaurant(Map<String, dynamic> restaurant, int scope) {
     final restaurantId = restaurantIdOf(restaurant);
@@ -1005,7 +1017,8 @@ class RestaurantsService {
         return;
       }
 
-      final previousEntry = _restaurantCache[key];
+      final scopedKey = _scopedKey(key);
+      final previousEntry = _restaurantCache[scopedKey];
       final previous = previousEntry == null || previousEntry.isExpired
           ? null
           : previousEntry.value;
@@ -1013,7 +1026,7 @@ class RestaurantsService {
           ? Map<String, dynamic>.from(restaurant)
           : <String, dynamic>{...previous, ...restaurant};
       final previousScope = previousEntry?.scope ?? 0;
-      _restaurantCache[key] = _RestaurantCacheEntry(
+      _restaurantCache[scopedKey] = _RestaurantCacheEntry(
         value: merged,
         scope: previousScope > scope ? previousScope : scope,
         cachedAt: now,

@@ -49,6 +49,7 @@
   <link rel="apple-touch-icon" href="icons/Icon-192.png" />
   <link rel="icon" type="image/png" href="favicon.png" />
   <link rel="manifest" href="manifest.json" />
+  <link rel="preload" as="image" href="assets/assets/videos/splash_poster.jpg" />
 
   <title>Delivery Mat3mk | Online Restaurant Food Ordering & Delivery</title>
 
@@ -102,6 +103,12 @@
   </script>
 
   <style>
+    @font-face {
+      font-family: 'Splash Cairo';
+      src: url('assets/assets/fonts/Cairo-Regular.ttf') format('truetype');
+      font-display: swap;
+    }
+
     :root {
       --app-splash-bg: #0E0F10;
       --app-splash-fade-ms: 180ms;
@@ -138,31 +145,98 @@
       inset: 0;
       z-index: 999999;
       overflow: hidden;
-      pointer-events: none;
+      pointer-events: auto;
       background: var(--app-splash-bg);
-      transition:
-        opacity var(--app-splash-fade-ms) ease,
-        visibility var(--app-splash-fade-ms) ease;
+      opacity: 1;
+      transition: opacity var(--app-splash-fade-ms) ease;
     }
 
     #app-splash.app-splash--hidden {
       opacity: 0;
-      visibility: hidden;
     }
 
     #app-splash.app-splash--video-ready #app-splash-video {
       opacity: 1;
     }
 
+    #app-splash-poster,
     #app-splash-video {
+      position: absolute;
+      inset: 0;
       display: block;
       width: 100%;
       height: 100%;
-      object-fit: cover;
+      object-fit: contain;
       object-position: center center;
-      opacity: 0;
       background: var(--app-splash-bg);
-      transition: opacity 220ms ease;
+    }
+
+    #app-splash-video {
+      opacity: 0;
+      transition: opacity 120ms ease;
+    }
+
+    #app-splash-brand {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      pointer-events: none;
+      direction: ltr;
+    }
+
+    #app-splash-brand span {
+      position: relative;
+      isolation: isolate;
+      color: #F7F5F1;
+      font: 700 clamp(23px, 5.5vw, 42px) / 1.35 'Splash Cairo', 'Noto Sans Arabic', sans-serif;
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+      text-align: center;
+      text-shadow: 0 1px 2px rgba(14, 15, 16, 0.65);
+      animation: splash-brand-in 520ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
+    }
+
+    #app-splash-brand span::before {
+      content: '';
+      position: absolute;
+      z-index: -1;
+      inset: -65% -16%;
+      background: radial-gradient(ellipse at center,
+        rgba(242, 140, 40, 0.58) 0%,
+        rgba(224, 118, 16, 0.28) 36%,
+        rgba(242, 140, 40, 0.08) 58%,
+        rgba(242, 140, 40, 0) 74%);
+    }
+
+    #app-splash-retry {
+      position: absolute;
+      bottom: max(28px, env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      border: 1px solid rgba(242, 140, 40, 0.55);
+      color: #F7F5F1;
+      background: #0E0F10;
+      cursor: pointer;
+    }
+
+    #app-splash-retry:focus-visible {
+      outline: 2px solid #F28C28;
+      outline-offset: 4px;
+    }
+
+    @keyframes splash-brand-in {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #app-splash,
+      #app-splash-video { transition: none; }
+      #app-splash-brand span { animation: none; }
     }
 
     flutter-view,
@@ -175,18 +249,27 @@
 </head>
 
 <body>
-  <div id="app-splash" aria-hidden="true">
+  <div id="app-splash" role="status" aria-label="delivery-mat3mk">
+    <img id="app-splash-poster" src="assets/assets/videos/splash_poster.jpg" alt="" />
     <video
       id="app-splash-video"
+      aria-hidden="true"
       autoplay
       muted
       playsinline
       preload="auto"
+      poster="assets/assets/videos/splash_poster.jpg"
       disablePictureInPicture
       disableremoteplayback
     >
       <source src="assets/assets/videos/splash.mp4" type="video/mp4" />
     </video>
+    <div id="app-splash-brand" aria-hidden="true"><span>delivery-mat3mk</span></div>
+    <button id="app-splash-retry" type="button" aria-label="إعادة تحميل التطبيق" hidden>
+      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+        <path d="M20 7v5h-5M19 12a7 7 0 1 0-2 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </button>
   </div>
 
   <script>
@@ -208,144 +291,230 @@
     })();
   </script>
 
-  <script>
+  <script id="app-splash-controller">
     (function () {
       var overlay = document.getElementById('app-splash');
       var video = document.getElementById('app-splash-video');
-      if (!overlay || !video) {
-        return;
-      }
+      var retry = document.getElementById('app-splash-retry');
+      if (!overlay || !video) return;
 
-      var minVisualMs = 1500;
-      var targetVideoMs = 1150;
-      var maxVisualMs = 1700;
+      var durationMs = 2500;
       var fadeMs = 180;
+      var startedAt = null;
+      var deadlineAt = null;
       var appReady = false;
-      var visualReady = false;
-      var forceHide = false;
-      var hidden = false;
-      var startedAt = performance.now();
-      var visualTimerId = null;
-
-      window.__appSplashMetrics = {
-        startedAt: startedAt,
-        targetVideoMs: targetVideoMs,
-        minVisualMs: minVisualMs,
-        maxVisualMs: maxVisualMs,
+      var disposed = false;
+      var fading = false;
+      var videoReleased = false;
+      var playbackAttempted = false;
+      var fadeTimer = null;
+      var deadlineTimer = null;
+      var removeTimer = null;
+      var watchdogTimer = null;
+      var frameRequest = null;
+      var presentationRequest = null;
+      var metrics = window.__appSplashMetrics = {
+        targetDurationMs: durationMs,
         fadeMs: fadeMs,
+        startedAt: null,
+        deadlineAt: null,
         firstFrameAt: null,
         appReadyAt: null,
+        fadeStartedAt: null,
+        videoStoppedAt: null,
         hiddenAt: null,
         removedAt: null,
-        forcedAt: null
+        heldForApp: false,
+        playbackRate: null,
+        fallbackReason: null,
+        watchdogAt: null
       };
 
-      function maybeHide() {
-        if (hidden || !visualReady || (!appReady && !forceHide)) {
+      function releaseVideo(reason) {
+        if (videoReleased) return;
+        videoReleased = true;
+        metrics.videoStoppedAt = performance.now();
+        if (reason) metrics.fallbackReason = reason;
+        if (frameRequest !== null && video.cancelVideoFrameCallback) {
+          video.cancelVideoFrameCallback(frameRequest);
+          frameRequest = null;
+        }
+        video.removeEventListener('loadedmetadata', fitPlaybackToDeadline);
+        video.removeEventListener('playing', onPlaying);
+        video.removeEventListener('error', onVideoError);
+        video.pause();
+        overlay.classList.remove('app-splash--video-ready');
+        video.removeAttribute('src');
+        video.querySelectorAll('source').forEach(function (source) {
+          source.removeAttribute('src');
+        });
+        video.load();
+      }
+
+      function removeOverlay() {
+        if (disposed) return;
+        disposed = true;
+        window.clearTimeout(fadeTimer);
+        window.clearTimeout(deadlineTimer);
+        window.clearTimeout(removeTimer);
+        window.clearTimeout(watchdogTimer);
+        if (presentationRequest !== null) {
+          window.cancelAnimationFrame(presentationRequest);
+        }
+        window.removeEventListener('delivery-mat3mk-web-splash-ready', onAppReady);
+        window.removeEventListener('pageshow', onResume);
+        document.removeEventListener('visibilitychange', onVisibilityChange);
+        if (retry) retry.removeEventListener('click', reloadApp);
+        metrics.hiddenAt = performance.now();
+        metrics.removedAt = metrics.hiddenAt;
+        overlay.remove();
+        releaseVideo();
+        window.dispatchEvent(new Event('delivery-mat3mk-web-splash-removed'));
+      }
+
+      function beginFade() {
+        if (disposed || fading || !appReady || startedAt === null) return;
+        fading = true;
+        var now = performance.now();
+        var remaining = deadlineAt - now;
+        // Once the visual budget has elapsed, a newly ready app is revealed
+        // immediately; slow bootstrap must not add another fade timer.
+        if (remaining <= 0) {
+          removeOverlay();
           return;
         }
-
-        hidden = true;
-        window.__appSplashMetrics.hiddenAt = performance.now();
+        var transitionMs = Math.min(fadeMs, remaining);
+        metrics.fadeStartedAt = now;
+        overlay.style.setProperty('--app-splash-fade-ms', transitionMs + 'ms');
         overlay.classList.add('app-splash--hidden');
-        window.setTimeout(function () {
-          window.__appSplashMetrics.removedAt = performance.now();
-          overlay.remove();
-          window.dispatchEvent(new Event('delivery-mat3mk-web-splash-removed'));
-        }, fadeMs + 40);
+        // For a ready app, the fade belongs INSIDE the 2.5 second deadline.
+        // A slow bootstrap keeps the poster until a real app frame is ready.
+        removeTimer = window.setTimeout(removeOverlay, transitionMs);
       }
 
-      function markVisualReady() {
-        if (visualReady) {
+      function reachDeadline() {
+        if (disposed) return;
+        if (appReady) {
+          removeOverlay();
           return;
         }
-
-        visualReady = true;
-        maybeHide();
+        releaseVideo();
+        metrics.heldForApp = true;
       }
 
-      function scheduleVisualReady() {
-        if (visualTimerId !== null || hidden || visualReady) {
+      function onAppReady() {
+        if (disposed || appReady) return;
+        appReady = true;
+        metrics.appReadyAt = performance.now();
+        if (startedAt !== null && performance.now() >= deadlineAt - fadeMs) {
+          beginFade();
+        }
+      }
+
+      function showVideoFrame() {
+        frameRequest = null;
+        if (disposed || videoReleased || startedAt === null) return;
+        if (performance.now() >= deadlineAt) {
+          reachDeadline();
           return;
         }
-        visualTimerId = window.setTimeout(markVisualReady, targetVideoMs);
+        if (metrics.firstFrameAt === null) metrics.firstFrameAt = performance.now();
+        overlay.classList.add('app-splash--video-ready');
       }
 
-      window.addEventListener(
-        'delivery-mat3mk-web-splash-ready',
-        function () {
-          appReady = true;
-          window.__appSplashMetrics.appReadyAt = performance.now();
-          maybeHide();
-        },
-        { once: true }
-      );
+      function fitPlaybackToDeadline() {
+        if (videoReleased || deadlineAt === null || !isFinite(video.duration)) return;
+        var remainingMs = deadlineAt - performance.now();
+        var remainingVideo = video.duration - video.currentTime;
+        if (remainingMs <= 0) {
+          reachDeadline();
+        } else if (remainingVideo > 0) {
+          // The packaged MP4 is already 2.5s. Compensate once for decode latency.
+          video.playbackRate = Math.min(4, Math.max(1, remainingVideo * 1000 / remainingMs));
+          metrics.playbackRate = video.playbackRate;
+        }
+      }
 
-      video.addEventListener(
-        'loadeddata',
-        function () {
-          if (window.__appSplashMetrics.firstFrameAt === null) {
-            window.__appSplashMetrics.firstFrameAt = performance.now();
+      function onPlaying() {
+        if (videoReleased) return;
+        fitPlaybackToDeadline();
+        if (video.requestVideoFrameCallback) {
+          if (frameRequest === null) frameRequest = video.requestVideoFrameCallback(showVideoFrame);
+        } else {
+          showVideoFrame();
+        }
+      }
+
+      function onVideoError() {
+        releaseVideo('media-error');
+      }
+
+      function startPresentation() {
+        presentationRequest = null;
+        if (disposed || startedAt !== null || document.hidden) return;
+        startedAt = performance.now();
+        deadlineAt = startedAt + durationMs;
+        metrics.startedAt = startedAt;
+        metrics.deadlineAt = deadlineAt;
+        fadeTimer = window.setTimeout(beginFade, durationMs - fadeMs);
+        deadlineTimer = window.setTimeout(reachDeadline, durationMs);
+        watchdogTimer = window.setTimeout(function () {
+          if (disposed || appReady) return;
+          metrics.watchdogAt = performance.now();
+          if (retry) retry.hidden = false;
+        }, 15000);
+        if (videoReleased || playbackAttempted) return;
+        playbackAttempted = true;
+        video.muted = true;
+        video.defaultMuted = true;
+        video.playsInline = true;
+        video.loop = false;
+        fitPlaybackToDeadline();
+        try {
+          var promise = video.play();
+          if (promise && typeof promise.catch === 'function') {
+            promise.catch(function () {
+              if (!videoReleased) releaseVideo('autoplay-rejected');
+            });
           }
-          overlay.classList.add('app-splash--video-ready');
-          scheduleVisualReady();
-        },
-        { once: true }
-      );
-
-      video.addEventListener(
-        'playing',
-        function () {
-        },
-        { once: true }
-      );
-
-      video.addEventListener(
-        'ended',
-        function () {
-          markVisualReady();
-        },
-        { once: true }
-      );
-
-      video.addEventListener(
-        'error',
-        function () {
-          var elapsed = performance.now() - startedAt;
-          var remaining = Math.max(0, minVisualMs - elapsed);
-          window.setTimeout(markVisualReady, remaining);
-        },
-        { once: true }
-      );
-
-      window.setTimeout(markVisualReady, maxVisualMs);
-
-      // Never allow a document-level splash to become a permanent black
-      // screen. Normally Flutter dispatches the ready event after its first
-      // frame; this only covers an unexpected startup failure before that
-      // event can be emitted, leaving the actual runtime error inspectable.
-      window.setTimeout(function () {
-        if (hidden) {
-          return;
+        } catch (_) {
+          releaseVideo('autoplay-rejected');
         }
-        forceHide = true;
-        window.__appSplashMetrics.forcedAt = performance.now();
-        maybeHide();
-      }, 8000);
+      }
 
-      window.setTimeout(function () {
-        if (!video.paused || hidden || visualReady) {
-          return;
+      function onResume() {
+        if (disposed || document.hidden) return;
+        if (startedAt === null) {
+          if (presentationRequest === null) {
+            presentationRequest = window.requestAnimationFrame(startPresentation);
+          }
+        } else if (performance.now() >= deadlineAt) {
+          // Browser background throttling must never restart the video or timer.
+          reachDeadline();
         }
-        var playPromise = video.play();
-        if (playPromise && typeof playPromise.catch === 'function') {
-          playPromise.catch(function () {
-            var elapsed = performance.now() - startedAt;
-            var remaining = Math.max(0, minVisualMs - elapsed);
-            window.setTimeout(markVisualReady, remaining);
-          });
+      }
+
+      function onVisibilityChange() {
+        if (document.hidden && startedAt !== null) {
+          releaseVideo('backgrounded');
+        } else {
+          onResume();
         }
-      }, 120);
+      }
+
+      function reloadApp() {
+        window.location.reload();
+      }
+
+      window.addEventListener('delivery-mat3mk-web-splash-ready', onAppReady);
+      window.addEventListener('pageshow', onResume);
+      document.addEventListener('visibilitychange', onVisibilityChange);
+      video.addEventListener('loadedmetadata', fitPlaybackToDeadline);
+      video.addEventListener('playing', onPlaying);
+      video.addEventListener('error', onVideoError);
+      if (retry) retry.addEventListener('click', reloadApp);
+      // Keep this controller inline: the startup clock must not await a JS fetch.
+      presentationRequest = window.requestAnimationFrame(startPresentation);
     })();
   </script>
 

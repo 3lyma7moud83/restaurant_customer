@@ -1,3 +1,4 @@
+import '../core/cache/local_reference_cache.dart';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -7,7 +8,7 @@ import 'session_manager.dart';
 class CategoriesService {
   static final _client = Supabase.instance.client;
   static const Duration _cacheTtl = Duration(minutes: 5);
-  static final Map<String, _CategoriesCacheEntry> _categoriesCache = {};
+  static final _cache = LocalReferenceCache('customer_categories');
   static const int _defaultPageSize = 80;
 
   @visibleForTesting
@@ -46,6 +47,27 @@ class CategoriesService {
     int page = 0,
     int pageSize = _defaultPageSize,
   }) async {
+    final user = _client.auth.currentUser?.id ?? 'anonymous';
+    final key =
+        '$restaurantId:$managerId:${page < 0 ? 0 : page}:${pageSize <= 0 ? _defaultPageSize : pageSize}';
+    return _cache.read(
+        scope: user,
+        key: key,
+        ttl: _cacheTtl,
+        forceRefresh: forceRefresh,
+        isCurrent: () => (_client.auth.currentUser?.id ?? 'anonymous') == user,
+        load: () => _fetchByRestaurant(
+            restaurantId: restaurantId,
+            managerId: managerId,
+            page: page,
+            pageSize: pageSize));
+  }
+
+  static Future<List<Map<String, dynamic>>> _fetchByRestaurant(
+      {required String restaurantId,
+      String? managerId,
+      required int page,
+      required int pageSize}) async {
     final normalizedRestaurantId = restaurantId.trim();
     final normalizedManagerId = (managerId ?? '').trim();
     final safePageSize = pageSize <= 0 ? _defaultPageSize : pageSize;
@@ -53,12 +75,6 @@ class CategoriesService {
     final to = from + safePageSize - 1;
 
     try {
-      final cacheKey = '$normalizedRestaurantId::$normalizedManagerId';
-      final cached = forceRefresh ? null : _categoriesCache[cacheKey];
-      if (cached != null && !cached.isExpired) {
-        return cached.value;
-      }
-
       debugPrint(
         '[CategoriesService.getByRestaurantCached] query: restaurant_id=$normalizedRestaurantId, '
         'manager_id=$normalizedManagerId, range=$from:$to',
@@ -91,7 +107,7 @@ class CategoriesService {
         },
       );
       if (res == null) {
-        return const [];
+        throw StateError('Category read unavailable');
       }
 
       final categories = res
@@ -110,10 +126,6 @@ class CategoriesService {
         );
       }
 
-      _categoriesCache[cacheKey] = _CategoriesCacheEntry(
-        value: categories,
-        cachedAt: DateTime.now(),
-      );
       return categories;
     } catch (error, stack) {
       await ErrorLogger.logError(
@@ -173,16 +185,4 @@ class CategoriesService {
     }
     return normalized;
   }
-}
-
-class _CategoriesCacheEntry {
-  const _CategoriesCacheEntry({
-    required this.value,
-    required this.cachedAt,
-  });
-
-  final List<Map<String, dynamic>> value;
-  final DateTime cachedAt;
-
-  bool get isExpired => !CategoriesService.isCacheFresh(cachedAt: cachedAt);
 }

@@ -15,6 +15,7 @@ import 'core/theme/theme_controller.dart';
 import 'core/ui/web_startup_splash.dart';
 import 'cart/cart_provider.dart';
 import 'pages/home_page.dart';
+import 'pages/splash_video_screen.dart';
 import 'services/notifications/app_notification_service.dart';
 import 'services/session_manager.dart';
 
@@ -24,17 +25,36 @@ Future<void> main() async {
   _configureGlobalErrorHandling();
   _bootstrapLog('Global error handling configured.');
 
+  // Paint immediately while the existing bootstrap restores the session.
+  // The splash covers the destination; it never replaces its Navigator route.
+  runApp(SplashVideoScreen<_StartupConfiguration>(
+    initialization: _prepareStartup(),
+    destinationBuilder: (context, startup) => CustomerApp(
+      bootstrapResult: startup.result,
+      initialThemeMode: startup.themeMode,
+    ),
+    errorBuilder: (context, error, stack) => const CustomerApp(
+      bootstrapResult: BootstrapResult.fail('app.bootstrap_env_error'),
+    ),
+  ));
+  _bootstrapLog('runApp executed.');
+}
+
+Future<_StartupConfiguration> _prepareStartup() async {
   final bootstrapResult = await _bootstrap();
   final initialThemeMode = await ThemeController.loadInitialMode();
   _bootstrapLog(
     'Bootstrap completed. ok=${bootstrapResult.ok}, '
     'message=${bootstrapResult.message ?? 'none'}.',
   );
-  runApp(CustomerApp(
-    bootstrapResult: bootstrapResult,
-    initialThemeMode: initialThemeMode,
-  ));
-  _bootstrapLog('runApp executed.');
+  return _StartupConfiguration(bootstrapResult, initialThemeMode);
+}
+
+class _StartupConfiguration {
+  const _StartupConfiguration(this.result, this.themeMode);
+
+  final BootstrapResult result;
+  final ThemeMode themeMode;
 }
 
 class CustomerApp extends StatefulWidget {

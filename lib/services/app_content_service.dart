@@ -1,3 +1,4 @@
+import '../core/cache/local_reference_cache.dart';
 import 'package:flutter/widgets.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -110,8 +111,7 @@ class AppContentService {
   AppContentService._();
 
   static final SupabaseClient _client = Supabase.instance.client;
-  static const Duration _cacheTtl = Duration(minutes: 10);
-  static final Map<String, _AppContentCacheEntry> _cache = {};
+  static final _local = LocalReferenceCache('customer_content');
 
   static const String _selectFields = '''
     id,
@@ -130,16 +130,11 @@ class AppContentService {
     bool forceRefresh = false,
   }) async {
     final language = locale.languageCode.toLowerCase() == 'ar' ? 'ar' : 'en';
-    final cacheKey = '${section.keyName}:$language';
-    final cached = forceRefresh ? null : _cache[cacheKey];
-    if (cached != null && !cached.isExpired) {
-      return cached.value;
-    }
-
     try {
       final currentLanguageEntry = await _fetchEntryByLanguage(
         section: section,
         language: language,
+        forceRefresh: forceRefresh,
       );
       final fallbackEnglishEntry = shouldFetchEnglishContentFallback(
         language: language,
@@ -148,16 +143,13 @@ class AppContentService {
           ? await _fetchEntryByLanguage(
               section: section,
               language: 'en',
+              forceRefresh: forceRefresh,
             )
           : null;
 
       final resolved = currentLanguageEntry ??
           fallbackEnglishEntry ??
           _fallbackEntry(section: section, language: language);
-      _cache[cacheKey] = _AppContentCacheEntry(
-        value: resolved,
-        cachedAt: DateTime.now(),
-      );
       return resolved;
     } catch (error, stack) {
       await ErrorLogger.logError(
@@ -172,29 +164,33 @@ class AppContentService {
   static Future<AppContentEntry?> _fetchEntryByLanguage({
     required AppContentSection section,
     required String language,
+    bool forceRefresh = false,
   }) async {
-    final row = await SessionManager.instance
-        .runWithValidSession<Map<String, dynamic>?>(() async {
-      final result = await _client
-          .from('app_content_entries')
-          .select(_selectFields)
-          .eq('entry_key', section.keyName)
-          .eq('language', language)
-          .eq('is_active', true)
-          .order('updated_at', ascending: false)
-          .limit(1)
-          .maybeSingle();
-
-      if (result == null) {
-        return null;
-      }
-      return Map<String, dynamic>.from(result);
-    });
-
-    if (row == null) {
-      return null;
-    }
-    return AppContentEntry.fromRow(row);
+    final user = _client.auth.currentUser?.id ?? 'anonymous';
+    final rows = await _local.read(
+        scope: user,
+        key: '${section.keyName}:$language',
+        ttl: section == AppContentSection.appSettings
+            ? const Duration(minutes: 10)
+            : const Duration(hours: 1),
+        forceRefresh: forceRefresh,
+        isCurrent: () => (_client.auth.currentUser?.id ?? 'anonymous') == user,
+        load: () async {
+          final result = await SessionManager.instance
+              .runWithValidSession<List<dynamic>>(() => _client
+                  .from('app_content_entries')
+                  .select(_selectFields)
+                  .eq('entry_key', section.keyName)
+                  .eq('language', language)
+                  .eq('is_active', true)
+                  .order('updated_at', ascending: false)
+                  .limit(1));
+          if (result == null) throw StateError('Content unavailable');
+          return result
+              .map((row) => Map<String, dynamic>.from(row as Map))
+              .toList();
+        });
+    return rows.isEmpty ? null : AppContentEntry.fromRow(rows.first);
   }
 
   static AppContentEntry _fallbackEntry({
@@ -264,22 +260,6 @@ class AppContentService {
       contentEn: 'v1.0.0',
     ),
   };
-}
-
-class _AppContentCacheEntry {
-  const _AppContentCacheEntry({
-    required this.value,
-    required this.cachedAt,
-  });
-
-  final AppContentEntry value;
-  final DateTime cachedAt;
-
-  bool get isExpired => !isAppContentCacheFresh(
-        cachedAt: cachedAt,
-        now: DateTime.now(),
-        ttl: AppContentService._cacheTtl,
-      );
 }
 
 class _FallbackContent {

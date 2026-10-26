@@ -8,9 +8,19 @@ class ItemsService {
   static final _client = Supabase.instance.client;
   static const Duration _cacheTtl = Duration(minutes: 5);
   static final Map<String, _ItemsCacheEntry> _itemsCache = {};
+  static final Map<String, Future<List<Map<String, dynamic>>>> _pending = {};
+  static final Map<String, Future<List<Map<String, dynamic>>>> _forced = {};
+  static int _cacheVersion = 0;
   static const int _defaultPageSize = 80;
   static const String _variantSelectColumns =
       'id, item_id, name, price, sort_order, created_at';
+
+  static void _invalidateItems() {
+    _cacheVersion++;
+    _itemsCache.clear();
+    _pending.clear();
+    _forced.clear();
+  }
 
   @visibleForTesting
   static bool isCacheFresh({
@@ -44,6 +54,50 @@ class ItemsService {
     int page = 0,
     int pageSize = _defaultPageSize,
   }) async {
+    final user = _client.auth.currentUser?.id ?? 'anonymous';
+    final size = pageSize <= 0 ? _defaultPageSize : pageSize;
+    final start = (page < 0 ? 0 : page) * size;
+    final key =
+        '$user::${restaurantId.trim()}::${categoryId.trim()}::$start::${start + size - 1}';
+    if (forceRefresh) {
+      final active = _forced[key];
+      if (active != null) return active;
+      _cacheVersion++;
+      _itemsCache.remove(key);
+      _pending.remove(key);
+    } else {
+      final active = _pending[key];
+      if (active != null) return active;
+    }
+    final version = _cacheVersion;
+    final task = _fetchByCategory(
+      restaurantId: restaurantId,
+      categoryId: categoryId,
+      forceRefresh: forceRefresh,
+      page: page,
+      pageSize: pageSize,
+      expectedVersion: version,
+      expectedUser: user,
+    );
+    _pending[key] = task;
+    if (forceRefresh) _forced[key] = task;
+    try {
+      return await task;
+    } finally {
+      if (identical(_pending[key], task)) _pending.remove(key);
+      if (identical(_forced[key], task)) _forced.remove(key);
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> _fetchByCategory({
+    required String restaurantId,
+    required String categoryId,
+    required bool forceRefresh,
+    required int page,
+    required int pageSize,
+    required int expectedVersion,
+    required String expectedUser,
+  }) async {
     final normalizedRestaurantId = restaurantId.trim();
     final normalizedCategoryId = categoryId.trim();
     final safePageSize = pageSize <= 0 ? _defaultPageSize : pageSize;
@@ -51,7 +105,8 @@ class ItemsService {
     final to = from + safePageSize - 1;
 
     try {
-      final cacheKey = '$normalizedRestaurantId::$normalizedCategoryId';
+      final cacheKey =
+          '${_client.auth.currentUser?.id ?? 'anonymous'}::$normalizedRestaurantId::$normalizedCategoryId::$from::$to';
       final cached = forceRefresh ? null : _itemsCache[cacheKey];
       if (cached != null && !cached.isExpired) {
         return cached.value;
@@ -74,7 +129,7 @@ class ItemsService {
             .range(from, to),
       );
       if (res == null) {
-        return const [];
+        throw StateError('Item read unavailable');
       }
 
       final items = res
@@ -83,6 +138,10 @@ class ItemsService {
           .toList(growable: false);
       final sortedItems = _sortItems(items);
       final itemsWithVariants = await _attachVariants(sortedItems);
+      if (_cacheVersion != expectedVersion ||
+          (_client.auth.currentUser?.id ?? 'anonymous') != expectedUser) {
+        throw StateError('Item read superseded');
+      }
       debugPrint(
         '[ItemsService.fetchByCategory] response_count=${itemsWithVariants.length} '
         'restaurant_id=$normalizedRestaurantId category_id=$normalizedCategoryId',
@@ -151,9 +210,7 @@ class ItemsService {
             throw const SessionExpiredException();
           }
 
-          _itemsCache.remove(
-            '${context.restaurantId?.trim() ?? ''}::$normalizedCategoryId',
-          );
+          _invalidateItems();
           return res;
         } on PostgrestException catch (error) {
           if (_isSchemaMismatchError(error)) {
@@ -207,7 +264,7 @@ class ItemsService {
       throw const SessionExpiredException();
     }
 
-    _itemsCache.clear();
+    _invalidateItems();
   }
 
   static Future<void> updateItemImageUrl({
@@ -228,7 +285,7 @@ class ItemsService {
       throw const SessionExpiredException();
     }
 
-    _itemsCache.clear();
+    _invalidateItems();
   }
 
   static Future<void> deleteItem({
@@ -246,7 +303,7 @@ class ItemsService {
       throw const SessionExpiredException();
     }
 
-    _itemsCache.clear();
+    _invalidateItems();
   }
 
   static Future<_ItemInsertContext> _resolveInsertContext(

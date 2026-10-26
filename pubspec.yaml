@@ -2,7 +2,7 @@ name: restaurant_customer
 description: "Restaurant Customer App"
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 2.0.1+1
 
 environment:
   sdk: ^3.6.0
@@ -42,6 +42,8 @@ flutter:
 
   assets:
     - assets/env/
+    - assets/videos/splash.mp4
+    - assets/videos/splash_poster.jpg
 
   fonts:
     - family: Cairo
