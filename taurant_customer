@@ -1,0 +1,14 @@
+warning: in the working copy of 'lib/pages/splash_video_screen.dart', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'lib/services/app_content_service.dart', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'lib/services/categories_service.dart', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'lib/services/restaurants_service.dart', LF will be replaced by CRLF the next time Git touches it
+ assets/videos/splash.mp4              | Bin [31m2900672[m -> [32m785080[m bytes
+ lib/main.dart                         |  30 [32m++[m[31m-[m
+ lib/pages/splash_video_screen.dart    | 417 [32m++++++++++++++++++++++[m[31m------------[m
+ lib/services/app_content_service.dart |  80 [32m+++[m[31m----[m
+ lib/services/categories_service.dart  |  48 [32m++[m[31m--[m
+ lib/services/items_service.dart       |  73 [32m+++++[m[31m-[m
+ lib/services/restaurants_service.dart |  73 [32m+++[m[31m---[m
+ pubspec.yaml                          |   4 [32m+[m[31m-[m
+ web/index.html                        | 395 [32m+++++++++++++++++++++++[m[31m---------[m
+ 9 files changed, 741 insertions(+), 379 deletions(-)
