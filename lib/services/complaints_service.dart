@@ -1,13 +1,62 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
+
+import 'package:crypto/crypto.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../core/services/error_logger.dart';
 import 'session_manager.dart';
 
-class ComplaintsService {
-  ComplaintsService._();
+class ComplaintSubmissionException implements Exception {
+  const ComplaintSubmissionException(this.message);
+  final String message;
+  @override
+  String toString() => message;
+}
 
-  static final SupabaseClient _client = Supabase.instance.client;
-  static Future<void> submitComplaint({
+class ComplaintsService {
+  ComplaintsService({
+    required SupabaseClient client,
+    required Future<Session?> Function() validateSession,
+    this.requestTimeout = const Duration(seconds: 15),
+  })  : _client = client,
+        _validateSession = validateSession;
+
+  static final ComplaintsService _shared = ComplaintsService(
+    client: Supabase.instance.client,
+    validateSession: () => SessionManager.instance.ensureValidSession(
+      requireSession: true,
+    ),
+  );
+  final SupabaseClient _client;
+  final Future<Session?> Function() _validateSession;
+  final Duration requestTimeout;
+  final Map<String, Future<String>> _inFlight = {};
+  static final RegExp _uuid = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  );
+  static const _columns =
+      'id,user_id,restaurant_id,complaint_title,complaint_message';
+  static const _uncertainMessage =
+      'تعذر تأكيد حفظ الشكوى. تحقق من الاتصال ثم اضغط إرسال مرة أخرى؛ سنتحقق من الحفظ أولًا لتجنب التكرار.';
+
+  static Future<String> submitComplaint({
+    required String userId,
+    required String title,
+    required String description,
+    String? restaurantId,
+    String? orderId,
+  }) =>
+      _shared.submit(
+        userId: userId,
+        title: title,
+        description: description,
+        restaurantId: restaurantId,
+        orderId: orderId,
+      );
+
+  Future<String> submit({
     required String userId,
     required String title,
     required String description,
@@ -16,259 +65,227 @@ class ComplaintsService {
   }) async {
     final normalizedTitle = title.trim();
     final normalizedDescription = description.trim();
-    final normalizedRestaurantId = restaurantId?.trim();
-    final normalizedOrderId = orderId?.trim();
-
-    if (normalizedTitle.isEmpty) {
-      throw Exception('عنوان الشكوى مطلوب.');
-    }
-    if (normalizedTitle.length < 4) {
-      throw Exception('عنوان الشكوى قصير جدًا.');
-    }
-    if (normalizedDescription.isEmpty) {
-      throw Exception('وصف الشكوى مطلوب.');
-    }
-    if (normalizedDescription.length < 10) {
-      throw Exception('وصف الشكوى قصير جدًا.');
-    }
-
-    try {
-      await SessionManager.instance.runWithValidSession<void>(
-        () async {
-          final target = await _resolveComplaintTarget(
-            userId: userId,
-            preferredRestaurantId: normalizedRestaurantId,
-            preferredOrderId: normalizedOrderId,
-          );
-          if (target.restaurantId.isEmpty) {
-            throw StateError(
-              'تعذر تحديد المطعم المرتبط بالشكوى. افتح قائمة مطعم أو اطلب منه أولًا ثم أعد المحاولة.',
-            );
-          }
-
-          final createdAt = DateTime.now().toUtc().toIso8601String();
-          await _insertComplaintWithSchemaFallback(
-            userId: userId,
-            restaurantId: target.restaurantId,
-            title: normalizedTitle,
-            description: normalizedDescription,
-            createdAtIso: createdAt,
-          );
-        },
-        requireSession: true,
-      );
-    } on StateError catch (error, stack) {
-      await ErrorLogger.logError(
-        module: 'complaints_service.submitComplaint.validation',
-        error: error,
-        stack: stack,
-      );
-      throw Exception(error.message);
-    } catch (error, stack) {
-      await ErrorLogger.logError(
-        module: 'complaints_service.submitComplaint',
-        error: error,
-        stack: stack,
-      );
-      throw Exception(ErrorLogger.userMessage);
-    }
-  }
-
-  static Future<_ComplaintTarget> _resolveComplaintTarget({
-    required String userId,
-    String? preferredRestaurantId,
-    String? preferredOrderId,
-  }) async {
-    final normalizedRestaurantId = preferredRestaurantId?.trim();
-    final normalizedOrderId = preferredOrderId?.trim();
-
-    if (normalizedRestaurantId != null && normalizedRestaurantId.isNotEmpty) {
-      return _ComplaintTarget(
-        restaurantId: normalizedRestaurantId,
-        orderId: normalizedOrderId == null || normalizedOrderId.isEmpty
-            ? null
-            : normalizedOrderId,
+    final normalizedRestaurant = _nonEmpty(restaurantId);
+    final normalizedOrder = _nonEmpty(orderId);
+    if (normalizedTitle.length < 4 || normalizedTitle.length > 120) {
+      throw const ComplaintSubmissionException(
+        'عنوان الشكوى يجب أن يكون بين 4 و120 حرفًا.',
       );
     }
-
-    if (normalizedOrderId != null && normalizedOrderId.isNotEmpty) {
-      final orderTarget = await _loadOrderTargetByOrderId(
-        userId: userId,
-        orderId: normalizedOrderId,
+    if (normalizedDescription.length < 10 ||
+        normalizedDescription.length > 1000) {
+      throw const ComplaintSubmissionException(
+        'وصف الشكوى يجب أن يكون بين 10 و1000 حرف.',
       );
-      if (orderTarget != null) {
-        return orderTarget;
-      }
     }
-
-    final latestTarget = await _loadLatestOrderTarget(userId: userId);
-    if (latestTarget != null) {
-      return latestTarget;
+    if ((normalizedRestaurant != null &&
+            !_uuid.hasMatch(normalizedRestaurant)) ||
+        (normalizedOrder != null && !_uuid.hasMatch(normalizedOrder))) {
+      throw const ComplaintSubmissionException(
+        'تعذر تحديد المطعم المرتبط بالشكوى. افتح صفحة المطعم مجددًا.',
+      );
     }
-
-    return const _ComplaintTarget(restaurantId: '');
-  }
-
-  static Future<_ComplaintTarget?> _loadOrderTargetByOrderId({
-    required String userId,
-    required String orderId,
-  }) async {
-    final normalizedOrderId = orderId.trim();
-    if (normalizedOrderId.isEmpty) {
-      return null;
-    }
-
-    final row = await _client
-        .from('orders')
-        .select('id, restaurant_id')
-        .eq('id', normalizedOrderId)
-        .eq('customer_id', userId)
-        .maybeSingle();
-    if (row is Map<String, dynamic>) {
-      final target = _targetFromOrderRow(row);
-      if (target != null) {
-        return target;
-      }
-    }
-    return null;
-  }
-
-  static Future<_ComplaintTarget?> _loadLatestOrderTarget({
-    required String userId,
-  }) async {
-    final row = await _client
-        .from('orders')
-        .select('id, restaurant_id, created_at')
-        .eq('customer_id', userId)
-        .order('created_at', ascending: false)
-        .limit(1)
-        .maybeSingle();
-    if (row is Map<String, dynamic>) {
-      final target = _targetFromOrderRow(row);
-      if (target != null) {
-        return target;
-      }
-    }
-    return null;
-  }
-
-  static _ComplaintTarget? _targetFromOrderRow(Map<String, dynamic> row) {
-    final restaurantId = row['restaurant_id']?.toString().trim() ?? '';
-    final orderId = row['id']?.toString().trim();
-    if (restaurantId.isEmpty) {
-      return null;
-    }
-    return _ComplaintTarget(
-      restaurantId: restaurantId,
-      orderId: orderId == null || orderId.isEmpty ? null : orderId,
+    // Store only a fingerprint and a random ID, never complaint text or tokens.
+    // A lost response or closing the sheet must not generate a new INSERT ID.
+    final fingerprint = sha256
+        .convert(utf8.encode(jsonEncode([
+          _client.rest.url,
+          userId,
+          normalizedRestaurant,
+          normalizedOrder,
+          normalizedTitle,
+          normalizedDescription,
+        ])))
+        .toString();
+    final existing = _inFlight[fingerprint];
+    if (existing != null) return existing;
+    final operation = _submitOnce(
+      userId: userId,
+      title: normalizedTitle,
+      description: normalizedDescription,
+      restaurantId: normalizedRestaurant,
+      orderId: normalizedOrder,
+      storageKey: 'complaint.pending.v1.$fingerprint',
     );
+    _inFlight[fingerprint] = operation;
+    try {
+      return await operation;
+    } finally {
+      _inFlight.remove(fingerprint);
+    }
   }
 
-  static Future<void> _insertComplaintWithSchemaFallback({
+  Future<String> _submitOnce({
     required String userId,
-    required String restaurantId,
     required String title,
     required String description,
-    required String createdAtIso,
+    required String? restaurantId,
+    required String? orderId,
+    required String storageKey,
   }) async {
-    final primaryPayload = <String, dynamic>{
-      'customer_id': userId,
-      'restaurant_id': restaurantId,
-      'title': title,
-      'description': description,
-      'created_at': createdAtIso,
-    };
-
     try {
-      await _client.from('complaints').insert(primaryPayload);
-      return;
-    } on PostgrestException catch (primaryError, primaryStack) {
-      if (!_shouldTryLegacyPayload(primaryError)) {
-        rethrow;
+      final session = await _validateSession().timeout(requestTimeout);
+      if (session == null || session.user.id != userId) {
+        throw const ComplaintSubmissionException('سجل الدخول لإرسال الشكوى.');
       }
-
-      await ErrorLogger.logError(
-        module: 'complaints_service.insert.primary_schema_mismatch',
-        error: primaryError,
-        stack: primaryStack,
+      _checkCurrentUser(userId);
+      final targetRestaurant = await _resolveRestaurant(
+        userId: userId,
+        restaurantId: restaurantId,
+        orderId: orderId,
       );
-
-      final legacyPayload = <String, dynamic>{
+      final prefs = await SharedPreferences.getInstance();
+      final pendingId = prefs.getString(storageKey);
+      final requestId = pendingId ?? _newRequestId();
+      final payload = <String, dynamic>{
+        'id': requestId,
         'user_id': userId,
-        'restaurant_id': restaurantId,
-        'customer_name': _fallbackCustomerName(),
-        'customer_phone': _fallbackCustomerPhone(),
+        'restaurant_id': targetRestaurant,
+        'customer_name': _customerName(session.user),
+        'customer_phone': _customerPhone(session.user),
         'complaint_title': title,
         'complaint_message': description,
-        'created_at': createdAtIso,
       };
-      await _client.from('complaints').insert(legacyPayload);
-    }
-  }
-
-  static bool _shouldTryLegacyPayload(PostgrestException error) {
-    final code = (error.code ?? '').trim();
-    if (code == '42703' || code == '23502') {
-      return true;
-    }
-
-    final message = [
-      error.message,
-      error.details,
-      error.hint,
-    ].whereType<String>().join(' ').toLowerCase();
-
-    return message.contains('customer_id') ||
-        message.contains('description') ||
-        message.contains('title') ||
-        message.contains('complaint_title') ||
-        message.contains('complaint_message') ||
-        message.contains('user_id') ||
-        message.contains('customer_name') ||
-        message.contains('customer_phone');
-  }
-
-  static String _fallbackCustomerName() {
-    final user = _client.auth.currentUser;
-    final metadata = user?.userMetadata;
-    final candidates = [
-      metadata?['name'],
-      metadata?['full_name'],
-      metadata?['display_name'],
-      user?.email,
-    ];
-    for (final candidate in candidates) {
-      final text = candidate?.toString().trim() ?? '';
-      if (text.isNotEmpty) {
-        return text;
+      if (pendingId != null) {
+        final saved = await _findSaved(requestId, userId);
+        if (saved != null) {
+          _verifySaved(saved, payload);
+          _checkCurrentUser(userId);
+          await prefs.remove(storageKey);
+          return requestId;
+        }
+      } else if (!await prefs.setString(storageKey, requestId)) {
+        throw const ComplaintSubmissionException(
+          'تعذر تجهيز إرسال آمن للشكوى. حاول مرة أخرى.',
+        );
       }
+      _checkCurrentUser(userId);
+      Map<String, dynamic> saved;
+      try {
+        saved = await _client
+            .from('complaints')
+            .insert(payload)
+            .select(_columns)
+            .single()
+            .timeout(requestTimeout);
+      } on PostgrestException catch (error) {
+        if (error.code != '23505') rethrow;
+        // A previous timed-out INSERT can finish after reconciliation. The
+        // primary key prevents a second row even in this race.
+        final existing = await _findSaved(requestId, userId);
+        if (existing == null) rethrow;
+        saved = existing;
+      }
+      _verifySaved(saved, payload);
+      _checkCurrentUser(userId);
+      await prefs.remove(storageKey);
+      return requestId;
+    } on ComplaintSubmissionException {
+      rethrow;
+    } on PostgrestException catch (error) {
+      if (error.code == '42501') {
+        throw const ComplaintSubmissionException(
+          'تعذر إرسال الشكوى بسبب صلاحيات الحساب. سجل الدخول مجددًا أو تواصل مع الدعم.',
+        );
+      }
+      if (error.code == 'PGRST301' || error.code == 'PGRST303') {
+        throw const ComplaintSubmissionException(
+            'انتهت الجلسة. سجل الدخول مجددًا.');
+      }
+      // Do not expose database details or retry another schema/INSERT.
+      throw const ComplaintSubmissionException(
+        'تعذر حفظ الشكوى في الخدمة. حاول لاحقًا أو تواصل مع الدعم.',
+      );
+    } on AuthException {
+      throw const ComplaintSubmissionException('سجل الدخول لإرسال الشكوى.');
+    } on SessionExpiredException {
+      throw const ComplaintSubmissionException(
+          'انتهت الجلسة. سجل الدخول مجددًا.');
+    } catch (_) {
+      // Timeout/network failure does not prove whether INSERT committed.
+      // Reconcile the preserved ID only on the user's next explicit attempt.
+      throw const ComplaintSubmissionException(_uncertainMessage);
+    }
+  }
+
+  Future<String?> _resolveRestaurant({
+    required String userId,
+    required String? restaurantId,
+    required String? orderId,
+  }) async {
+    if (orderId == null) return restaurantId;
+    final row = await _client
+        .from('orders')
+        .select('restaurant_id')
+        .eq('id', orderId)
+        .eq('customer_id', userId)
+        .maybeSingle()
+        .timeout(requestTimeout);
+    final orderRestaurant = _nonEmpty(row?['restaurant_id']?.toString());
+    if (orderRestaurant == null ||
+        (restaurantId != null && restaurantId != orderRestaurant)) {
+      throw const ComplaintSubmissionException(
+        'الطلب المحدد غير متاح لحسابك أو لا يخص هذا المطعم.',
+      );
+    }
+    return orderRestaurant;
+  }
+
+  Future<Map<String, dynamic>?> _findSaved(String id, String userId) {
+    _checkCurrentUser(userId);
+    return _client
+        .from('complaints')
+        .select(_columns)
+        .eq('id', id)
+        .eq('user_id', userId)
+        .maybeSingle()
+        .timeout(requestTimeout);
+  }
+
+  void _verifySaved(Map<String, dynamic> saved, Map<String, dynamic> payload) {
+    for (final field in _columns.split(',')) {
+      if (saved[field] != payload[field]) {
+        throw const ComplaintSubmissionException(_uncertainMessage);
+      }
+    }
+  }
+
+  void _checkCurrentUser(String userId) {
+    if (_client.auth.currentUser?.id != userId) {
+      throw const ComplaintSubmissionException('سجل الدخول لإرسال الشكوى.');
+    }
+  }
+
+  static String? _nonEmpty(String? value) {
+    final normalized = value?.trim();
+    return normalized == null || normalized.isEmpty ? null : normalized;
+  }
+
+  static String _customerName(User user) {
+    for (final candidate in [
+      user.userMetadata?['name'],
+      user.userMetadata?['full_name'],
+      user.userMetadata?['display_name'],
+      user.email
+    ]) {
+      final value = _nonEmpty(candidate?.toString());
+      if (value != null) return value;
     }
     return 'عميل';
   }
 
-  static String _fallbackCustomerPhone() {
-    final user = _client.auth.currentUser;
-    final metadata = user?.userMetadata;
-    final candidates = [
-      metadata?['phone'],
-      user?.phone,
-    ];
-    for (final candidate in candidates) {
-      final text = candidate?.toString().trim() ?? '';
-      if (text.isNotEmpty) {
-        return text;
-      }
-    }
-    return '-';
+  static String? _customerPhone(User user) =>
+      _nonEmpty(user.phone) ??
+      _nonEmpty(user.userMetadata?['phone']?.toString());
+
+  static String _newRequestId() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    final hex =
+        bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
+        '${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
   }
-}
-
-class _ComplaintTarget {
-  const _ComplaintTarget({
-    required this.restaurantId,
-    this.orderId,
-  });
-
-  final String restaurantId;
-  final String? orderId;
 }
