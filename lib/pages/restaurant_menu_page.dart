@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import '../core/ui/app_motion.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
 import '../cart/cart_page.dart';
@@ -12,6 +14,7 @@ import '../core/services/error_logger.dart';
 import '../core/theme/app_theme.dart';
 import '../core/ui/input_focus_guard.dart';
 import '../core/ui/app_snackbar.dart';
+import '../core/ui/app_components.dart';
 import '../core/ui/responsive.dart';
 import '../services/categories_service.dart';
 import '../services/items_service.dart';
@@ -40,6 +43,7 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
   String? selectedCategoryId;
   bool loading = true;
   int _itemsRequestId = 0;
+  final Set<String> _enteredItemIds = <String>{};
 
   @override
   void initState() {
@@ -364,6 +368,7 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
     await Navigator.push(
       context,
       AppTheme.platformPageRoute(
+        motion: AppRouteMotion.checkout,
         builder: (_) => CartPage(
           restaurantId: cart.restaurantId ?? widget.restaurantId,
         ),
@@ -433,10 +438,11 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
                       margin: const EdgeInsets.only(bottom: 12),
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFFF6EE),
+                        color:
+                            Theme.of(context).colorScheme.surfaceContainerHigh,
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(
-                          color: const Color(0xFFF4DEC8),
+                          color: Theme.of(context).colorScheme.outlineVariant,
                         ),
                       ),
                       child: Row(
@@ -515,8 +521,8 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
                           return Center(
                             child: Text(
                               context.tr('menu.select_category_first'),
-                              style: const TextStyle(
-                                color: Color(0xFF667085),
+                              style: TextStyle(
+                                color: AppTheme.colorsOf(context).textSecondary,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -527,8 +533,8 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
                           return Center(
                             child: Text(
                               context.tr('menu.no_items_here'),
-                              style: const TextStyle(
-                                color: Color(0xFF667085),
+                              style: TextStyle(
+                                color: AppTheme.colorsOf(context).textSecondary,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -568,29 +574,34 @@ class _RestaurantMenuPageState extends State<RestaurantMenuPage> {
                             final initialVariant =
                                 variants.isEmpty ? null : variants.first;
 
-                            return RepaintBoundary(
-                              child: ItemCard(
-                                key: ValueKey('menu-item-card-$itemId'),
-                                itemId: itemId,
-                                name: itemName,
-                                basePrice: price,
-                                imageUrl: imageUrl,
-                                variants: variants,
-                                initialSelectedVariant: initialVariant,
-                                onAdd: (selectedVariant) {
-                                  final selectedPrice =
-                                      selectedVariant?.price ?? price;
-                                  unawaited(
-                                    _handleAddItem(
-                                      cart: cart,
-                                      itemId: itemId,
-                                      itemName: itemName,
-                                      price: selectedPrice,
-                                      imageUrl: imageUrl,
-                                      variant: selectedVariant,
-                                    ),
-                                  );
-                                },
+                            return AppEntryTransition(
+                              key: ValueKey('menu-item-entry-$itemId'),
+                              animate: _enteredItemIds.add(itemId),
+                              index: index,
+                              child: RepaintBoundary(
+                                child: ItemCard(
+                                  key: ValueKey('menu-item-card-$itemId'),
+                                  itemId: itemId,
+                                  name: itemName,
+                                  basePrice: price,
+                                  imageUrl: imageUrl,
+                                  variants: variants,
+                                  initialSelectedVariant: initialVariant,
+                                  onAdd: (selectedVariant) {
+                                    final selectedPrice =
+                                        selectedVariant?.price ?? price;
+                                    unawaited(
+                                      _handleAddItem(
+                                        cart: cart,
+                                        itemId: itemId,
+                                        itemName: itemName,
+                                        price: selectedPrice,
+                                        imageUrl: imageUrl,
+                                        variant: selectedVariant,
+                                      ),
+                                    );
+                                  },
+                                ),
                               ),
                             );
                           },
@@ -625,32 +636,33 @@ class _MenuCategoryCard extends StatelessWidget {
     final horizontalPadding = selected ? 10.2 : 9.2;
 
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 210),
+      duration: AppMotion.duration(context, const Duration(milliseconds: 210)),
       curve: Curves.easeOutCubic,
       decoration: BoxDecoration(
         borderRadius: borderRadius,
         gradient: selected
-            ? const LinearGradient(
+            ? LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: [
-                  Color(0xFFF39538),
-                  Color(0xFFE07712),
+                  Theme.of(context).colorScheme.primary,
+                  Color.lerp(Theme.of(context).colorScheme.primary,
+                      Theme.of(context).colorScheme.onPrimary, 0.12)!,
                 ],
               )
             : null,
-        color: selected ? null : Colors.white,
+        color: selected ? null : Theme.of(context).colorScheme.surface,
         border: Border.all(
           color: selected
-              ? AppTheme.primary.withValues(alpha: 0.95)
-              : const Color(0xFFE9E2D8),
+              ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.95)
+              : Theme.of(context).colorScheme.outlineVariant,
           width: selected ? 1.0 : 0.95,
         ),
         boxShadow: [
           BoxShadow(
             color: selected
-                ? AppTheme.primary.withValues(alpha: 0.21)
-                : const Color(0x14000000),
+                ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.21)
+                : AppTheme.colorsOf(context).shadow,
             blurRadius: selected ? 8 : 5,
             offset: Offset(0, selected ? 4 : 3),
           ),
@@ -668,7 +680,8 @@ class _MenuCategoryCard extends StatelessWidget {
               vertical: selected ? 3.8 : 3.5,
             ),
             child: AnimatedDefaultTextStyle(
-              duration: const Duration(milliseconds: 220),
+              duration: AppMotion.duration(
+                  context, const Duration(milliseconds: 220)),
               curve: Curves.easeOutCubic,
               style: TextStyle(
                 color: textColor,
@@ -712,10 +725,13 @@ class _MenuCartAction extends StatelessWidget {
           message: context.tr('cart.title'),
           child: DecoratedBox(
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
+              gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [Colors.white, Color(0xFFF8F7F4)],
+                colors: [
+                  Theme.of(context).colorScheme.surface,
+                  Theme.of(context).colorScheme.surfaceContainerHigh
+                ],
               ),
               borderRadius: BorderRadius.circular(buttonRadius),
               border: Border.all(
@@ -723,12 +739,15 @@ class _MenuCartAction extends StatelessWidget {
               ),
               boxShadow: [
                 BoxShadow(
-                  color: AppTheme.primary.withValues(alpha: 0.11),
+                  color: Theme.of(context)
+                      .colorScheme
+                      .primary
+                      .withValues(alpha: 0.11),
                   blurRadius: 14,
                   offset: const Offset(0, 8),
                 ),
-                const BoxShadow(
-                  color: Color(0x10000000),
+                BoxShadow(
+                  color: AppTheme.colorsOf(context).shadow,
                   blurRadius: 8,
                   offset: Offset(0, 4),
                 ),
@@ -740,13 +759,13 @@ class _MenuCartAction extends StatelessWidget {
               child: InkWell(
                 borderRadius: BorderRadius.circular(buttonRadius),
                 onTap: onPressed,
-                child: const SizedBox(
+                child: SizedBox(
                   width: buttonExtent,
                   height: buttonExtent,
                   child: Icon(
                     Icons.shopping_bag_outlined,
                     size: 26,
-                    color: AppTheme.primary,
+                    color: Theme.of(context).colorScheme.primary,
                   ),
                 ),
               ),
@@ -763,15 +782,16 @@ class _MenuCartAction extends StatelessWidget {
               alignment: Alignment.center,
               padding: const EdgeInsets.symmetric(horizontal: 4),
               decoration: BoxDecoration(
-                color: AppTheme.primary,
+                color: Theme.of(context).colorScheme.primary,
                 borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: Colors.white, width: 1.1),
+                border: Border.all(
+                    color: Theme.of(context).colorScheme.surface, width: 1.1),
               ),
-              child: Text(
-                cartCount.toString(),
-                style: const TextStyle(
+              child: AppAnimatedCount(
+                value: cartCount,
+                style: TextStyle(
                   fontSize: 10,
-                  color: Colors.white,
+                  color: Theme.of(context).colorScheme.onPrimary,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -896,10 +916,14 @@ class _ItemCardState extends State<ItemCard> {
       return;
     }
 
+    if (AppMotion.reduceMotion(context)) {
+      widget.onAdd(_effectiveVariant);
+      return;
+    }
     setState(() => _pressed = true);
     _pressResetTimer?.cancel();
     _pressResetTimer = Timer(
-      kIsWeb ? Duration.zero : const Duration(milliseconds: 130),
+      AppMotion.microDuration,
       () {
         if (mounted) {
           setState(() => _pressed = false);
@@ -959,20 +983,21 @@ class _ItemCardState extends State<ItemCard> {
             0;
 
         return AnimatedScale(
-          scale: _pressed && !kIsWeb ? 0.972 : 1,
-          duration: kIsWeb ? Duration.zero : const Duration(milliseconds: 220),
-          curve: Curves.easeOutBack,
+          scale: _pressed && !AppMotion.reduceMotion(context) ? 0.985 : 1,
+          duration:
+              AppMotion.duration(context, const Duration(milliseconds: 220)),
+          curve: AppMotion.curve,
           child: DecoratedBox(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(radius),
-              color: Colors.white,
+              color: Theme.of(context).colorScheme.surface,
               border: Border.all(
-                color: const Color(0xFFEDE5DA),
+                color: Theme.of(context).colorScheme.outlineVariant,
               ),
-              boxShadow: const [
+              boxShadow: [
                 BoxShadow(
                   blurRadius: 10,
-                  color: Color(0x12000000),
+                  color: AppTheme.colorsOf(context).shadow,
                   offset: Offset(0, 6),
                 ),
               ],
@@ -1018,9 +1043,10 @@ class _ItemCardState extends State<ItemCard> {
                               borderRadius: BorderRadius.circular(999),
                             ),
                             alignment: Alignment.center,
-                            child: Text(
-                              quantity.toString(),
+                            child: AppAnimatedCount(
+                              value: quantity,
                               style: TextStyle(
+                                // Fixed light text pairs with the dark image scrim.
                                 color: Colors.white,
                                 fontSize: badgeFontSize,
                                 fontWeight: FontWeight.w700,
@@ -1084,22 +1110,28 @@ class _ItemCardState extends State<ItemCard> {
                         label: addSemanticLabel,
                         child: DecoratedBox(
                           decoration: BoxDecoration(
-                            gradient: const LinearGradient(
+                            gradient: LinearGradient(
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
                               colors: [
-                                Color(0xFFFFB96A),
-                                Color(0xFFD65E00),
+                                Theme.of(context).colorScheme.primary,
+                                Color.lerp(
+                                    Theme.of(context).colorScheme.primary,
+                                    Theme.of(context).colorScheme.onPrimary,
+                                    0.12)!,
                               ],
                             ),
                             shape: BoxShape.circle,
                             border: Border.all(
-                              color: Colors.white.withValues(alpha: 0.98),
+                              color: Theme.of(context).colorScheme.surface,
                               width: addRingWidth,
                             ),
                             boxShadow: [
                               BoxShadow(
-                                color: AppTheme.primary.withValues(alpha: 0.34),
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .primary
+                                    .withValues(alpha: 0.34),
                                 blurRadius: compact ? 9 : 11,
                                 offset: const Offset(0, 4),
                               ),
@@ -1119,7 +1151,8 @@ class _ItemCardState extends State<ItemCard> {
                                 dimension: addButtonExtent,
                                 child: Icon(
                                   Icons.add_rounded,
-                                  color: Colors.white,
+                                  color:
+                                      Theme.of(context).colorScheme.onPrimary,
                                   size: addIconSize,
                                 ),
                               ),
@@ -1161,10 +1194,12 @@ class _VariantMenuAnchor extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       style: MenuStyle(
         alignment: AlignmentDirectional.topEnd,
-        backgroundColor: const WidgetStatePropertyAll<Color>(Colors.white),
+        backgroundColor: WidgetStatePropertyAll<Color>(
+            Theme.of(context).colorScheme.surface),
         surfaceTintColor:
             const WidgetStatePropertyAll<Color>(Colors.transparent),
-        shadowColor: const WidgetStatePropertyAll<Color>(Color(0x33000000)),
+        shadowColor:
+            WidgetStatePropertyAll<Color>(AppTheme.colorsOf(context).shadow),
         elevation: const WidgetStatePropertyAll<double>(8),
         padding: const WidgetStatePropertyAll<EdgeInsetsGeometry>(
           EdgeInsets.symmetric(vertical: 4),
@@ -1176,7 +1211,8 @@ class _VariantMenuAnchor extends StatelessWidget {
         shape: WidgetStatePropertyAll<OutlinedBorder>(
           RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
-            side: const BorderSide(color: Color(0xFFEDE5DA)),
+            side:
+                BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
           ),
         ),
       ),
@@ -1238,10 +1274,12 @@ class _VariantMenuItem extends StatelessWidget {
           EdgeInsetsDirectional.symmetric(horizontal: compact ? 8 : 10),
         ),
         backgroundColor: WidgetStatePropertyAll<Color>(
-          selected ? const Color(0xFFFFF6EE) : Colors.white,
+          selected
+              ? Theme.of(context).colorScheme.surfaceContainerHigh
+              : Theme.of(context).colorScheme.surface,
         ),
         overlayColor: WidgetStatePropertyAll<Color>(
-          AppTheme.primary.withValues(alpha: 0.08),
+          Theme.of(context).colorScheme.primary.withValues(alpha: 0.08),
         ),
         foregroundColor: WidgetStatePropertyAll<Color>(
           Theme.of(context).colorScheme.onSurface,
@@ -1256,7 +1294,9 @@ class _VariantMenuItem extends StatelessWidget {
               selected
                   ? Icons.check_circle_rounded
                   : Icons.radio_button_unchecked_rounded,
-              color: selected ? AppTheme.primary : const Color(0xFF98A2B3),
+              color: selected
+                  ? Theme.of(context).colorScheme.primary
+                  : AppTheme.colorsOf(context).textSecondary,
               size: compact ? 15 : 16,
             ),
             SizedBox(width: compact ? 5 : 6),
@@ -1396,10 +1436,10 @@ class _MenuItemSkeletonCard extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(14),
         color: Theme.of(context).colorScheme.surface,
-        boxShadow: const [
+        boxShadow: [
           BoxShadow(
             blurRadius: 9,
-            color: Color(0x12000000),
+            color: AppTheme.colorsOf(context).shadow,
             offset: Offset(0, 5),
           ),
         ],
@@ -1439,22 +1479,22 @@ class _MenuItemImagePlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const DecoratedBox(
+    return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            Color(0xFFF4E6D9),
-            Color(0xFFECECEC),
+            Theme.of(context).colorScheme.surfaceContainerHigh,
+            Theme.of(context).colorScheme.surfaceContainerHigh,
           ],
         ),
       ),
       child: Center(
         child: CircularProgressIndicator(
           strokeWidth: 2.4,
-          color: AppTheme.primary,
+          color: Theme.of(context).colorScheme.primary,
         ),
       ),
     );
@@ -1474,7 +1514,7 @@ class _MenuTextSkeleton extends StatelessWidget {
       width: width,
       height: 10,
       decoration: BoxDecoration(
-        color: const Color(0xFFE9E9E9),
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(999),
       ),
     );

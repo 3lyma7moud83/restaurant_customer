@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'app_motion.dart';
+
 import 'input_focus_guard.dart';
 import '../theme/app_theme.dart';
 
@@ -166,17 +168,19 @@ class _AppButtonState extends State<AppButton> {
   @override
   Widget build(BuildContext context) {
     final enabled = widget.onPressed != null && !widget.loading;
+    final scheme = Theme.of(context).colorScheme;
 
     final background = switch (widget.variant) {
       AppButtonVariant.filled =>
-        enabled ? AppTheme.primary : AppTheme.primary.withValues(alpha: 0.38),
+        enabled ? scheme.primary : scheme.onSurface.withValues(alpha: 0.12),
       AppButtonVariant.secondary =>
-        enabled ? Colors.white : Colors.white.withValues(alpha: 0.72),
+        enabled ? scheme.surface : AppTheme.colorsOf(context).surfaceMuted,
       AppButtonVariant.ghost => Colors.transparent,
     };
 
     final foreground = switch (widget.variant) {
-      AppButtonVariant.filled => Colors.white,
+      AppButtonVariant.filled =>
+        enabled ? scheme.onPrimary : scheme.onSurfaceVariant,
       AppButtonVariant.secondary => Theme.of(context).colorScheme.onSurface,
       AppButtonVariant.ghost => enabled
           ? Theme.of(context).colorScheme.onSurface
@@ -193,8 +197,8 @@ class _AppButtonState extends State<AppButton> {
         ? [
             BoxShadow(
               color: widget.variant == AppButtonVariant.filled
-                  ? AppTheme.primary.withValues(alpha: 0.24)
-                  : const Color(0x12000000),
+                  ? scheme.primary.withValues(alpha: 0.24)
+                  : AppTheme.colorsOf(context).shadow,
               blurRadius: widget.variant == AppButtonVariant.filled ? 22 : 18,
               offset: const Offset(0, 12),
             ),
@@ -234,14 +238,16 @@ class _AppButtonState extends State<AppButton> {
     );
 
     return AnimatedScale(
-      scale: _pressed && enabled ? 0.985 : 1,
-      duration: kIsWeb ? Duration.zero : AppTheme.microInteractionDuration,
+      scale:
+          _pressed && enabled && !AppMotion.reduceMotion(context) ? 0.985 : 1,
+      duration: AppMotion.duration(context, AppTheme.microInteractionDuration),
       curve: AppTheme.emphasizedCurve,
       child: SizedBox(
         width: widget.expand ? double.infinity : null,
         height: widget.height,
         child: AnimatedContainer(
-          duration: kIsWeb ? Duration.zero : AppTheme.microInteractionDuration,
+          duration:
+              AppMotion.duration(context, AppTheme.microInteractionDuration),
           curve: AppTheme.emphasizedCurve,
           decoration: BoxDecoration(
             color: background,
@@ -485,6 +491,92 @@ class _AppInputState extends State<AppInput> {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Animate only a changed count, keeping the new value authoritative immediately.
+/// No timer or data dependency: an unchanged parent rebuild does not replay it.
+class AppAnimatedCount extends StatelessWidget {
+  const AppAnimatedCount({super.key, required this.value, this.style});
+
+  final int value;
+  final TextStyle? style;
+
+  @override
+  Widget build(BuildContext context) => AppValueTransition(
+        value.toString(),
+        style: style,
+      );
+}
+
+/// A discrete text change; the value is supplied by the existing data owner.
+class AppValueTransition extends StatelessWidget {
+  const AppValueTransition(this.value,
+      {super.key, this.style, this.textAlign = TextAlign.center});
+
+  final String value;
+  final TextStyle? style;
+  final TextAlign textAlign;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Text(
+      value,
+      key: ValueKey(value),
+      textAlign: textAlign,
+      style: style,
+    );
+    if (AppMotion.reduceMotion(context)) return text;
+    return AnimatedSwitcher(
+      duration: AppMotion.contentDuration,
+      switchInCurve: AppMotion.curve,
+      switchOutCurve: Curves.easeInCubic,
+      layoutBuilder: (currentChild, previousChildren) => Stack(
+        alignment: Alignment.center,
+        children: [
+          ...previousChildren.map((child) => ExcludeSemantics(child: child)),
+          if (currentChild != null) currentChild,
+        ],
+      ),
+      transitionBuilder: (child, animation) => FadeTransition(
+        opacity: animation,
+        child: ScaleTransition(
+          scale: animation.drive(Tween<double>(begin: 0.96, end: 1)),
+          child: child,
+        ),
+      ),
+      child: text,
+    );
+  }
+}
+
+/// A one-time entry for list items. The owning list remembers seen identities.
+/// Rebuilding an unchanged target does not restart the implicit animation.
+class AppEntryTransition extends StatelessWidget {
+  const AppEntryTransition(
+      {super.key, required this.child, this.animate = true, this.index = 0});
+
+  final Widget child;
+  final bool animate;
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    final reduced = AppMotion.reduceMotion(context);
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: animate && !reduced ? 0 : 1, end: 1),
+      duration: AppMotion.duration(
+          context, Duration(milliseconds: 220 + index.clamp(0, 5) * 12)),
+      curve: AppMotion.curve,
+      child: child,
+      builder: (context, value, child) => Opacity(
+        opacity: value,
+        child: Transform.translate(
+          offset: Offset(0, (1 - value) * 8),
+          child: child,
+        ),
       ),
     );
   }

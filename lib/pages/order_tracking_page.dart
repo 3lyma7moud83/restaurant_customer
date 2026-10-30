@@ -4,6 +4,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import '../core/ui/app_motion.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -907,7 +909,7 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
   Widget build(BuildContext context) {
     final order = _presentedOrder;
     final switcherDuration =
-        kIsWeb ? Duration.zero : const Duration(milliseconds: 220);
+        AppMotion.duration(context, const Duration(milliseconds: 220));
     final restaurantPhone =
         order == null ? null : OrdersService.restaurantPhoneOf(order);
     final normalizedStatus =
@@ -936,7 +938,8 @@ class _OrderTrackingPageState extends State<OrderTrackingPage> {
                   tooltip: isDark ? 'الوضع الفاتح' : 'الوضع الداكن',
                   visualDensity: VisualDensity.compact,
                   icon: AnimatedSwitcher(
-                    duration: AppTheme.microInteractionDuration,
+                    duration: AppMotion.duration(
+                        context, AppTheme.microInteractionDuration),
                     child: Icon(
                       isDark
                           ? Icons.light_mode_rounded
@@ -1089,12 +1092,12 @@ class _AnimatedTrackingSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (kIsWeb) {
+    if (AppMotion.reduceMotion(context)) {
       return child;
     }
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
-      duration: AppTheme.sectionTransitionDuration + delay,
+      duration: Duration(milliseconds: 220 + delay.inMilliseconds.clamp(0, 60)),
       curve: AppTheme.emphasizedCurve,
       child: child,
       builder: (context, value, animatedChild) {
@@ -1263,13 +1266,13 @@ class _TrackingLiveRouteCardState extends State<_TrackingLiveRouteCard> {
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
                 color: bannerIsArrival
-                    ? const Color(0xFFE8F5E9)
-                    : const Color(0xFFFFF3E0),
+                    ? AppTheme.colorsOf(context).successContainer
+                    : AppTheme.colorsOf(context).warningContainer,
                 borderRadius: BorderRadius.circular(18),
                 border: Border.all(
                   color: bannerIsArrival
-                      ? const Color(0xFFA5D6A7)
-                      : const Color(0xFFFFD8A8),
+                      ? AppTheme.colorsOf(context).success
+                      : AppTheme.colorsOf(context).warning,
                 ),
               ),
               child: Text(
@@ -1277,8 +1280,8 @@ class _TrackingLiveRouteCardState extends State<_TrackingLiveRouteCard> {
                 textAlign: TextAlign.right,
                 style: TextStyle(
                   color: bannerIsArrival
-                      ? const Color(0xFF1F8A5B)
-                      : const Color(0xFF9A3412),
+                      ? AppTheme.colorsOf(context).success
+                      : AppTheme.colorsOf(context).warning,
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -1337,8 +1340,8 @@ class _TrackingLiveRouteCardState extends State<_TrackingLiveRouteCard> {
                 : driverGpsAvailable
                     ? 'المسافة الكلية للرحلة ${_TrackingDeliveryProgress.distanceLabel(totalDistance)} ويتم تحديث حركة السائق مباشرة حسب GPS الحقيقي.'
                     : 'المسافة الكلية للرحلة ${_TrackingDeliveryProgress.distanceLabel(totalDistance)} وبانتظار أول تحديث مباشر من GPS السائق.',
-            style: const TextStyle(
-              color: Color(0xFF667085),
+            style: TextStyle(
+              color: AppTheme.colorsOf(context).textSecondary,
               fontWeight: FontWeight.w700,
               height: 1.45,
             ),
@@ -1375,10 +1378,12 @@ class _TrackingMetricPill extends StatelessWidget {
             width: 34,
             height: 34,
             decoration: BoxDecoration(
-              color: AppTheme.primary.withValues(alpha: 0.10),
+              color:
+                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, size: 18, color: AppTheme.primary),
+            child: Icon(icon,
+                size: 18, color: Theme.of(context).colorScheme.primary),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -1388,7 +1393,7 @@ class _TrackingMetricPill extends StatelessWidget {
                 Text(
                   label,
                   style: TextStyle(
-                    color: Color(0xFF667085),
+                    color: AppTheme.colorsOf(context).textSecondary,
                     fontWeight: FontWeight.w700,
                     fontSize: 12,
                   ),
@@ -1437,20 +1442,23 @@ class _TrackingDrawer extends StatelessWidget {
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
-                  colors: [AppTheme.primary, AppTheme.secondary],
+                  colors: [
+                    Theme.of(context).colorScheme.primaryContainer,
+                    Theme.of(context).colorScheme.surfaceContainerHigh
+                  ],
                 ),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
+                  Text(
                     'قائمة التتبع',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
                       fontSize: 18,
                       fontWeight: FontWeight.w800,
                     ),
@@ -1459,8 +1467,8 @@ class _TrackingDrawer extends StatelessWidget {
                     const SizedBox(height: 8),
                     Text(
                       'ريسيت #$receipt',
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onPrimaryContainer,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -1469,8 +1477,8 @@ class _TrackingDrawer extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       statusText,
-                      style: const TextStyle(
-                        color: Colors.white70,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onPrimaryContainer,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -1698,9 +1706,8 @@ class _TrackingItemsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final itemsAnimationDuration = kIsWeb
-        ? const Duration(milliseconds: 140)
-        : AppTheme.sectionTransitionDuration;
+    final itemsAnimationDuration =
+        AppMotion.duration(context, AppMotion.contentDuration);
     var subtotal = 0.0;
     for (final item in items) {
       final qty = OrdersService.quantityOfItem(item).clamp(1, 9999);
@@ -1728,12 +1735,13 @@ class _TrackingItemsCard extends StatelessWidget {
             switchInCurve: AppTheme.emphasizedCurve,
             switchOutCurve: Curves.easeInCubic,
             child: items.isEmpty
-                ? const Align(
+                ? Align(
                     key: ValueKey('tracking-items-empty'),
                     alignment: Alignment.centerRight,
                     child: Text(
                       'لا توجد أصناف مرتبطة بهذا الطلب.',
-                      style: TextStyle(color: Color(0xFF667085)),
+                      style: TextStyle(
+                          color: AppTheme.colorsOf(context).textSecondary),
                     ),
                   )
                 : Column(
@@ -1773,8 +1781,9 @@ class _TrackingItemsCard extends StatelessWidget {
                                 Expanded(
                                   child: Text(
                                     'الكمية: $qty',
-                                    style: const TextStyle(
-                                      color: Color(0xFF475467),
+                                    style: TextStyle(
+                                      color: AppTheme.colorsOf(context)
+                                          .textSecondary,
                                       fontWeight: FontWeight.w700,
                                     ),
                                   ),
@@ -1783,8 +1792,9 @@ class _TrackingItemsCard extends StatelessWidget {
                                   child: Text(
                                     'السعر: ${formatPrice(unitPrice)}',
                                     textAlign: TextAlign.end,
-                                    style: const TextStyle(
-                                      color: Color(0xFF475467),
+                                    style: TextStyle(
+                                      color: AppTheme.colorsOf(context)
+                                          .textSecondary,
                                       fontWeight: FontWeight.w700,
                                     ),
                                   ),
@@ -1814,7 +1824,7 @@ class _TrackingItemsCard extends StatelessWidget {
               Text(
                 formatPrice(subtotal),
                 style: TextStyle(
-                  color: Color(0xFF475467),
+                  color: AppTheme.colorsOf(context).textSecondary,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -1830,8 +1840,8 @@ class _TrackingItemsCard extends StatelessWidget {
             children: [
               Text(
                 formatPrice(deliveryCost),
-                style: const TextStyle(
-                  color: Color(0xFF475467),
+                style: TextStyle(
+                  color: AppTheme.colorsOf(context).textSecondary,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -1852,8 +1862,8 @@ class _TrackingItemsCard extends StatelessWidget {
               const Spacer(),
               Text(
                 formatPrice(totalPrice),
-                style: const TextStyle(
-                  color: Color(0xFF2E7D32),
+                style: TextStyle(
+                  color: AppTheme.colorsOf(context).success,
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -1891,8 +1901,8 @@ class _TrackingMetaRow extends StatelessWidget {
             children: [
               Text(
                 label,
-                style: const TextStyle(
-                  color: Color(0xFF667085),
+                style: TextStyle(
+                  color: AppTheme.colorsOf(context).textSecondary,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -1929,10 +1939,10 @@ class _TrackingStatusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final animationDuration =
-        kIsWeb ? Duration.zero : AppTheme.sectionTransitionDuration;
+        AppMotion.duration(context, AppTheme.sectionTransitionDuration);
     final rawStatus = (order['status'] ?? '').toString().trim();
     final mappedRawStatus = _trackingStatusLabelForCustomer(rawStatus);
-    final progressState = _TrackingDeliveryProgress.fromOrder(order);
+    final progressState = _TrackingDeliveryProgress.fromOrder(order, context);
 
     return OrderSectionCard(
       child: Column(
@@ -1966,8 +1976,8 @@ class _TrackingStatusCard extends StatelessWidget {
               padding: const EdgeInsets.only(top: 4),
               child: Text(
                 mappedRawStatus,
-                style: const TextStyle(
-                  color: Color(0xFF667085),
+                style: TextStyle(
+                  color: AppTheme.colorsOf(context).textSecondary,
                   fontWeight: FontWeight.w700,
                   fontSize: 12,
                 ),
@@ -1977,8 +1987,8 @@ class _TrackingStatusCard extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               progressState.distanceSummary!,
-              style: const TextStyle(
-                color: Color(0xFF667085),
+              style: TextStyle(
+                color: AppTheme.colorsOf(context).textSecondary,
                 fontWeight: FontWeight.w700,
                 fontSize: 12,
               ),
@@ -1987,8 +1997,8 @@ class _TrackingStatusCard extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             progressState.driverStatus,
-            style: const TextStyle(
-              color: Color(0xFF667085),
+            style: TextStyle(
+              color: AppTheme.colorsOf(context).textSecondary,
               fontWeight: FontWeight.w700,
               fontSize: 12,
             ),
@@ -1997,8 +2007,8 @@ class _TrackingStatusCard extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               progressState.etaSummary!,
-              style: const TextStyle(
-                color: Color(0xFF475467),
+              style: TextStyle(
+                color: AppTheme.colorsOf(context).textSecondary,
                 fontWeight: FontWeight.w700,
                 fontSize: 12,
               ),
@@ -2020,7 +2030,7 @@ class _TrackingDriverRouteBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final clampedProgress = progress.clamp(0.0, 1.0).toDouble();
-    if (kIsWeb) {
+    if (kIsWeb || AppMotion.reduceMotion(context)) {
       return _TrackingDriverRouteBarFrame(progress: clampedProgress);
     }
 
@@ -2066,9 +2076,10 @@ class _TrackingDriverRouteBarFrame extends StatelessWidget {
           return Container(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
             decoration: BoxDecoration(
-              color: const Color(0xFFFFFCF5),
+              color: Theme.of(context).colorScheme.surfaceContainerLow,
               borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: const Color(0xFFFFE0B2)),
+              border: Border.all(
+                  color: Theme.of(context).colorScheme.outlineVariant),
             ),
             child: SizedBox(
               height: 104,
@@ -2082,7 +2093,9 @@ class _TrackingDriverRouteBarFrame extends StatelessWidget {
                     child: Container(
                       height: trackHeight,
                       decoration: BoxDecoration(
-                        color: const Color(0xFFE5E7EB),
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(999),
                       ),
                       child: Align(
@@ -2091,7 +2104,7 @@ class _TrackingDriverRouteBarFrame extends StatelessWidget {
                           widthFactor: clampedProgress,
                           child: Container(
                             decoration: BoxDecoration(
-                              color: const Color(0xFFFB8C00),
+                              color: Theme.of(context).colorScheme.primary,
                               borderRadius: BorderRadius.circular(999),
                             ),
                           ),
@@ -2099,24 +2112,26 @@ class _TrackingDriverRouteBarFrame extends StatelessWidget {
                       ),
                     ),
                   ),
-                  const Positioned(
+                  Positioned(
                     top: 0,
                     left: 0,
                     child: _TrackingRouteEndpoint(
                       emoji: '🏪',
                       label: 'المطعم',
-                      color: Color(0xFF7C4D2A),
-                      background: Color(0xFFFFF4E5),
+                      color: AppTheme.colorsOf(context).warning,
+                      background:
+                          Theme.of(context).colorScheme.surfaceContainerLow,
                     ),
                   ),
-                  const Positioned(
+                  Positioned(
                     top: 0,
                     right: 0,
                     child: _TrackingRouteEndpoint(
                       emoji: '🏠',
                       label: 'العميل',
-                      color: Color(0xFF1565C0),
-                      background: Color(0xFFE3F2FD),
+                      color: Theme.of(context).colorScheme.onSecondaryContainer,
+                      background:
+                          Theme.of(context).colorScheme.secondaryContainer,
                     ),
                   ),
                   Positioned(
@@ -2126,15 +2141,15 @@ class _TrackingDriverRouteBarFrame extends StatelessWidget {
                       width: driverBadgeSize,
                       height: driverBadgeSize,
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: Theme.of(context).colorScheme.surface,
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: const Color(0xFFFFE0B2),
+                          color: Theme.of(context).colorScheme.outlineVariant,
                           width: 2,
                         ),
-                        boxShadow: const [
+                        boxShadow: [
                           BoxShadow(
-                            color: Color(0x26000000),
+                            color: AppTheme.colorsOf(context).shadow,
                             blurRadius: 14,
                             offset: Offset(0, 6),
                           ),
@@ -2183,7 +2198,8 @@ class _TrackingRouteEndpoint extends StatelessWidget {
             decoration: BoxDecoration(
               color: background,
               shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
+              border: Border.all(
+                  color: Theme.of(context).colorScheme.surface, width: 2),
             ),
             alignment: Alignment.center,
             child: Text(
@@ -2229,7 +2245,8 @@ class _TrackingDeliveryProgress {
   final String? distanceSummary;
   final String? etaSummary;
 
-  static _TrackingDeliveryProgress fromOrder(Map<String, dynamic> order) {
+  static _TrackingDeliveryProgress fromOrder(
+      Map<String, dynamic> order, BuildContext context) {
     final normalizedStatus = normalizeOrderStatus(order['status']?.toString());
     final snapshot = _TrackingRouteSnapshot.fromOrder(order);
     final isFinalDelivered = _isFinalDeliveryStatus(normalizedStatus);
@@ -2247,7 +2264,7 @@ class _TrackingDeliveryProgress {
           ? null
           : 'اكتملت الرحلة (${distanceLabel(totalDistance)})';
       return _TrackingDeliveryProgress(
-        color: const Color(0xFF2E7D32),
+        color: AppTheme.colorsOf(context).success,
         label: 'اكتمل الطلب',
         driverStatus: 'حالة السائق: تم إنهاء الطلب بنجاح.',
         distanceSummary: summary,
@@ -2260,7 +2277,7 @@ class _TrackingDeliveryProgress {
           ? null
           : 'وصل الطلب إلى نقطة التسليم (${distanceLabel(totalDistance)})';
       return _TrackingDeliveryProgress(
-        color: const Color(0xFF7C3AED),
+        color: Theme.of(context).colorScheme.secondary,
         label: 'تم التسليم - بانتظار تأكيد الاستلام',
         driverStatus: 'حالة السائق: أكد تسليم الطلب وينتظر تأكيدك.',
         distanceSummary: summary,
@@ -2293,10 +2310,12 @@ class _TrackingDeliveryProgress {
 
     return _TrackingDeliveryProgress(
       color: switch (stage) {
-        _TrackingDeliveryStage.preparing => const Color(0xFFF4B400),
-        _TrackingDeliveryStage.onTheWay => const Color(0xFFFB8C00),
-        _TrackingDeliveryStage.nearCustomer => const Color(0xFF1F8A5B),
-        _TrackingDeliveryStage.delivered => const Color(0xFF2E7D32),
+        _TrackingDeliveryStage.preparing => AppTheme.colorsOf(context).warning,
+        _TrackingDeliveryStage.onTheWay =>
+          Theme.of(context).colorScheme.primary,
+        _TrackingDeliveryStage.nearCustomer =>
+          AppTheme.colorsOf(context).success,
+        _TrackingDeliveryStage.delivered => AppTheme.colorsOf(context).success,
       },
       label: switch (stage) {
         _TrackingDeliveryStage.preparing => 'قيد التحضير',
@@ -2551,10 +2570,10 @@ class _TrackingErrorState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
+            Icon(
               Icons.route_outlined,
               size: 46,
-              color: Color(0xFF98A2B3),
+              color: AppTheme.colorsOf(context).textSecondary,
             ),
             const SizedBox(height: 12),
             Text(

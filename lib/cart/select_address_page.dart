@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import '../core/ui/app_motion.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
@@ -104,15 +106,15 @@ class _SelectAddressPageState extends State<SelectAddressPage>
   Color get _accuracyColor {
     final accuracy = _gpsAccuracyMeters;
     if (accuracy == null) {
-      return const Color(0xFF667085);
+      return AppTheme.colorsOf(context).textSecondary;
     }
     if (accuracy <= 10) {
-      return const Color(0xFF027A48);
+      return AppTheme.colorsOf(context).success;
     }
     if (accuracy < _goodAccuracyThresholdMeters) {
-      return const Color(0xFFB54708);
+      return AppTheme.colorsOf(context).warning;
     }
-    return const Color(0xFFB42318);
+    return AppTheme.colorsOf(context).danger;
   }
 
   bool get _hasGoodGpsFix =>
@@ -537,6 +539,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
     if (!_hasGoodGpsFix) {
       final proceed = await showDialog<bool>(
         context: context,
+        animationStyle: AppMotion.overlayStyle(context),
         builder: (context) => AlertDialog(
           title: const Text('دقة الموقع ضعيفة'),
           content: Text(
@@ -812,7 +815,7 @@ class _SelectAddressPageState extends State<SelectAddressPage>
             end: 16,
             bottom: 20,
             child: AnimatedPadding(
-              duration: const Duration(milliseconds: 180),
+              duration: AppMotion.duration(context, AppMotion.contentDuration),
               curve: Curves.easeOutCubic,
               padding: EdgeInsets.only(bottom: bottomInset),
               child: Column(
@@ -821,11 +824,11 @@ class _SelectAddressPageState extends State<SelectAddressPage>
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: Theme.of(context).colorScheme.surface,
                       borderRadius: BorderRadius.circular(18),
-                      boxShadow: const [
+                      boxShadow: [
                         BoxShadow(
-                          color: Color(0x14000000),
+                          color: AppTheme.colorsOf(context).shadow,
                           blurRadius: 18,
                           offset: Offset(0, 8),
                         ),
@@ -857,8 +860,8 @@ class _SelectAddressPageState extends State<SelectAddressPage>
                         Text(
                           _statusMessage,
                           textAlign: TextAlign.right,
-                          style: const TextStyle(
-                            color: Color(0xFF667085),
+                          style: TextStyle(
+                            color: AppTheme.colorsOf(context).textSecondary,
                             height: 1.45,
                             fontWeight: FontWeight.w600,
                           ),
@@ -944,9 +947,9 @@ class _CoordinatePill extends StatelessWidget {
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(14),
-        boxShadow: const [
+        boxShadow: [
           BoxShadow(
-            color: Color(0x14000000),
+            color: AppTheme.colorsOf(context).shadow,
             blurRadius: 14,
             offset: Offset(0, 6),
           ),
@@ -1084,13 +1087,13 @@ class _DeliveryLocationMarker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Icon(
+    return Icon(
       Icons.location_pin,
       size: 52,
-      color: AppTheme.primary,
+      color: Theme.of(context).colorScheme.primary,
       shadows: [
         Shadow(
-          color: Color(0x33000000),
+          color: AppTheme.colorsOf(context).shadow,
           blurRadius: 10,
           offset: Offset(0, 4),
         ),

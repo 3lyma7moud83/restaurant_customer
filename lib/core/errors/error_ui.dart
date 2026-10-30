@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../ui/app_motion.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../ui/input_focus_guard.dart';
@@ -41,6 +43,7 @@ class ErrorUi {
             content: Text(content),
             duration: duration,
           ),
+          snackBarAnimationStyle: AppMotion.overlayStyle(messenger.context),
         );
     }
 
@@ -66,6 +69,7 @@ class ErrorUi {
 
     await showDialog<void>(
       context: context,
+      animationStyle: AppMotion.overlayStyle(context),
       builder: (context) {
         final text =
             code == null || code.isEmpty ? message : '$message\n\n($code)';

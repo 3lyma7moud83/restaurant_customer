@@ -92,14 +92,23 @@ class _AppContentPageState extends State<AppContentPage> {
                 DecoratedBox(
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(22),
-                    gradient: const LinearGradient(
+                    gradient: LinearGradient(
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
-                      colors: [Color(0xFFF5A652), Color(0xFFE37E18)],
+                      colors: [
+                        Theme.of(context).colorScheme.primaryContainer,
+                        Color.lerp(
+                            Theme.of(context).colorScheme.primaryContainer,
+                            Theme.of(context).colorScheme.surface,
+                            0.22)!
+                      ],
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: AppTheme.primary.withValues(alpha: 0.25),
+                        color: Theme.of(context)
+                            .colorScheme
+                            .primary
+                            .withValues(alpha: 0.25),
                         blurRadius: 18,
                         offset: const Offset(0, 9),
                       ),
@@ -113,10 +122,16 @@ class _AppContentPageState extends State<AppContentPage> {
                           width: 40,
                           height: 40,
                           decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.2),
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onPrimaryContainer
+                                .withValues(alpha: 0.2),
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: Icon(icon, color: Colors.white),
+                          child: Icon(icon,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onPrimaryContainer),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
@@ -124,8 +139,10 @@ class _AppContentPageState extends State<AppContentPage> {
                             entry.title.isEmpty ? title : entry.title,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onPrimaryContainer,
                               fontSize: 18,
                               fontWeight: FontWeight.w800,
                             ),
@@ -138,14 +155,14 @@ class _AppContentPageState extends State<AppContentPage> {
                 const SizedBox(height: 14),
                 DecoratedBox(
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: Theme.of(context).colorScheme.surface,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
                       color: Theme.of(context).colorScheme.outlineVariant,
                     ),
-                    boxShadow: const [
+                    boxShadow: [
                       BoxShadow(
-                        color: Color(0x12000000),
+                        color: AppTheme.colorsOf(context).shadow,
                         blurRadius: 14,
                         offset: Offset(0, 8),
                       ),

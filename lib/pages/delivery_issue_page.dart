@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../core/ui/app_motion.dart';
+
 import '../core/orders/order_ui.dart';
 import '../core/theme/app_theme.dart';
 import '../core/ui/app_snackbar.dart';
@@ -144,7 +146,8 @@ class _DeliveryIssueReasonTile extends StatelessWidget {
     return ScaleOnTap(
       onTap: enabled ? onTap : null,
       child: AnimatedContainer(
-        duration: AppTheme.microInteractionDuration,
+        duration:
+            AppMotion.duration(context, AppTheme.microInteractionDuration),
         curve: AppTheme.emphasizedCurve,
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -170,7 +173,9 @@ class _DeliveryIssueReasonTile extends StatelessWidget {
                 selected
                     ? Icons.radio_button_checked_rounded
                     : Icons.radio_button_unchecked_rounded,
-                color: selected ? AppTheme.primary : const Color(0xFF98A2B3),
+                color: selected
+                    ? Theme.of(context).colorScheme.primary
+                    : AppTheme.colorsOf(context).textSecondary,
               ),
             const SizedBox(width: 12),
             Expanded(

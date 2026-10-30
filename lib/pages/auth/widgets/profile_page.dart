@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/ui/app_motion.dart';
+
 import '../../../core/services/error_logger.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/ui/input_focus_guard.dart';
@@ -220,6 +222,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
     final result = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
+      sheetAnimationStyle: AppMotion.overlayStyle(context),
       isScrollControlled: true,
       useSafeArea: true,
       builder: (_) => SelectAddressPage(
@@ -287,14 +290,14 @@ class _ProfilePageState extends State<ProfilePage> {
           : _error != null
               ? _errorView()
               : AnimatedPadding(
-                  duration: AppTheme.sectionTransitionDuration,
+                  duration: AppMotion.duration(
+                      context, AppTheme.sectionTransitionDuration),
                   curve: AppTheme.emphasizedCurve,
                   padding: EdgeInsets.only(bottom: viewInsets),
                   child: AnimatedOpacity(
                     opacity: _contentVisible ? 1 : 0,
-                    duration: kIsWeb
-                        ? Duration.zero
-                        : const Duration(milliseconds: 240),
+                    duration: AppMotion.duration(
+                        context, const Duration(milliseconds: 240)),
                     curve: Curves.easeOutCubic,
                     child: RefreshIndicator(
                       onRefresh: _loadProfile,
@@ -337,12 +340,14 @@ class _ProfilePageState extends State<ProfilePage> {
                                             ? null
                                             : _saveProfile,
                                     icon: _savingProfile
-                                        ? const SizedBox(
+                                        ? SizedBox(
                                             width: 16,
                                             height: 16,
                                             child: CircularProgressIndicator(
                                               strokeWidth: 2,
-                                              color: Colors.white,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurfaceVariant,
                                             ),
                                           )
                                         : const Icon(Icons.save_outlined),
@@ -388,8 +393,9 @@ class _ProfilePageState extends State<ProfilePage> {
                                         ? 'لم يتم تحديد موقع الخريطة بعد.'
                                         : 'الموقع مضبوط على الخريطة (${_selectedLat!.toStringAsFixed(5)}, ${_selectedLng!.toStringAsFixed(5)})',
                                     textAlign: TextAlign.right,
-                                    style: const TextStyle(
-                                      color: Color(0xFF667085),
+                                    style: TextStyle(
+                                      color: AppTheme.colorsOf(context)
+                                          .textSecondary,
                                       fontWeight: FontWeight.w600,
                                     ),
                                   ),
@@ -403,12 +409,14 @@ class _ProfilePageState extends State<ProfilePage> {
                                             ? null
                                             : _saveAddress,
                                     icon: _savingAddress
-                                        ? const SizedBox(
+                                        ? SizedBox(
                                             width: 16,
                                             height: 16,
                                             child: CircularProgressIndicator(
                                               strokeWidth: 2,
-                                              color: Colors.white,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurfaceVariant,
                                             ),
                                           )
                                         : const Icon(Icons.location_on_rounded),
@@ -436,7 +444,7 @@ class _ProfilePageState extends State<ProfilePage> {
             Text(
               _error ?? ErrorLogger.userMessage,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Color(0xFFB42318)),
+              style: TextStyle(color: AppTheme.colorsOf(context).danger),
             ),
             const SizedBox(height: 12),
             ElevatedButton.icon(
@@ -468,14 +476,19 @@ class _ProfileHeroCard extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFFF5C186), Color(0xFFF28C28)],
+          colors: [
+            Theme.of(context).colorScheme.primaryContainer,
+            Color.lerp(Theme.of(context).colorScheme.primaryContainer,
+                Theme.of(context).colorScheme.surface, 0.22)!
+          ],
         ),
         boxShadow: [
           BoxShadow(
-            color: AppTheme.primary.withValues(alpha: 0.26),
+            color:
+                Theme.of(context).colorScheme.primary.withValues(alpha: 0.26),
             blurRadius: 22,
             offset: const Offset(0, 11),
           ),
@@ -492,8 +505,8 @@ class _ProfileHeroCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.right,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
                     fontSize: 20,
                     fontWeight: FontWeight.w900,
                   ),
@@ -504,8 +517,8 @@ class _ProfileHeroCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.right,
-                  style: const TextStyle(
-                    color: Color(0xFFFDF3E7),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -517,13 +530,20 @@ class _ProfileHeroCard extends StatelessWidget {
             width: 62,
             height: 62,
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.23),
+              color: Theme.of(context)
+                  .colorScheme
+                  .onPrimaryContainer
+                  .withValues(alpha: 0.23),
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.32)),
+              border: Border.all(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onPrimaryContainer
+                      .withValues(alpha: 0.32)),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.person_rounded,
-              color: Colors.white,
+              color: Theme.of(context).colorScheme.onPrimaryContainer,
               size: 32,
             ),
           ),

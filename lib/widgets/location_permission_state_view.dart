@@ -33,8 +33,8 @@ class LocationPermissionStateView extends StatelessWidget {
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: [
-                Colors.white,
-                const Color(0xFFFFF8ED),
+                Theme.of(context).colorScheme.surface,
+                Theme.of(context).colorScheme.surfaceContainerHigh,
               ],
             ),
             child: Column(

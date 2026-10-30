@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import '../core/ui/app_motion.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/localization/app_localizations.dart';
@@ -10,6 +12,7 @@ import '../core/orders/order_status_utils.dart';
 import '../core/orders/order_ui.dart';
 import '../core/theme/app_theme.dart';
 import '../core/ui/app_snackbar.dart';
+import '../core/ui/app_components.dart';
 import '../core/ui/input_focus_guard.dart';
 import '../core/ui/responsive.dart';
 import '../pages/order_details_page.dart';
@@ -391,6 +394,7 @@ class _CartPageState extends State<CartPage> {
 
     final result = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
+      sheetAnimationStyle: AppMotion.overlayStyle(context),
       isScrollControlled: true,
       useSafeArea: true,
       builder: (_) => SelectAddressPage(
@@ -703,6 +707,7 @@ class _CartPageState extends State<CartPage> {
     }
 
     final route = AppTheme.platformPageRoute<void>(
+      motion: AppRouteMotion.detail,
       builder: (_) => shouldOpenTrackingPageForOrderStatus(
         order?['status']?.toString(),
       )
@@ -724,6 +729,7 @@ class _CartPageState extends State<CartPage> {
 
     await showDialog<void>(
       context: context,
+      animationStyle: AppMotion.overlayStyle(context),
       builder: (context) {
         return AlertDialog(
           title: const Text('طلب جاري بالفعل'),
@@ -833,6 +839,7 @@ class _CartPageState extends State<CartPage> {
   Future<bool> _confirmDeleteCartItem(CartItem item) async {
     final result = await showDialog<bool>(
       context: context,
+      animationStyle: AppMotion.overlayStyle(context),
       builder: (dialogContext) => AlertDialog(
         title: const Text('حذف الصنف من السلة؟'),
         content: Text(
@@ -873,8 +880,8 @@ class _CartPageState extends State<CartPage> {
           ? const Center(child: CircularProgressIndicator())
           : AnimatedOpacity(
               opacity: _contentVisible ? 1 : 0,
-              duration:
-                  kIsWeb ? Duration.zero : const Duration(milliseconds: 240),
+              duration: AppMotion.duration(
+                  context, const Duration(milliseconds: 240)),
               curve: Curves.easeOutCubic,
               child: AppConstrainedContent(
                 child: cart.items.isEmpty && !cart.isLocked
@@ -1008,29 +1015,32 @@ class _CartPageState extends State<CartPage> {
                                 ),
                                 if (!cart.isLocked) ...[
                                   const SizedBox(height: 12),
-                                  CheckboxListTile(
-                                    value: _saveAddressAsDefault,
-                                    onChanged: creatingOrder
-                                        ? null
-                                        : (value) {
-                                            setState(
-                                              () => _saveAddressAsDefault =
-                                                  value ?? false,
-                                            );
-                                          },
-                                    controlAffinity:
-                                        ListTileControlAffinity.leading,
-                                    contentPadding: EdgeInsets.zero,
-                                    title: const Text(
-                                      'حفظ التعديلات كعنوان افتراضي للحساب',
-                                      textAlign: TextAlign.right,
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w800,
+                                  Material(
+                                    type: MaterialType.transparency,
+                                    child: CheckboxListTile(
+                                      value: _saveAddressAsDefault,
+                                      onChanged: creatingOrder
+                                          ? null
+                                          : (value) {
+                                              setState(
+                                                () => _saveAddressAsDefault =
+                                                    value ?? false,
+                                              );
+                                            },
+                                      controlAffinity:
+                                          ListTileControlAffinity.leading,
+                                      contentPadding: EdgeInsets.zero,
+                                      title: const Text(
+                                        'حفظ التعديلات كعنوان افتراضي للحساب',
+                                        textAlign: TextAlign.right,
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                        ),
                                       ),
-                                    ),
-                                    subtitle: const Text(
-                                      'اترك الخيار غير محدد لاستخدام العنوان لهذا الطلب فقط.',
-                                      textAlign: TextAlign.right,
+                                      subtitle: const Text(
+                                        'اترك الخيار غير محدد لاستخدام العنوان لهذا الطلب فقط.',
+                                        textAlign: TextAlign.right,
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -1131,7 +1141,8 @@ class _CartPageState extends State<CartPage> {
                                     label: context.tr('cart.discount_value'),
                                     value:
                                         '- ${localizedCurrency(context, pricing.discount)}',
-                                    valueColor: const Color(0xFF027A48),
+                                    valueColor:
+                                        AppTheme.colorsOf(context).success,
                                   ),
                                 ],
                                 const Padding(
@@ -1161,12 +1172,14 @@ class _CartPageState extends State<CartPage> {
                                   ? null
                                   : () => _createOrder(cart),
                               child: creatingOrder
-                                  ? const SizedBox(
+                                  ? SizedBox(
                                       width: 22,
                                       height: 22,
                                       child: CircularProgressIndicator(
                                         strokeWidth: 2,
-                                        color: Colors.white,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant,
                                       ),
                                     )
                                   : Text(
@@ -1187,8 +1200,8 @@ class _CartPageState extends State<CartPage> {
                               child: Text(
                                 context.tr('cart.select_payment_first'),
                                 textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  color: Color(0xFFB42318),
+                                style: TextStyle(
+                                  color: AppTheme.colorsOf(context).danger,
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
@@ -1303,8 +1316,8 @@ class _CartLineItem extends StatelessWidget {
             children: [
               Text(
                 localizedCurrency(context, item.price * item.qty),
-                style: const TextStyle(
-                  color: AppTheme.primary,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.primary,
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -1359,9 +1372,8 @@ class _QuantityStepper extends StatelessWidget {
           ),
           SizedBox(
             width: 34,
-            child: Text(
-              quantity.toString(),
-              textAlign: TextAlign.center,
+            child: AppAnimatedCount(
+              value: quantity,
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurface,
                 fontWeight: FontWeight.w900,
@@ -1433,13 +1445,16 @@ class _LocationPreview extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppTheme.primary.withValues(alpha: 0.08),
+        color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.primary.withValues(alpha: 0.22)),
+        border: Border.all(
+            color:
+                Theme.of(context).colorScheme.primary.withValues(alpha: 0.22)),
       ),
       child: Row(
         children: [
-          const Icon(Icons.location_on_rounded, color: AppTheme.primary),
+          Icon(Icons.location_on_rounded,
+              color: Theme.of(context).colorScheme.primary),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -1500,9 +1515,9 @@ class _SectionCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(24),
-        boxShadow: const [
+        boxShadow: [
           BoxShadow(
-            color: Color(0x12000000),
+            color: AppTheme.colorsOf(context).shadow,
             blurRadius: 18,
             offset: Offset(0, 10),
           ),
@@ -1566,12 +1581,12 @@ class _PaymentMethodTile extends StatelessWidget {
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: selected
-              ? AppTheme.primary.withValues(alpha: 0.1)
+              ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.1)
               : Theme.of(context).colorScheme.surfaceContainerHigh,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: selected
-                ? AppTheme.primary
+                ? Theme.of(context).colorScheme.primary
                 : Theme.of(context).colorScheme.outlineVariant,
           ),
         ),
@@ -1614,7 +1629,7 @@ class _PaymentMethodTile extends StatelessWidget {
             Icon(
               icon,
               color: enabled
-                  ? AppTheme.primary
+                  ? Theme.of(context).colorScheme.primary
                   : AppTheme.colorsOf(context).textSecondary,
             ),
           ],
@@ -1669,12 +1684,12 @@ class _DiscountCodeSection extends StatelessWidget {
               minimumSize: Size(compact ? double.infinity : 118, 46),
             ),
             child: applying
-                ? const SizedBox(
+                ? SizedBox(
                     width: 20,
                     height: 20,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: Colors.white,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   )
                 : Text(context.tr('cart.discount_apply')),
@@ -1729,8 +1744,8 @@ class _DiscountCodeSection extends StatelessWidget {
                         textAlign: TextAlign.right,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFF027A48),
+                        style: TextStyle(
+                          color: AppTheme.colorsOf(context).success,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -1747,8 +1762,8 @@ class _DiscountCodeSection extends StatelessWidget {
                   textAlign: TextAlign.start,
                   style: TextStyle(
                     color: feedbackIsError
-                        ? const Color(0xFFB42318)
-                        : const Color(0xFF027A48),
+                        ? AppTheme.colorsOf(context).danger
+                        : AppTheme.colorsOf(context).success,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -1776,19 +1791,21 @@ class _PriceRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final valueStyle = TextStyle(
+      color: valueColor ??
+          (emphasized
+              ? Theme.of(context).colorScheme.primary
+              : Theme.of(context).colorScheme.onSurface),
+      fontWeight: FontWeight.w800,
+      fontSize: emphasized ? 16 : 14,
+    );
     return Row(
       children: [
-        Text(
-          value,
-          style: TextStyle(
-            color: valueColor ??
-                (emphasized
-                    ? Theme.of(context).colorScheme.primary
-                    : Theme.of(context).colorScheme.onSurface),
-            fontWeight: FontWeight.w800,
-            fontSize: emphasized ? 16 : 14,
-          ),
-        ),
+        if (emphasized)
+          AppValueTransition(value,
+              style: valueStyle, textAlign: TextAlign.start)
+        else
+          Text(value, style: valueStyle),
         const Spacer(),
         Text(
           label,
@@ -1844,12 +1861,12 @@ class _ActiveOrderCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            Color(0xFFF4E6D9),
-            Color(0xFFE8EFE8),
+            Theme.of(context).colorScheme.surfaceContainerHigh,
+            AppTheme.colorsOf(context).successContainer,
           ],
         ),
         borderRadius: BorderRadius.circular(24),
@@ -1916,13 +1933,16 @@ class _CartEmptyState extends StatelessWidget {
               width: 84,
               height: 84,
               decoration: BoxDecoration(
-                color: AppTheme.primary.withValues(alpha: 0.12),
+                color: Theme.of(context)
+                    .colorScheme
+                    .primary
+                    .withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(28),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.shopping_bag_outlined,
                 size: 40,
-                color: AppTheme.primary,
+                color: Theme.of(context).colorScheme.primary,
               ),
             ),
             const SizedBox(height: 18),
@@ -1938,7 +1958,7 @@ class _CartEmptyState extends StatelessWidget {
               context.tr('cart.empty_subtitle'),
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Color(0xFF667085),
+                color: AppTheme.colorsOf(context).textSecondary,
                 height: 1.5,
               ),
             ),

@@ -63,7 +63,7 @@ class _LocationPickerSheetState extends State<LocationPickerSheet> {
                 child: Icon(
                   Icons.location_pin,
                   size: 48,
-                  color: Colors.red.shade700,
+                  color: Theme.of(context).colorScheme.error,
                 ),
               ),
             ),
@@ -83,10 +83,10 @@ class _LocationPickerSheetState extends State<LocationPickerSheet> {
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.surface,
                   borderRadius: BorderRadius.circular(12),
-                  boxShadow: const [
+                  boxShadow: [
                     BoxShadow(
                       blurRadius: 10,
-                      color: Colors.black12,
+                      color: Theme.of(context).colorScheme.outlineVariant,
                     ),
                   ],
                 ),

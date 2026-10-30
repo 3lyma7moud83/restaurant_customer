@@ -6,6 +6,7 @@ import 'package:flutter/scheduler.dart';
 
 import '../core/localization/app_localizations.dart';
 import '../core/theme/app_theme.dart';
+import '../core/ui/app_motion.dart';
 
 const Duration _kCardAnimationDuration = AppTheme.sectionTransitionDuration;
 const BorderRadius _kRestaurantCardRadius = BorderRadius.all(
@@ -80,7 +81,8 @@ class AppCachedImage extends StatelessWidget {
                       }
                       return AnimatedOpacity(
                         opacity: frame == null ? 0 : 1,
-                        duration: const Duration(milliseconds: 180),
+                        duration: AppMotion.duration(
+                            context, AppMotion.microDuration),
                         curve: Curves.easeOutCubic,
                         child: _ImagePresentationSurface(
                           enhanceColors: enhanceColors,
@@ -104,8 +106,10 @@ class AppCachedImage extends StatelessWidget {
                         _cacheDimension(effectiveWidth, devicePixelRatio),
                     memCacheHeight:
                         _cacheDimension(effectiveHeight, devicePixelRatio),
-                    fadeInDuration: const Duration(milliseconds: 180),
-                    fadeOutDuration: const Duration(milliseconds: 80),
+                    fadeInDuration:
+                        AppMotion.duration(context, AppMotion.microDuration),
+                    fadeOutDuration: AppMotion.duration(
+                        context, const Duration(milliseconds: 80)),
                     imageBuilder: (context, imageProvider) =>
                         _ImagePresentationSurface(
                       enhanceColors: enhanceColors,
@@ -238,7 +242,7 @@ class ImageFallback extends StatelessWidget {
       child: Center(
         child: Icon(
           icon,
-          color: Colors.black26,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
           size: iconSize,
         ),
       ),
@@ -796,7 +800,7 @@ class _OverflowActionButton extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(999),
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
+          duration: AppMotion.duration(context, AppMotion.microDuration),
           curve: Curves.easeOutCubic,
           padding: EdgeInsets.all(padding + 1),
           decoration: BoxDecoration(
@@ -1090,10 +1094,10 @@ class _InteractiveRestaurantCardState
 
   @override
   Widget build(BuildContext context) {
-    final enableAnimations =
-        !kIsWeb || defaultTargetPlatform == TargetPlatform.android;
+    final enableAnimations = !AppMotion.reduceMotion(context) &&
+        (!kIsWeb || defaultTargetPlatform == TargetPlatform.android);
     final duration = enableAnimations ? _kCardAnimationDuration : Duration.zero;
-    const interactionCurve = Curves.easeOutBack;
+    const interactionCurve = AppTheme.emphasizedCurve;
 
     final shadowColor = _pressed
         ? const Color(0x17000000)
@@ -1166,15 +1170,16 @@ class _ShimmerPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const DecoratedBox(
+    final scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            Color(0xFFE8E8E8),
-            Color(0xFFF5F5F5),
-            Color(0xFFE8E8E8),
+            scheme.surfaceContainerHigh,
+            scheme.surfaceContainerLow,
+            scheme.surfaceContainerHigh,
           ],
         ),
       ),

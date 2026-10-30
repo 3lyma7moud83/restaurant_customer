@@ -1,6 +1,8 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../ui/app_motion.dart';
+
 class AppTheme {
   AppTheme._();
 
@@ -32,9 +34,9 @@ class AppTheme {
     'Noto Sans Arabic',
   ];
 
-  static const Duration microInteractionDuration = Duration(milliseconds: 140);
-  static const Duration sectionTransitionDuration = Duration(milliseconds: 220);
-  static const Duration pageTransitionDuration = Duration(milliseconds: 320);
+  static const Duration microInteractionDuration = AppMotion.microDuration;
+  static const Duration sectionTransitionDuration = AppMotion.contentDuration;
+  static const Duration pageTransitionDuration = AppMotion.pageDuration;
   static const Curve emphasizedCurve = Curves.easeOutCubic;
 
   static const ScrollPhysics bouncingScrollPhysics = BouncingScrollPhysics(
@@ -55,11 +57,13 @@ class AppTheme {
     required WidgetBuilder builder,
     RouteSettings? settings,
     bool fullscreenDialog = false,
+    AppRouteMotion motion = AppRouteMotion.standard,
   }) {
-    return CupertinoPageRoute<T>(
+    return AppPageRoute<T>(
       builder: builder,
       settings: settings,
       fullscreenDialog: fullscreenDialog,
+      motion: motion,
     );
   }
 
@@ -68,9 +72,16 @@ class AppTheme {
       seedColor: primary,
       brightness: Brightness.light,
       primary: primary,
+      onPrimary: const Color(0xFF321A05),
       secondary: secondary,
       surface: surface,
+      onSurface: text,
+      onSurfaceVariant: textMuted,
       outline: border,
+      error: AppThemeColors.light.danger,
+      onError: Colors.white,
+      errorContainer: AppThemeColors.light.dangerContainer,
+      onErrorContainer: AppThemeColors.light.danger,
     );
 
     final base = ThemeData(
@@ -107,7 +118,7 @@ class AppTheme {
         height: 1.45,
       ),
       labelLarge: base.textTheme.labelLarge?.copyWith(
-        color: Colors.white,
+        color: text,
         fontWeight: FontWeight.w800,
         fontSize: 15,
       ),
@@ -144,6 +155,8 @@ class AppTheme {
         scrolledUnderElevation: 0,
         surfaceTintColor: Colors.transparent,
         titleTextStyle: TextStyle(
+          fontFamily: 'Cairo',
+          fontFamilyFallback: fallbackFonts,
           color: text,
           fontSize: 18,
           fontWeight: FontWeight.w800,
@@ -160,6 +173,17 @@ class AppTheme {
       dialogTheme: const DialogThemeData(
         backgroundColor: surface,
         surfaceTintColor: Colors.transparent,
+      ),
+      listTileTheme: const ListTileThemeData(
+        textColor: text,
+        iconColor: textMuted,
+        selectedColor: primaryDeep,
+        selectedTileColor: Color(0xFFFFE7CC),
+      ),
+      popupMenuTheme: const PopupMenuThemeData(
+        color: surface,
+        surfaceTintColor: Colors.transparent,
+        textStyle: TextStyle(color: text, fontFamily: 'Cairo'),
       ),
       navigationBarTheme: const NavigationBarThemeData(
         backgroundColor: surface,
@@ -240,13 +264,15 @@ class AppTheme {
         style: ElevatedButton.styleFrom(
           elevation: 0,
           backgroundColor: primary,
-          foregroundColor: Colors.white,
+          foregroundColor: colorScheme.onPrimary,
           minimumSize: const Size.fromHeight(56),
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(22),
           ),
           textStyle: const TextStyle(
+            fontFamily: 'Cairo',
+            fontFamilyFallback: fallbackFonts,
             fontWeight: FontWeight.w800,
             fontSize: 15,
           ),
@@ -270,6 +296,8 @@ class AppTheme {
             borderRadius: BorderRadius.circular(22),
           ),
           textStyle: const TextStyle(
+            fontFamily: 'Cairo',
+            fontFamilyFallback: fallbackFonts,
             fontWeight: FontWeight.w800,
             fontSize: 15,
           ),
@@ -280,6 +308,8 @@ class AppTheme {
           foregroundColor: primary,
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           textStyle: const TextStyle(
+            fontFamily: 'Cairo',
+            fontFamilyFallback: fallbackFonts,
             fontWeight: FontWeight.w800,
             fontSize: 15,
           ),
@@ -288,21 +318,23 @@ class AppTheme {
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           backgroundColor: primary,
-          foregroundColor: Colors.white,
+          foregroundColor: colorScheme.onPrimary,
           minimumSize: const Size.fromHeight(56),
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(22),
           ),
           textStyle: const TextStyle(
+            fontFamily: 'Cairo',
+            fontFamilyFallback: fallbackFonts,
             fontWeight: FontWeight.w800,
             fontSize: 15,
           ),
         ),
       ),
-      floatingActionButtonTheme: const FloatingActionButtonThemeData(
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
         backgroundColor: primary,
-        foregroundColor: Colors.white,
+        foregroundColor: colorScheme.onPrimary,
       ),
       progressIndicatorTheme: const ProgressIndicatorThemeData(
         color: primary,
@@ -319,16 +351,7 @@ class AppTheme {
           return text.withValues(alpha: 0.18);
         }),
       ),
-      pageTransitionsTheme: const PageTransitionsTheme(
-        builders: {
-          TargetPlatform.android: _PremiumPageTransitionsBuilder(),
-          TargetPlatform.iOS: _PremiumPageTransitionsBuilder(),
-          TargetPlatform.macOS: _PremiumPageTransitionsBuilder(),
-          TargetPlatform.windows: _PremiumPageTransitionsBuilder(),
-          TargetPlatform.linux: _PremiumPageTransitionsBuilder(),
-          TargetPlatform.fuchsia: _PremiumPageTransitionsBuilder(),
-        },
-      ),
+      pageTransitionsTheme: AppMotion.pageTransitionsTheme,
     );
   }
 
@@ -374,7 +397,7 @@ class AppTheme {
         .copyWith(
           bodyMedium: base.textTheme.bodyMedium?.copyWith(color: darkMuted),
           labelLarge: base.textTheme.labelLarge?.copyWith(
-            color: onDarkPrimary,
+            color: darkText,
             fontWeight: FontWeight.w800,
           ),
         );
@@ -398,6 +421,8 @@ class AppTheme {
         scrolledUnderElevation: 0,
         surfaceTintColor: Colors.transparent,
         titleTextStyle: TextStyle(
+          fontFamily: 'Cairo',
+          fontFamilyFallback: fallbackFonts,
           color: darkText,
           fontSize: 18,
           fontWeight: FontWeight.w800,
@@ -520,7 +545,11 @@ class AppTheme {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(22),
           ),
-          textStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+          textStyle: const TextStyle(
+              fontFamily: 'Cairo',
+              fontFamilyFallback: fallbackFonts,
+              fontWeight: FontWeight.w800,
+              fontSize: 15),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
@@ -536,7 +565,10 @@ class AppTheme {
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           foregroundColor: const Color(0xFFFFAD5A),
-          textStyle: const TextStyle(fontWeight: FontWeight.w800),
+          textStyle: const TextStyle(
+              fontFamily: 'Cairo',
+              fontFamilyFallback: fallbackFonts,
+              fontWeight: FontWeight.w800),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
@@ -562,12 +594,7 @@ class AppTheme {
         thickness: const WidgetStatePropertyAll(4),
         thumbColor: WidgetStatePropertyAll(darkMuted.withValues(alpha: 0.45)),
       ),
-      pageTransitionsTheme: const PageTransitionsTheme(
-        builders: {
-          TargetPlatform.android: _PremiumPageTransitionsBuilder(),
-          TargetPlatform.iOS: _PremiumPageTransitionsBuilder(),
-        },
-      ),
+      pageTransitionsTheme: AppMotion.pageTransitionsTheme,
     );
   }
 }
@@ -589,6 +616,9 @@ class AppThemeColors extends ThemeExtension<AppThemeColors> {
     required this.danger,
     required this.onDanger,
     required this.dangerContainer,
+    required this.info,
+    required this.onInfo,
+    required this.infoContainer,
     required this.shadow,
   });
 
@@ -598,15 +628,18 @@ class AppThemeColors extends ThemeExtension<AppThemeColors> {
     border: AppTheme.border,
     textPrimary: AppTheme.text,
     textSecondary: AppTheme.textMuted,
-    success: AppTheme.success,
+    success: Color(0xFF187348),
     onSuccess: Colors.white,
     successContainer: Color(0xFFE9F7EF),
     warning: Color(0xFFB45309),
     onWarning: Colors.white,
     warningContainer: Color(0xFFFFF3E0),
-    danger: AppTheme.error,
+    danger: Color(0xFFB91C1C),
     onDanger: Colors.white,
     dangerContainer: Color(0xFFFFEDEC),
+    info: Color(0xFF5B21B6),
+    onInfo: Colors.white,
+    infoContainer: Color(0xFFF0E9FC),
     shadow: Color(0x1A000000),
   );
 
@@ -625,6 +658,9 @@ class AppThemeColors extends ThemeExtension<AppThemeColors> {
     danger: Color(0xFFFFB4AB),
     onDanger: Color(0xFF4F0505),
     dangerContainer: Color(0xFF4A2220),
+    info: Color(0xFFD6BBFF),
+    onInfo: Color(0xFF291445),
+    infoContainer: Color(0xFF33204C),
     shadow: Color(0x66000000),
   );
 
@@ -642,6 +678,9 @@ class AppThemeColors extends ThemeExtension<AppThemeColors> {
   final Color danger;
   final Color onDanger;
   final Color dangerContainer;
+  final Color info;
+  final Color onInfo;
+  final Color infoContainer;
   final Color shadow;
 
   @override
@@ -667,40 +706,10 @@ class AppThemeColors extends ThemeExtension<AppThemeColors> {
       danger: Color.lerp(danger, other.danger, t)!,
       onDanger: Color.lerp(onDanger, other.onDanger, t)!,
       dangerContainer: Color.lerp(dangerContainer, other.dangerContainer, t)!,
+      info: Color.lerp(info, other.info, t)!,
+      onInfo: Color.lerp(onInfo, other.onInfo, t)!,
+      infoContainer: Color.lerp(infoContainer, other.infoContainer, t)!,
       shadow: Color.lerp(shadow, other.shadow, t)!,
-    );
-  }
-}
-
-class _PremiumPageTransitionsBuilder extends PageTransitionsBuilder {
-  const _PremiumPageTransitionsBuilder();
-
-  @override
-  Widget buildTransitions<T>(
-    PageRoute<T> route,
-    BuildContext context,
-    Animation<double> animation,
-    Animation<double> secondaryAnimation,
-    Widget child,
-  ) {
-    final curvedAnimation = CurvedAnimation(
-      parent: animation,
-      curve: AppTheme.emphasizedCurve,
-      reverseCurve: Curves.easeInCubic,
-    );
-    final fadeAnimation = Tween<double>(
-      begin: 0.94,
-      end: 1,
-    ).animate(curvedAnimation);
-
-    return FadeTransition(
-      opacity: fadeAnimation,
-      child: CupertinoPageTransition(
-        primaryRouteAnimation: curvedAnimation,
-        secondaryRouteAnimation: secondaryAnimation,
-        linearTransition: false,
-        child: child,
-      ),
     );
   }
 }

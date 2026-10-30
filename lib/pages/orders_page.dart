@@ -3,6 +3,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import '../core/ui/app_motion.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -415,6 +417,7 @@ class _OrdersPageState extends State<OrdersPage> {
     }
 
     final route = AppTheme.platformPageRoute<void>(
+      motion: AppRouteMotion.detail,
       builder: (_) => shouldOpenTrackingPageForOrderStatus(
         order['status']?.toString(),
       )
@@ -453,7 +456,8 @@ class _OrdersPageState extends State<OrdersPage> {
         centerTitle: true,
       ),
       body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 220),
+        duration:
+            AppMotion.duration(context, const Duration(milliseconds: 220)),
         child: _loading
             ? const Center(
                 key: ValueKey('loading'),
@@ -489,15 +493,15 @@ class _OrdersPageState extends State<OrdersPage> {
                         }
                         final order = _orders[index];
                         final duration = Duration(
-                          milliseconds: 240 + math.min(index * 70, 320),
+                          milliseconds: 220 + math.min(index * 12, 60),
                         );
 
                         return TweenAnimationBuilder<double>(
                           key: ValueKey(
-                            'order-${OrdersService.idOf(order)}-${OrdersService.normalizedStatusOf(order)}',
+                            'order-${OrdersService.idOf(order)}',
                           ),
                           tween: Tween(begin: 0, end: 1),
-                          duration: duration,
+                          duration: AppMotion.duration(context, duration),
                           curve: Curves.easeOutCubic,
                           builder: (context, value, child) {
                             return Opacity(
@@ -572,8 +576,8 @@ class _OrderCard extends StatelessWidget {
                       Text(
                         'ريسيت #$receipt',
                         textAlign: TextAlign.right,
-                        style: const TextStyle(
-                          color: Color(0xFF667085),
+                        style: TextStyle(
+                          color: AppTheme.colorsOf(context).textSecondary,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -595,12 +599,15 @@ class _OrderCard extends StatelessWidget {
                     width: 42,
                     height: 42,
                     decoration: BoxDecoration(
-                      color: AppTheme.primary.withValues(alpha: 0.12),
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primary
+                          .withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(14),
                     ),
-                    child: const Icon(
+                    child: Icon(
                       Icons.storefront_rounded,
-                      color: AppTheme.primary,
+                      color: Theme.of(context).colorScheme.primary,
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -660,7 +667,7 @@ class _InfoRow extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: Color(0xFF667085),
+              color: AppTheme.colorsOf(context).textSecondary,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -702,13 +709,13 @@ class _OrdersEmptyState extends StatelessWidget {
               width: 88,
               height: 88,
               decoration: BoxDecoration(
-                color: const Color(0xFFFFF3E8),
+                color: Theme.of(context).colorScheme.primaryContainer,
                 borderRadius: BorderRadius.circular(28),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.receipt_long_rounded,
                 size: 42,
-                color: Color(0xFFFB8C00),
+                color: Theme.of(context).colorScheme.onPrimaryContainer,
               ),
             ),
             const SizedBox(height: 18),
@@ -720,10 +727,10 @@ class _OrdersEmptyState extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'ابدأ أول طلب وسيظهر هنا مع حالته وتفاصيله.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFF667085)),
+              style: TextStyle(color: AppTheme.colorsOf(context).textSecondary),
             ),
             const SizedBox(height: 18),
             ElevatedButton(
@@ -755,10 +762,10 @@ class _OrdersErrorState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
+            Icon(
               Icons.wifi_off_rounded,
               size: 46,
-              color: Color(0xFF98A2B3),
+              color: AppTheme.colorsOf(context).textSecondary,
             ),
             const SizedBox(height: 12),
             Text(

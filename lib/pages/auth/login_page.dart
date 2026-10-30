@@ -4,6 +4,8 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+
+import '../../core/ui/app_motion.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/localization/app_localizations.dart';
@@ -47,8 +49,9 @@ class _LoginPageState extends State<LoginPage>
 
   late final AnimationController _introController = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 700),
-  )..forward();
+    duration: AppMotion.pageDuration,
+  );
+  bool _introStarted = false;
   late final StreamSubscription<AuthState> _authSubscription =
       _supabase.auth.onAuthStateChange.listen((event) {
     if (event.session?.user != null) {
@@ -78,6 +81,18 @@ class _LoginPageState extends State<LoginPage>
     }
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (AppMotion.reduceMotion(context)) {
+      _introController.value = 1;
+      _introStarted = true;
+    } else if (!_introStarted) {
+      _introStarted = true;
+      _introController.forward();
+    }
+  }
+
   void _handleAnyFieldFocusChange() {
     if (!_authFocusNodes.any((node) => node.hasFocus)) {
       return;
@@ -95,7 +110,7 @@ class _LoginPageState extends State<LoginPage>
       Scrollable.ensureVisible(
         focusedContext,
         alignment: 0.24,
-        duration: const Duration(milliseconds: 220),
+        duration: AppMotion.duration(context, AppMotion.contentDuration),
         curve: AppTheme.emphasizedCurve,
       );
     });
@@ -368,9 +383,8 @@ class _LoginPageState extends State<LoginPage>
 
   @override
   Widget build(BuildContext context) {
-    final animation = CurvedAnimation(
-      parent: _introController,
-      curve: AppTheme.emphasizedCurve,
+    final animation = _introController.drive(
+      CurveTween(curve: AppTheme.emphasizedCurve),
     );
 
     return Scaffold(
@@ -676,7 +690,8 @@ class _LoginBackground extends StatelessWidget {
             height: 220,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: AppTheme.primary.withValues(alpha: 0.10),
+              color:
+                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.10),
             ),
           ),
         ),
@@ -688,7 +703,10 @@ class _LoginBackground extends StatelessWidget {
             height: 180,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: Colors.black.withValues(alpha: 0.035),
+              color: Theme.of(context)
+                  .colorScheme
+                  .onSurface
+                  .withValues(alpha: 0.035),
             ),
           ),
         ),
@@ -713,17 +731,17 @@ class _LoginHero extends StatelessWidget {
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.surface,
               borderRadius: BorderRadius.circular(26),
-              boxShadow: const [
+              boxShadow: [
                 BoxShadow(
-                  color: Color(0x10000000),
+                  color: AppTheme.colorsOf(context).shadow,
                   blurRadius: 24,
                   offset: Offset(0, 16),
                 ),
               ],
             ),
-            child: const Icon(
+            child: Icon(
               CupertinoIcons.bag_fill,
-              color: AppTheme.primary,
+              color: Theme.of(context).colorScheme.primary,
               size: 34,
             ),
           ),
@@ -760,9 +778,12 @@ class _FeedbackBanner extends StatelessWidget {
     return AppCard(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       radius: 22,
-      backgroundColor:
-          isError ? const Color(0xFFFFF2F0) : const Color(0xFFF2FBF5),
-      borderColor: isError ? const Color(0xFFFFD2CC) : const Color(0xFFCDEFD6),
+      backgroundColor: isError
+          ? AppTheme.colorsOf(context).dangerContainer
+          : AppTheme.colorsOf(context).successContainer,
+      borderColor: isError
+          ? AppTheme.colorsOf(context).danger
+          : AppTheme.colorsOf(context).success,
       child: Row(
         children: [
           Flexible(
@@ -771,7 +792,9 @@ class _FeedbackBanner extends StatelessWidget {
               message,
               role: AppTextRole.caption,
               align: TextAlign.right,
-              color: isError ? const Color(0xFFB42318) : AppTheme.success,
+              color: isError
+                  ? AppTheme.colorsOf(context).danger
+                  : AppTheme.colorsOf(context).success,
             ),
           ),
           const SizedBox(width: 10),
@@ -779,7 +802,9 @@ class _FeedbackBanner extends StatelessWidget {
             isError
                 ? CupertinoIcons.exclamationmark_circle
                 : CupertinoIcons.check_mark_circled_solid,
-            color: isError ? const Color(0xFFB42318) : AppTheme.success,
+            color: isError
+                ? AppTheme.colorsOf(context).danger
+                : AppTheme.colorsOf(context).success,
             size: 18,
           ),
         ],

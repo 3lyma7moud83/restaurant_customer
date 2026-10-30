@@ -245,10 +245,18 @@ class _OrderChatPageState extends State<OrderChatPage> {
                     margin: const EdgeInsets.all(6),
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: mine ? Colors.green : Colors.grey.shade300,
+                      color: mine
+                          ? Theme.of(context).colorScheme.primaryContainer
+                          : Theme.of(context).colorScheme.surfaceContainerHigh,
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: Text((msg['message'] ?? '').toString()),
+                    child: Text(
+                      (msg['message'] ?? '').toString(),
+                      style: TextStyle(
+                          color: mine
+                              ? Theme.of(context).colorScheme.onPrimaryContainer
+                              : Theme.of(context).colorScheme.onSurface),
+                    ),
                   ),
                 );
               },

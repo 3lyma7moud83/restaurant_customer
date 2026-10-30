@@ -13,6 +13,7 @@ import 'core/services/error_logger.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/theme_controller.dart';
 import 'core/ui/web_startup_splash.dart';
+import 'core/ui/app_motion.dart';
 import 'cart/cart_provider.dart';
 import 'pages/home_page.dart';
 import 'pages/splash_video_screen.dart';
@@ -124,6 +125,7 @@ class _CustomerAppState extends State<CustomerApp> {
                 theme: AppTheme.light(),
                 darkTheme: AppTheme.dark(),
                 themeMode: _themeController.themeMode,
+                themeAnimationStyle: AppMotion.overlayStyle(context),
                 scrollBehavior: const _AppScrollBehavior(),
                 locale: _localeController.locale,
                 supportedLocales: AppLocalizations.supportedLocales,

@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import '../core/ui/app_motion.dart';
+import '../core/ui/app_brand_glow.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../cart/cart_page.dart';
@@ -417,6 +420,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       await Navigator.push(
         context,
         AppTheme.platformPageRoute(
+          motion: AppRouteMotion.checkout,
           builder: (_) => CartPage(
             restaurantId: cart.restaurantId ?? '',
           ),
@@ -458,6 +462,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     Navigator.push(
       context,
       AppTheme.platformPageRoute(
+        motion: AppRouteMotion.detail,
         builder: (_) => RestaurantMenuPage(
           managerId: managerId,
           restaurantId: restaurantId,
@@ -541,7 +546,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   tooltip: isDark ? 'الوضع الفاتح' : 'الوضع الداكن',
                   visualDensity: VisualDensity.compact,
                   icon: AnimatedSwitcher(
-                    duration: AppTheme.microInteractionDuration,
+                    duration: AppMotion.duration(
+                        context, AppTheme.microInteractionDuration),
                     child: Icon(
                       isDark
                           ? Icons.light_mode_rounded
@@ -556,7 +562,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             );
           },
         ),
-        title: _HomeAppBarTitle(
+        title: HomeAppBarTitle(
           compact: _HomeHeaderMetrics.compactTitleFor(width),
         ),
         actions: [
@@ -567,7 +573,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ),
         ],
       ),
-      drawer: _MainDrawer(client: _client),
+      drawer: HomeMainDrawer(client: _client),
       body: ValueListenableBuilder<_LocationUiState>(
         valueListenable: _locationUiState,
         builder: (context, locationState, _) {
@@ -750,8 +756,9 @@ class _LocationUiState {
   }
 }
 
-class _HomeAppBarTitle extends StatelessWidget {
-  const _HomeAppBarTitle({
+class HomeAppBarTitle extends StatelessWidget {
+  const HomeAppBarTitle({
+    super.key,
     this.compact = false,
   });
 
@@ -788,14 +795,17 @@ class _HomeAppBarTitle extends StatelessWidget {
               size: iconSize,
             ),
             SizedBox(width: compact ? 5 : 7),
-            Text(
-              appName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface,
-                fontWeight: FontWeight.w900,
-                fontSize: fontSize,
+            AppBrandGlow(
+              key: const ValueKey('home-name-glow'),
+              child: Text(
+                appName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurface,
+                  fontWeight: FontWeight.w900,
+                  fontSize: fontSize,
+                ),
               ),
             ),
           ],
@@ -1016,7 +1026,7 @@ class _HomeCartActionSlot extends StatelessWidget {
     final sideInset = _HomeHeaderMetrics.sideInsetFor(viewportWidth);
     return Padding(
       padding: EdgeInsetsDirectional.only(end: sideInset),
-      child: _HomeCartAction(
+      child: HomeCartAction(
         onTap: onOpenCart,
         buttonExtent: buttonExtent + 2,
       ),
@@ -1139,18 +1149,7 @@ class _TopBarActionShell extends StatelessWidget {
         ),
         borderRadius: BorderRadius.circular(radius),
         border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
-        boxShadow: [
-          BoxShadow(
-            color: AppTheme.primary.withValues(alpha: 0.10),
-            blurRadius: 14,
-            offset: const Offset(0, 8),
-          ),
-          const BoxShadow(
-            color: Color(0x10000000),
-            blurRadius: 9,
-            offset: Offset(0, 5),
-          ),
-        ],
+        boxShadow: AppBrandGlow.shadows,
       ),
       child: child,
     );
@@ -1217,15 +1216,16 @@ class _DrawerTile extends StatelessWidget {
                   isRtl
                       ? Icons.chevron_left_rounded
                       : Icons.chevron_right_rounded,
-                  color: Color(0xFF98A2B3),
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 )),
       onTap: onTap,
     );
   }
 }
 
-class _HomeCartAction extends StatelessWidget {
-  const _HomeCartAction({
+class HomeCartAction extends StatelessWidget {
+  const HomeCartAction({
+    super.key,
     required this.onTap,
     required this.buttonExtent,
   });
@@ -1281,7 +1281,7 @@ class _HomeCartAction extends StatelessWidget {
                 color: AppTheme.primary,
                 borderRadius: BorderRadius.circular(999),
                 border: Border.all(
-                  color: Colors.white,
+                  color: Theme.of(context).colorScheme.surface,
                   width: 1.2,
                 ),
                 boxShadow: const [
@@ -1293,12 +1293,26 @@ class _HomeCartAction extends StatelessWidget {
                 ],
               ),
               alignment: Alignment.center,
-              child: Text(
-                cart.totalCount.toString(),
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: badgeFontSize,
-                  fontWeight: FontWeight.w800,
+              child: AnimatedSwitcher(
+                duration: AppMotion.duration(context, AppMotion.microDuration),
+                switchInCurve: AppMotion.curve,
+                switchOutCurve: Curves.easeIn,
+                transitionBuilder: (child, animation) => FadeTransition(
+                  opacity: animation,
+                  child: ScaleTransition(
+                    scale:
+                        Tween<double>(begin: 0.88, end: 1).animate(animation),
+                    child: child,
+                  ),
+                ),
+                child: Text(
+                  cart.totalCount.toString(),
+                  key: ValueKey(cart.totalCount),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onPrimary,
+                    fontSize: badgeFontSize,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ),
@@ -1390,8 +1404,9 @@ class _LanguageSegment extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = selected ? AppTheme.primary : Colors.transparent;
-    final textColor =
-        selected ? Colors.white : AppTheme.colorsOf(context).textSecondary;
+    final textColor = selected
+        ? Theme.of(context).colorScheme.onPrimary
+        : AppTheme.colorsOf(context).textSecondary;
 
     return Material(
       color: Colors.transparent,
@@ -1402,7 +1417,8 @@ class _LanguageSegment extends StatelessWidget {
           onTap();
         },
         child: AnimatedContainer(
-          duration: AppTheme.microInteractionDuration,
+          duration:
+              AppMotion.duration(context, AppTheme.microInteractionDuration),
           curve: AppTheme.emphasizedCurve,
           padding: EdgeInsets.symmetric(
             horizontal: horizontalPadding,
@@ -1441,10 +1457,10 @@ class _EmptyState extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(
+            Icon(
               Icons.store_mall_directory_outlined,
               size: 80,
-              color: Colors.orange,
+              color: Theme.of(context).colorScheme.primary,
             ),
             const SizedBox(height: 12),
             Text(
@@ -1486,10 +1502,10 @@ class _HomeErrorState extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(
+            Icon(
               Icons.cloud_off_rounded,
               size: 62,
-              color: Color(0xFF98A2B3),
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
             const SizedBox(height: 12),
             Text(
@@ -1517,16 +1533,16 @@ class _HomeErrorState extends StatelessWidget {
   }
 }
 
-class _MainDrawer extends StatefulWidget {
-  const _MainDrawer({required this.client});
+class HomeMainDrawer extends StatefulWidget {
+  const HomeMainDrawer({super.key, required this.client});
 
   final SupabaseClient client;
 
   @override
-  State<_MainDrawer> createState() => _MainDrawerState();
+  State<HomeMainDrawer> createState() => _MainDrawerState();
 }
 
-class _MainDrawerState extends State<_MainDrawer> {
+class _MainDrawerState extends State<HomeMainDrawer> {
   final ProfileService _profileService = ProfileService();
   Map<String, dynamic>? customerProfile;
   StreamSubscription<AuthState>? _authSubscription;
@@ -1737,6 +1753,7 @@ class _MainDrawerState extends State<_MainDrawer> {
   @override
   Widget build(BuildContext context) {
     final user = widget.client.auth.currentUser;
+    final scheme = Theme.of(context).colorScheme;
     final isGuest = user == null;
     final customerName = (customerProfile?['name'] ?? '').toString().trim();
     final profileImage =
@@ -1758,19 +1775,20 @@ class _MainDrawerState extends State<_MainDrawer> {
         padding: EdgeInsets.zero,
         children: [
           Container(
+            key: const ValueKey('home-drawer-header'),
             padding: const EdgeInsets.fromLTRB(20, 40, 20, 24),
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [AppTheme.primary, AppTheme.secondary],
+                colors: [scheme.primaryContainer, scheme.surfaceContainerHigh],
               ),
             ),
             child: Row(
               children: [
                 CircleAvatar(
                   radius: avatarSize / 2,
-                  backgroundColor: Colors.white,
+                  backgroundColor: scheme.surface,
                   child: !isGuest && hasProfileImage
                       ? ClipOval(
                           child: AppCachedImage(
@@ -1798,8 +1816,8 @@ class _MainDrawerState extends State<_MainDrawer> {
                         displayName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: scheme.onPrimaryContainer,
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
                         ),
@@ -1812,8 +1830,8 @@ class _MainDrawerState extends State<_MainDrawer> {
                           userEmail,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white70,
+                          style: TextStyle(
+                            color: scheme.onPrimaryContainer,
                             fontSize: 12,
                           ),
                         ),
@@ -1828,19 +1846,21 @@ class _MainDrawerState extends State<_MainDrawer> {
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 16, 12, 0),
               child: Card(
+                key: const ValueKey('home-drawer-login-card'),
                 elevation: 0,
-                color: const Color(0xFFFFF3E0),
+                color: scheme.primaryContainer,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                 ),
                 child: ListTile(
-                  leading: const Icon(
-                    Icons.login,
-                    color: Color(0xffFF5722),
-                  ),
+                  textColor: scheme.onPrimaryContainer,
+                  iconColor: scheme.onPrimaryContainer,
+                  leading: const Icon(Icons.login),
                   title: Text(context.tr('home.login_to_order')),
-                  trailing: const Icon(
-                    Icons.arrow_forward_ios_rounded,
+                  trailing: Icon(
+                    Directionality.of(context) == TextDirection.rtl
+                        ? Icons.chevron_left_rounded
+                        : Icons.chevron_right_rounded,
                     size: 18,
                   ),
                   onTap: _openLoginPage,
@@ -1932,7 +1952,7 @@ class _MainDrawerState extends State<_MainDrawer> {
     );
 
     final drawerAnimationDuration =
-        kIsWeb ? Duration.zero : const Duration(milliseconds: 220);
+        AppMotion.duration(context, const Duration(milliseconds: 220));
     final isRtl = Directionality.of(context) == TextDirection.rtl;
 
     return Drawer(
@@ -1941,7 +1961,7 @@ class _MainDrawerState extends State<_MainDrawer> {
             ? Offset.zero
             : (isRtl ? const Offset(0.035, 0) : const Offset(-0.035, 0)),
         duration: drawerAnimationDuration,
-        curve: Curves.easeOutBack,
+        curve: AppMotion.curve,
         child: AnimatedOpacity(
           opacity: _drawerVisible ? 1 : 0.92,
           duration: drawerAnimationDuration,

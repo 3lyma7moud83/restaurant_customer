@@ -1,5 +1,6 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import '../ui/app_motion.dart';
 
 import 'order_status_utils.dart';
 import '../theme/app_theme.dart';
@@ -41,21 +42,42 @@ class OrderStatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = AppTheme.colorsOf(context);
+    final color = switch (info.stage) {
+      OrderStatusStage.pending || OrderStatusStage.onTheWay => colors.warning,
+      OrderStatusStage.accepted =>
+        Theme.of(context).colorScheme.onTertiaryContainer,
+      OrderStatusStage.awaitingCustomerConfirmation => colors.info,
+      OrderStatusStage.completed => colors.success,
+      OrderStatusStage.cancelled => colors.danger,
+      OrderStatusStage.unknown => colors.textSecondary,
+    };
+    final background = switch (info.stage) {
+      OrderStatusStage.pending ||
+      OrderStatusStage.onTheWay =>
+        colors.warningContainer,
+      OrderStatusStage.accepted =>
+        Theme.of(context).colorScheme.tertiaryContainer,
+      OrderStatusStage.awaitingCustomerConfirmation => colors.infoContainer,
+      OrderStatusStage.completed => colors.successContainer,
+      OrderStatusStage.cancelled => colors.dangerContainer,
+      OrderStatusStage.unknown => colors.surfaceMuted,
+    };
     return Container(
       padding: padding,
       decoration: BoxDecoration(
-        color: info.color.withValues(alpha: 0.14),
+        color: background,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(info.icon, size: fontSize + 2, color: info.color),
+          Icon(info.icon, size: fontSize + 2, color: color),
           const SizedBox(width: 6),
           Text(
             info.text,
             style: TextStyle(
-              color: info.color,
+              color: color,
               fontWeight: FontWeight.w700,
               fontSize: fontSize,
             ),
@@ -93,7 +115,7 @@ class _OrderSectionCardState extends State<OrderSectionCard> {
   @override
   Widget build(BuildContext context) {
     final animationDuration =
-        kIsWeb ? Duration.zero : AppTheme.sectionTransitionDuration;
+        AppMotion.duration(context, AppTheme.sectionTransitionDuration);
     final shadowColor =
         _hovered ? const Color(0x18000000) : const Color(0x10000000);
 
@@ -153,7 +175,7 @@ class _ScaleOnTapState extends State<ScaleOnTap> {
   @override
   Widget build(BuildContext context) {
     final animationDuration =
-        kIsWeb ? Duration.zero : AppTheme.microInteractionDuration;
+        AppMotion.duration(context, AppTheme.microInteractionDuration);
     return MouseRegion(
       cursor:
           widget.onTap == null ? MouseCursor.defer : SystemMouseCursors.click,
@@ -164,7 +186,8 @@ class _ScaleOnTapState extends State<ScaleOnTap> {
         onTapCancel: widget.onTap == null ? null : () => _setPressed(false),
         onTap: widget.onTap,
         child: AnimatedScale(
-          scale: _pressed ? widget.scale : 1,
+          scale:
+              _pressed && !AppMotion.reduceMotion(context) ? widget.scale : 1,
           duration: animationDuration,
           curve: AppTheme.emphasizedCurve,
           child: AnimatedOpacity(

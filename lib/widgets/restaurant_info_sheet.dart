@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../core/ui/app_motion.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/auth/auth_navigation_guard.dart';
@@ -22,6 +24,7 @@ Future<void> showRestaurantInfoSheet(
 
   await showModalBottomSheet<void>(
     context: context,
+    sheetAnimationStyle: AppMotion.overlayStyle(context),
     isScrollControlled: true,
     useSafeArea: true,
     showDragHandle: true,
@@ -43,6 +46,7 @@ Future<bool?> showComplaintComposerSheet(
 
   return showModalBottomSheet<bool>(
     context: context,
+    sheetAnimationStyle: AppMotion.overlayStyle(context),
     isScrollControlled: true,
     useSafeArea: true,
     showDragHandle: true,
@@ -209,12 +213,12 @@ class _RestaurantQuickActionsSheetState
                 return Container(
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(24),
-                    gradient: const LinearGradient(
+                    gradient: LinearGradient(
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                       colors: [
-                        Color(0xFFF7EBDC),
-                        Color(0xFFF4F7FA),
+                        Theme.of(context).colorScheme.surfaceContainerHigh,
+                        Theme.of(context).colorScheme.surfaceContainerLow,
                       ],
                     ),
                   ),
@@ -234,21 +238,22 @@ class _RestaurantQuickActionsSheetState
                                 ),
                                 errorWidget: const SizedBox.shrink(),
                               ),
-                            DecoratedBox(
-                              decoration: BoxDecoration(
-                                borderRadius: const BorderRadius.vertical(
-                                  top: Radius.circular(24),
-                                ),
-                                gradient: LinearGradient(
-                                  begin: Alignment.topCenter,
-                                  end: Alignment.bottomCenter,
-                                  colors: [
-                                    Colors.black.withValues(alpha: 0.08),
-                                    Colors.black.withValues(alpha: 0.42),
-                                  ],
+                            if (imageUrl != null && imageUrl.isNotEmpty)
+                              DecoratedBox(
+                                decoration: BoxDecoration(
+                                  borderRadius: const BorderRadius.vertical(
+                                    top: Radius.circular(24),
+                                  ),
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      Colors.black.withValues(alpha: 0.08),
+                                      Colors.black.withValues(alpha: 0.42),
+                                    ],
+                                  ),
                                 ),
                               ),
-                            ),
                             Padding(
                               padding: const EdgeInsets.all(16),
                               child: Column(
@@ -260,8 +265,13 @@ class _RestaurantQuickActionsSheetState
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     textAlign: TextAlign.right,
-                                    style: const TextStyle(
-                                      color: Colors.white,
+                                    style: TextStyle(
+                                      color: imageUrl != null &&
+                                              imageUrl.isNotEmpty
+                                          ? Colors.white
+                                          : Theme.of(context)
+                                              .colorScheme
+                                              .onSurface,
                                       fontSize: 20,
                                       fontWeight: FontWeight.w900,
                                     ),
@@ -273,8 +283,13 @@ class _RestaurantQuickActionsSheetState
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       textAlign: TextAlign.right,
-                                      style: const TextStyle(
-                                        color: Color(0xFFEFEFEF),
+                                      style: TextStyle(
+                                        color: imageUrl != null &&
+                                                imageUrl.isNotEmpty
+                                            ? Colors.white
+                                            : Theme.of(context)
+                                                .colorScheme
+                                                .onSurfaceVariant,
                                         fontWeight: FontWeight.w700,
                                       ),
                                     ),
@@ -345,7 +360,7 @@ class _InfoFactRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.86),
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Padding(
@@ -595,7 +610,7 @@ class _ComplaintComposerSheetState extends State<_ComplaintComposerSheet> {
           );
 
     return AnimatedPadding(
-      duration: const Duration(milliseconds: 180),
+      duration: AppMotion.duration(context, AppMotion.contentDuration),
       curve: Curves.easeOutCubic,
       padding: EdgeInsets.only(bottom: viewInsets.bottom),
       child: SingleChildScrollView(
@@ -679,12 +694,13 @@ class _ComplaintComposerSheetState extends State<_ComplaintComposerSheet> {
                 child: ElevatedButton.icon(
                   onPressed: _sending ? null : _submit,
                   icon: _sending
-                      ? const SizedBox(
+                      ? SizedBox(
                           width: 18,
                           height: 18,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Colors.white,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
                           ),
                         )
                       : const Icon(Icons.send_rounded),

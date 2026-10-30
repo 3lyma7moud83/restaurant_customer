@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
 import 'app_error.dart';
 import 'error_service.dart';
 import 'error_type.dart';
@@ -86,7 +87,7 @@ class ErrorHandler {
       case ErrorSeverity.critical:
         if (context != null && context.mounted) {
           await Navigator.of(context, rootNavigator: true).push<void>(
-            MaterialPageRoute<void>(
+            AppTheme.platformPageRoute<void>(
               builder: (_) => CriticalErrorScreen(error: error),
             ),
           );

@@ -22,6 +22,7 @@ class SplashVideoScreen<T> extends StatefulWidget {
   static const posterPath = 'assets/videos/splash_poster.jpg';
   static const visualDuration = Duration(milliseconds: 2500);
   static const fadeDuration = Duration(milliseconds: 180);
+  static const readinessTimeout = Duration(milliseconds: 1500);
   static const background = Color(0xFF0E0F10);
 
   final Future<T> initialization;
@@ -41,6 +42,7 @@ class _SplashVideoScreenState<T> extends State<SplashVideoScreen<T>>
   final Stopwatch _visualClock = Stopwatch();
   Timer? _deadlineTimer;
   Timer? _fadeTimer;
+  Timer? _readinessTimer;
   Widget? _destination;
   bool _destinationPainted = false;
   bool _videoReady = false;
@@ -49,6 +51,11 @@ class _SplashVideoScreenState<T> extends State<SplashVideoScreen<T>>
   bool _visible = true;
   bool _fading = false;
   bool _systemUiRestored = false;
+  bool _preparingVisual = false;
+  bool _posterReady = false;
+  bool _readinessExpired = false;
+  bool _visualStartScheduled = false;
+  bool _reduceMotion = false;
 
   @override
   void initState() {
@@ -58,10 +65,45 @@ class _SplashVideoScreenState<T> extends State<SplashVideoScreen<T>>
     // Web owns its HTML splash before Flutter loads. Never replay it in Flutter.
     if (!kIsWeb) {
       unawaited(_enterImmersiveMode());
+      _readinessTimer = Timer(SplashVideoScreen.readinessTimeout, () {
+        if (!mounted || _visualClock.isRunning) return;
+        _readinessExpired = true;
+        _retireVideo();
+        setState(() => _videoReady = false);
+        _scheduleVisualStart();
+      });
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (kIsWeb || _preparingVisual) return;
+    _preparingVisual = true;
+    _reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ??
+        WidgetsBinding.instance.platformDispatcher.accessibilityFeatures
+            .disableAnimations;
+    if (_reduceMotion) {
+      _retireVideo();
+    } else {
       unawaited(_initializeVideo());
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _visualClock.start();
+    }
+  }
+
+  void _scheduleVisualStart() {
+    if (_visualStartScheduled || _visualClock.isRunning || !mounted) return;
+    if (!_videoReady &&
+        !(_videoRetired && _posterReady) &&
+        !_readinessExpired) {
+      return;
+    }
+    _visualStartScheduled = true;
+    // Give the selected visual a complete layout/paint before counting its time.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _expired) return;
+      _readinessTimer?.cancel();
+      _visualClock.start();
+      if (!_reduceMotion) {
         _fadeTimer = Timer(
           SplashVideoScreen.visualDuration - SplashVideoScreen.fadeDuration,
           () {
@@ -70,9 +112,16 @@ class _SplashVideoScreenState<T> extends State<SplashVideoScreen<T>>
             }
           },
         );
-        _deadlineTimer = Timer(SplashVideoScreen.visualDuration, _expire);
-      });
-    }
+      }
+      _deadlineTimer = Timer(SplashVideoScreen.visualDuration, _expire);
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  void _onPosterReady() {
+    if (_posterReady || !mounted) return;
+    _posterReady = true;
+    _scheduleVisualStart();
   }
 
   Future<void> _initializeApp() async {
@@ -110,20 +159,20 @@ class _SplashVideoScreenState<T> extends State<SplashVideoScreen<T>>
       if (!_canPlay) return;
       await controller.setVolume(0);
       if (!_canPlay) return;
-      // Fit the complete timeline into the remaining budget after local decode.
-      final remaining = SplashVideoScreen.visualDuration - _visualClock.elapsed;
-      if (remaining <= Duration.zero) return;
-      final speed =
-          controller.value.duration.inMicroseconds / remaining.inMicroseconds;
+      // Decode time is outside the visual budget; do not speed up late decoding.
+      final speed = controller.value.duration.inMicroseconds /
+          SplashVideoScreen.visualDuration.inMicroseconds;
       await controller.setPlaybackSpeed(speed.clamp(1.0, 4.0));
       if (!_canPlay) return;
       await controller.play();
       if (!_canPlay) return;
       setState(() => _videoReady = true);
+      _scheduleVisualStart();
     } catch (_) {
       // Decode/play errors retain the poster until the same bounded deadline.
       _retireVideo();
       if (mounted) setState(() => _videoReady = false);
+      _scheduleVisualStart();
     }
   }
 
@@ -132,6 +181,7 @@ class _SplashVideoScreenState<T> extends State<SplashVideoScreen<T>>
     if (_controller!.value.hasError) {
       _retireVideo();
       setState(() => _videoReady = false);
+      _scheduleVisualStart();
     }
   }
 
@@ -215,6 +265,7 @@ class _SplashVideoScreenState<T> extends State<SplashVideoScreen<T>>
     WidgetsBinding.instance.removeObserver(this);
     _deadlineTimer?.cancel();
     _fadeTimer?.cancel();
+    _readinessTimer?.cancel();
     _visualClock.stop();
     _retireVideo();
     unawaited(_restoreSystemUi());
@@ -239,32 +290,62 @@ class _SplashVideoScreenState<T> extends State<SplashVideoScreen<T>>
                 child: AnimatedOpacity(
                   key: const ValueKey('startup-cover'),
                   opacity: _fading ? 0 : 1,
-                  duration: SplashVideoScreen.fadeDuration,
+                  duration: _reduceMotion
+                      ? Duration.zero
+                      : SplashVideoScreen.fadeDuration,
                   curve: Curves.easeOut,
-                  child: ColoredBox(
-                    color: SplashVideoScreen.background,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      textDirection: TextDirection.ltr,
-                      children: [
-                        Image.asset(
-                          SplashVideoScreen.posterPath,
-                          fit: BoxFit.contain,
-                          excludeFromSemantics: true,
-                          errorBuilder: (_, __, ___) => const SizedBox.expand(),
-                        ),
-                        if (_videoReady && !_videoRetired)
-                          FittedBox(
-                            key: const ValueKey('splash-video-contain'),
-                            fit: BoxFit.contain,
-                            child: SizedBox(
-                              width: _controller!.value.size.width,
-                              height: _controller!.value.size.height,
-                              child: VideoPlayer(_controller!),
+                  child: DecoratedBox(
+                    decoration: const BoxDecoration(
+                      // Echo the charcoal scene and warm light across tall
+                      // screens without stretching or cropping the foreground.
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Color(0xFF343235),
+                          Color(0xFF17191C),
+                          Color(0xFF302016),
+                        ],
+                        stops: [0, 0.56, 1],
+                      ),
+                    ),
+                    child: MediaQuery(
+                      // This cover is runApp's root, above MaterialApp. Read
+                      // cutouts directly from the View when no query exists yet.
+                      data: MediaQuery.maybeOf(context) ??
+                          MediaQueryData.fromView(View.of(context)),
+                      child: SafeArea(
+                        child: Stack(
+                          fit: StackFit.expand,
+                          textDirection: TextDirection.ltr,
+                          children: [
+                            Image.asset(
+                              SplashVideoScreen.posterPath,
+                              fit: BoxFit.contain,
+                              excludeFromSemantics: true,
+                              frameBuilder: (_, child, frame, synchronous) {
+                                if (frame != null || synchronous) {
+                                  _onPosterReady();
+                                }
+                                return child;
+                              },
+                              errorBuilder: (_, __, ___) =>
+                                  const SizedBox.expand(),
                             ),
-                          ),
-                        const SplashBrand(),
-                      ],
+                            if (_videoReady && !_videoRetired)
+                              FittedBox(
+                                key: const ValueKey('splash-video-contain'),
+                                fit: BoxFit.contain,
+                                child: SizedBox(
+                                  width: _controller!.value.size.width,
+                                  height: _controller!.value.size.height,
+                                  child: VideoPlayer(_controller!),
+                                ),
+                              ),
+                            const SplashBrand(),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -285,9 +366,16 @@ class SplashBrand extends StatelessWidget {
     return LayoutBuilder(builder: (context, constraints) {
       final width = (constraints.maxWidth * 0.82).clamp(0.0, 520.0);
       final fontSize = (constraints.maxWidth * 0.065).clamp(20.0, 38.0);
-      final reduceMotion =
-          MediaQuery.maybeOf(context)?.disableAnimations ?? false;
-      return Center(
+      final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ??
+          WidgetsBinding.instance.platformDispatcher.accessibilityFeatures
+              .disableAnimations;
+      return Align(
+        // Keep the foreground scene and its own title unobstructed. The glow
+        // lives in the surrounding backdrop on a tall phone or below on Web.
+        alignment: Alignment(
+          0,
+          constraints.maxHeight > constraints.maxWidth ? 0.42 : 0.68,
+        ),
         child: TweenAnimationBuilder<double>(
           tween: Tween(begin: reduceMotion ? 1 : 0, end: 1),
           duration:

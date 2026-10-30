@@ -4,6 +4,8 @@ import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
 import '../core/localization/app_localizations.dart';
 import '../core/theme/app_theme.dart';
+import '../core/ui/app_motion.dart';
+import '../core/ui/app_components.dart';
 import '../services/restaurant_feed_utils.dart';
 import '../services/restaurants_service.dart';
 import 'restaurant_card_components.dart';
@@ -13,7 +15,7 @@ typedef RestaurantContextAction = void Function(
   Map<String, dynamic> restaurant,
 );
 
-class RestaurantsGridSection extends StatelessWidget {
+class RestaurantsGridSection extends StatefulWidget {
   const RestaurantsGridSection({
     super.key,
     required this.loading,
@@ -50,7 +52,9 @@ class RestaurantsGridSection extends StatelessWidget {
   final String gridKey;
 
   @override
-  Widget build(BuildContext context) {
+  State<RestaurantsGridSection> createState() => _RestaurantsGridSectionState();
+
+  Widget _build(BuildContext context, Set<String> enteredIds) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final crossAxisCount = RestaurantFeedUtils.calcGridCount(
@@ -81,6 +85,7 @@ class RestaurantsGridSection extends StatelessWidget {
           );
         } else {
           content = _SearchFilteredRestaurants(
+            enteredIds: enteredIds,
             key: ValueKey(gridKey),
             constraints: constraints,
             crossAxisCount: crossAxisCount,
@@ -98,12 +103,8 @@ class RestaurantsGridSection extends StatelessWidget {
           );
         }
 
-        if (kIsWeb) {
-          return content;
-        }
-
         return AnimatedSwitcher(
-          duration: const Duration(milliseconds: 240),
+          duration: AppMotion.duration(context, AppMotion.contentDuration),
           switchInCurve: Curves.easeOutCubic,
           switchOutCurve: Curves.easeOutCubic,
           child: content,
@@ -111,6 +112,13 @@ class RestaurantsGridSection extends StatelessWidget {
       },
     );
   }
+}
+
+class _RestaurantsGridSectionState extends State<RestaurantsGridSection> {
+  final _enteredIds = <String>{};
+
+  @override
+  Widget build(BuildContext context) => widget._build(context, _enteredIds);
 }
 
 class _SearchFilteredRestaurants extends StatelessWidget {
@@ -129,6 +137,7 @@ class _SearchFilteredRestaurants extends StatelessWidget {
     required this.emptyStateBuilder,
     required this.onTap,
     required this.onInfoTap,
+    required this.enteredIds,
   });
 
   final BoxConstraints constraints;
@@ -144,6 +153,7 @@ class _SearchFilteredRestaurants extends StatelessWidget {
   final WidgetBuilder emptyStateBuilder;
   final RestaurantContextAction onTap;
   final RestaurantContextAction? onInfoTap;
+  final Set<String> enteredIds;
 
   @override
   Widget build(BuildContext context) {
@@ -164,6 +174,7 @@ class _SearchFilteredRestaurants extends StatelessWidget {
         return RefreshIndicator(
           onRefresh: onRefresh,
           child: _RestaurantGrid(
+            enteredIds: enteredIds,
             constraints: constraints,
             crossAxisCount: crossAxisCount,
             gridMetrics: gridMetrics,
@@ -191,6 +202,7 @@ class _RestaurantGrid extends StatelessWidget {
     required this.restaurants,
     required this.onTap,
     required this.onInfoTap,
+    required this.enteredIds,
   });
 
   final BoxConstraints constraints;
@@ -202,6 +214,7 @@ class _RestaurantGrid extends StatelessWidget {
   final List<Map<String, dynamic>> restaurants;
   final RestaurantContextAction onTap;
   final RestaurantContextAction? onInfoTap;
+  final Set<String> enteredIds;
 
   @override
   Widget build(BuildContext context) {
@@ -267,23 +280,13 @@ class _RestaurantGrid extends StatelessWidget {
       ),
     );
 
-    final animationDuration = Duration(
-      milliseconds: 220 + (index.clamp(0, 8) * 24),
-    );
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0, end: 1),
-      duration: kIsWeb ? Duration.zero : animationDuration,
-      curve: Curves.easeOutBack,
+    return AppEntryTransition(
+      key: ValueKey(
+          'restaurant-entry-${restaurantId.isEmpty ? index : restaurantId}'),
+      animate:
+          enteredIds.add(restaurantId.isEmpty ? 'index-$index' : restaurantId),
+      index: index,
       child: card,
-      builder: (context, value, child) {
-        return Opacity(
-          opacity: value.clamp(0, 1).toDouble(),
-          child: Transform.translate(
-            offset: Offset(0, (1 - value) * 14),
-            child: child,
-          ),
-        );
-      },
     );
   }
 }

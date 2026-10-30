@@ -13,6 +13,29 @@ void main() {
   const coverKey = ValueKey('startup-cover');
   const videoKey = ValueKey('splash-video-contain');
 
+  testWidgets('top-level startup provides safe-area data above MaterialApp',
+      (tester) async {
+    await tester.pumpWidget(_splash(_FakeVideoController()));
+    await tester.pump();
+    // Flutter's root View supplies a MediaQuery on this SDK, but MaterialApp
+    // is still below the cover, exactly as in production's runApp call.
+    expect(
+      find.ancestor(
+        of: find.byType(SplashVideoScreen<String>),
+        matching: find.byType(MaterialApp),
+      ),
+      findsNothing,
+    );
+    final safeArea = find.descendant(
+      of: find.byKey(coverKey),
+      matching: find.byType(SafeArea),
+    );
+    expect(safeArea, findsOneWidget);
+    expect(MediaQuery.maybeOf(tester.element(safeArea)), isNotNull);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('ready destination is covered until exactly 2500 milliseconds',
       (tester) async {
     final controller = _FakeVideoController();
@@ -67,6 +90,7 @@ void main() {
     expect(find.byKey(coverKey), findsOneWidget);
     expect(find.byKey(videoKey), findsNothing);
     expect(find.byType(Image), findsOneWidget);
+    expect(tester.widget<AnimatedOpacity>(find.byKey(coverKey)).opacity, 1);
     expect(controller.disposeCalls, 1);
 
     await tester.pump(const Duration(seconds: 4));
@@ -106,6 +130,7 @@ void main() {
 
   for (final viewport in <Size>[
     const Size(390, 844),
+    const Size(390, 932),
     const Size(1200, 800),
   ]) {
     testWidgets(
@@ -121,7 +146,7 @@ void main() {
 
       expect(controller.configuredVolume, 0);
       expect(controller.configuredLooping, isFalse);
-      expect(controller.configuredSpeed, closeTo(3.2, 0.1));
+      expect(controller.configuredSpeed, 1);
       expect(controller.playCalls, 1);
       expect(
           controller.calls.indexOf('volume'),
@@ -132,7 +157,7 @@ void main() {
       expect(fitted.fit, BoxFit.contain);
       final visibleVideo = tester.getRect(find.byType(VideoPlayer));
       expect(
-          visibleVideo.width / visibleVideo.height, closeTo(720 / 1280, 0.001));
+          visibleVideo.width / visibleVideo.height, closeTo(1472 / 624, 0.001));
       expect(visibleVideo.left, greaterThanOrEqualTo(-0.01));
       expect(visibleVideo.top, greaterThanOrEqualTo(-0.01));
       expect(visibleVideo.right, lessThanOrEqualTo(viewport.width + 0.01));
@@ -147,6 +172,7 @@ void main() {
       (tester) async {
     final controller = _FakeVideoController(failInitialize: true);
     await tester.pumpWidget(_splash(controller));
+    await _loadPoster(tester);
     await tester.pump();
     expect(find.byKey(videoKey), findsNothing);
     expect(find.byType(Image), findsOneWidget);
@@ -163,6 +189,7 @@ void main() {
       (tester) async {
     final controller = _FakeVideoController(failPlay: true);
     await tester.pumpWidget(_splash(controller));
+    await _loadPoster(tester);
     await tester.pump();
     expect(find.byKey(videoKey), findsNothing);
     expect(find.byType(Image), findsOneWidget);
@@ -174,12 +201,16 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('video initialization cannot start playback after the deadline',
+  testWidgets(
+      'hung initialization uses a bounded fallback with its full budget',
       (tester) async {
     final initialize = Completer<void>();
     final controller = _FakeVideoController(initialization: initialize.future);
     await tester.pumpWidget(_splash(controller));
     await tester.pump();
+    await tester.pump(SplashVideoScreen.readinessTimeout);
+    expect(find.byKey(coverKey), findsOneWidget);
+    expect(controller.disposeCalls, 1);
     await tester.pump(const Duration(milliseconds: 2500));
     expect(find.byKey(coverKey), findsNothing);
     expect(controller.disposeCalls, 1);
@@ -188,6 +219,69 @@ void main() {
     expect(controller.playCalls, 0);
     expect(controller.configuredSpeed, isNull);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('slow visual readiness does not consume the 2500ms presentation',
+      (tester) async {
+    final initialize = Completer<void>();
+    final controller = _FakeVideoController(initialization: initialize.future);
+    await tester.pumpWidget(_splash(controller));
+    await tester.pump(const Duration(milliseconds: 800));
+    expect(find.byKey(videoKey), findsNothing);
+    expect(find.byKey(coverKey), findsOneWidget);
+    initialize.complete();
+    await tester.pump();
+    expect(find.byKey(videoKey), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 2499));
+    expect(find.byKey(coverKey), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(find.byKey(coverKey), findsNothing);
+    expect(controller.playCalls, 1);
+  });
+
+  testWidgets('full foreground and brand stay within tall-screen camera insets',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 932);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(MediaQuery(
+      data: const MediaQueryData(
+        size: Size(390, 932),
+        padding: EdgeInsets.fromLTRB(12, 52, 16, 34),
+      ),
+      child: _splash(_FakeVideoController()),
+    ));
+    await tester.pump();
+    final video = tester.getRect(find.byType(VideoPlayer));
+    final brand = tester.getRect(find.text('delivery-mat3mk'));
+    for (final rect in [video, brand]) {
+      expect(rect.left, greaterThanOrEqualTo(12));
+      expect(rect.right, lessThanOrEqualTo(374));
+      expect(rect.top, greaterThanOrEqualTo(52));
+      expect(rect.bottom, lessThanOrEqualTo(898));
+    }
+    expect(video.width / video.height, closeTo(1472 / 624, 0.001));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('reduced motion presents the poster without playing or fading',
+      (tester) async {
+    final controller = _FakeVideoController();
+    await tester.pumpWidget(MediaQuery(
+      data: const MediaQueryData(disableAnimations: true),
+      child: _splash(controller),
+    ));
+    await _loadPoster(tester);
+    await tester.pump();
+    expect(controller.playCalls, 0);
+    expect(find.byKey(videoKey), findsNothing);
+    expect(tester.widget<AnimatedOpacity>(find.byKey(coverKey)).duration,
+        Duration.zero);
+    await tester.pump(const Duration(milliseconds: 2499));
+    expect(tester.widget<AnimatedOpacity>(find.byKey(coverKey)).opacity, 1);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(find.byKey(coverKey), findsNothing);
   });
 
   testWidgets('resume never replays a completed or retired startup video',
@@ -354,6 +448,13 @@ Widget _page(String label) => MaterialApp(
       home: Scaffold(body: Center(child: Text(label))),
     );
 
+Future<void> _loadPoster(WidgetTester tester) => tester.runAsync(() async {
+      await precacheImage(
+        const AssetImage(SplashVideoScreen.posterPath),
+        tester.element(find.byType(SplashBrand)),
+      );
+    });
+
 Widget _splash(
   _FakeVideoController controller, {
   Future<String>? initialization,
@@ -390,8 +491,8 @@ class _FakeVideoController extends VideoPlayerController {
     if (failInitialize) throw StateError('decoder unavailable');
     if (disposeCalls > 0) return;
     value = const VideoPlayerValue(
-      duration: Duration(seconds: 8),
-      size: Size(720, 1280),
+      duration: Duration(milliseconds: 2500),
+      size: Size(1472, 624),
       isInitialized: true,
     );
   }

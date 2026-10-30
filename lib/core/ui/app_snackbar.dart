@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import 'input_focus_guard.dart';
+import 'app_motion.dart';
 
 class AppSnackBar {
   AppSnackBar._();
@@ -50,6 +51,7 @@ class AppSnackBar {
           duration: duration ?? const Duration(seconds: 4),
           action: wrappedAction,
         ),
+        snackBarAnimationStyle: AppMotion.overlayStyle(context),
       );
     }
 

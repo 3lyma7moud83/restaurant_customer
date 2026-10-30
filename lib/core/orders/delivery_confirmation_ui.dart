@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../ui/app_motion.dart';
+
 import '../../services/orders_service.dart';
 import '../stability/stability_logger.dart';
 import '../theme/app_theme.dart';
@@ -29,6 +31,7 @@ Future<void> showDeliveryConfirmationDialog({
 
   return showModalBottomSheet<void>(
     context: context,
+    sheetAnimationStyle: AppMotion.overlayStyle(context),
     isDismissible: false,
     enableDrag: false,
     isScrollControlled: true,
@@ -55,31 +58,32 @@ class DeliveryConfirmationBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = AppTheme.colorsOf(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF7C3AED).withValues(alpha: 0.10),
+        color: colors.infoContainer,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: const Color(0xFF7C3AED).withValues(alpha: 0.22),
+          color: colors.info.withValues(alpha: 0.22),
         ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
               Icon(
                 Icons.fact_check_rounded,
-                color: Color(0xFF7C3AED),
+                color: colors.info,
               ),
-              SizedBox(width: 10),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   'يرجى تأكيد استلام الطلب لإكمال العملية.',
                   textAlign: TextAlign.right,
                   style: TextStyle(
-                    color: Color(0xFF3B1B7A),
+                    color: colors.info,
                     fontWeight: FontWeight.w900,
                     fontSize: 15,
                   ),
@@ -96,10 +100,10 @@ class DeliveryConfirmationBanner extends StatelessWidget {
               label: const Text('✅ تأكيد الاستلام'),
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 16),
-                textStyle: const TextStyle(
-                  fontWeight: FontWeight.w900,
-                  fontSize: 15,
-                ),
+                textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 15,
+                    ),
               ),
             ),
           ),
@@ -166,6 +170,7 @@ class _DeliveryConfirmationSheetState
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.viewInsetsOf(context).bottom;
+    final colors = AppTheme.colorsOf(context);
 
     return SafeArea(
       top: false,
@@ -211,23 +216,23 @@ class _DeliveryConfirmationSheetState
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: AppTheme.success.withValues(alpha: 0.10),
+                  color: colors.successContainer,
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: const Row(
+                child: Row(
                   children: [
-                    SizedBox(
+                    const SizedBox(
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2.2),
                     ),
-                    SizedBox(width: 10),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: Text(
                         'تم إرسال التأكيد. بانتظار تحديث السيرفر الرسمي.',
                         textAlign: TextAlign.right,
                         style: TextStyle(
-                          color: Color(0xFF1F8A5B),
+                          color: colors.success,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
@@ -242,12 +247,12 @@ class _DeliveryConfirmationSheetState
                   ? null
                   : () => unawaited(_confirmDeliveryReceived()),
               icon: _submitting
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(
                         strokeWidth: 2.2,
-                        color: Colors.white,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     )
                   : const Icon(Icons.check_circle_outline_rounded),
@@ -267,15 +272,16 @@ class _DeliveryConfirmationSheetState
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFFF7ED),
+                  color: colors.warningContainer,
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFFFED7AA)),
+                  border:
+                      Border.all(color: colors.warning.withValues(alpha: 0.3)),
                 ),
-                child: const Text(
+                child: Text(
                   'سيبقى الطلب على حالته الحالية حتى تؤكد الاستلام. يمكنك التواصل مع السائق مباشرة الآن.',
                   textAlign: TextAlign.right,
                   style: TextStyle(
-                    color: Color(0xFF9A3412),
+                    color: colors.warning,
                     fontWeight: FontWeight.w800,
                     height: 1.45,
                   ),
@@ -298,10 +304,6 @@ class _DeliveryConfirmationSheetState
                       },
                 icon: const Icon(Icons.phone_outlined),
                 label: const Text('📞 الاتصال بالسائق'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFEA580C),
-                  foregroundColor: Colors.white,
-                ),
               ),
             ],
           ],

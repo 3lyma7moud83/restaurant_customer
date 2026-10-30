@@ -54,7 +54,9 @@ class DeleteAccountPage extends StatelessWidget {
       appBar: AppBar(title: const Text('حذف الحساب')),
       body: Center(
         child: ElevatedButton(
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+          style: ElevatedButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError),
           onPressed: () => _delete(context),
           child: const Text('حذف نهائي'),
         ),

@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import '../core/ui/app_motion.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -656,7 +658,8 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
         centerTitle: true,
       ),
       body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 220),
+        duration:
+            AppMotion.duration(context, const Duration(milliseconds: 220)),
         child: _loading
             ? const Center(
                 key: ValueKey('loading'),
@@ -850,14 +853,15 @@ class _AddressCard extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(Icons.location_on_outlined, color: Color(0xFF667085)),
+              Icon(Icons.location_on_outlined,
+                  color: AppTheme.colorsOf(context).textSecondary),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   OrdersService.addressOf(order),
-                  style: const TextStyle(
+                  style: TextStyle(
                     height: 1.5,
-                    color: Color(0xFF344054),
+                    color: AppTheme.colorsOf(context).textPrimary,
                   ),
                 ),
               ),
@@ -892,9 +896,8 @@ class _ItemsCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final subtotal =
         totalPrice - deliveryCost > 0 ? totalPrice - deliveryCost : totalPrice;
-    final itemsAnimationDuration = kIsWeb
-        ? const Duration(milliseconds: 140)
-        : AppTheme.sectionTransitionDuration;
+    final itemsAnimationDuration =
+        AppMotion.duration(context, AppMotion.contentDuration);
 
     return OrderSectionCard(
       child: Column(
@@ -913,12 +916,13 @@ class _ItemsCard extends StatelessWidget {
             switchInCurve: AppTheme.emphasizedCurve,
             switchOutCurve: Curves.easeInCubic,
             child: items.isEmpty
-                ? const Align(
+                ? Align(
                     key: ValueKey('details-items-empty'),
                     alignment: Alignment.centerRight,
                     child: Text(
                       'لا توجد عناصر مرتبطة بهذا الطلب.',
-                      style: TextStyle(color: Color(0xFF667085)),
+                      style: TextStyle(
+                          color: AppTheme.colorsOf(context).textSecondary),
                     ),
                   )
                 : Column(
@@ -943,7 +947,9 @@ class _ItemsCard extends StatelessWidget {
                             ),
                             Text(
                               formatPrice(lineTotal),
-                              style: const TextStyle(color: Color(0xFF475467)),
+                              style: TextStyle(
+                                  color:
+                                      AppTheme.colorsOf(context).textSecondary),
                             ),
                           ],
                         ),
@@ -956,8 +962,8 @@ class _ItemsCard extends StatelessWidget {
             children: [
               Text(
                 formatPrice(subtotal),
-                style: const TextStyle(
-                  color: Color(0xFF475467),
+                style: TextStyle(
+                  color: AppTheme.colorsOf(context).textSecondary,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -973,8 +979,8 @@ class _ItemsCard extends StatelessWidget {
             children: [
               Text(
                 formatPrice(deliveryCost),
-                style: const TextStyle(
-                  color: Color(0xFF475467),
+                style: TextStyle(
+                  color: AppTheme.colorsOf(context).textSecondary,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -995,8 +1001,8 @@ class _ItemsCard extends StatelessWidget {
               const Spacer(),
               Text(
                 formatPrice(totalPrice),
-                style: const TextStyle(
-                  color: Color(0xFF2E7D32),
+                style: TextStyle(
+                  color: AppTheme.colorsOf(context).success,
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -1031,8 +1037,8 @@ class _MetaRow extends StatelessWidget {
             '$label: ',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFF667085),
+            style: TextStyle(
+              color: AppTheme.colorsOf(context).textSecondary,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -1072,10 +1078,10 @@ class _OrderDetailsErrorState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
+            Icon(
               Icons.error_outline_rounded,
               size: 46,
-              color: Color(0xFF98A2B3),
+              color: AppTheme.colorsOf(context).textSecondary,
             ),
             const SizedBox(height: 12),
             Text(

@@ -82,12 +82,12 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
               child: ElevatedButton(
                 onPressed: loading ? null : _change,
                 child: loading
-                    ? const SizedBox(
+                    ? SizedBox(
                         width: 20,
                         height: 20,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          color: Colors.white,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                       )
                     : const Text('تغيير'),

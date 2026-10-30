@@ -146,7 +146,7 @@
       z-index: 999999;
       overflow: hidden;
       pointer-events: auto;
-      background: var(--app-splash-bg);
+      background: linear-gradient(135deg, #343235 0%, #17191C 56%, #302016 100%);
       opacity: 1;
       transition: opacity var(--app-splash-fade-ms) ease;
     }
@@ -168,7 +168,9 @@
       height: 100%;
       object-fit: contain;
       object-position: center center;
-      background: var(--app-splash-bg);
+      box-sizing: border-box;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right)
+        env(safe-area-inset-bottom) env(safe-area-inset-left);
     }
 
     #app-splash-video {
@@ -181,8 +183,17 @@
       inset: 0;
       display: grid;
       place-items: center;
+      box-sizing: border-box;
       pointer-events: none;
       direction: ltr;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right)
+        env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+
+    #app-splash-brand span { transform: translateY(calc(34vh - 1.19em)); }
+
+    @media (orientation: portrait) {
+      #app-splash-brand span { transform: translateY(calc(21vh - 0.735em)); }
     }
 
     #app-splash-brand span {
@@ -229,8 +240,8 @@
     }
 
     @keyframes splash-brand-in {
-      from { opacity: 0; transform: translateY(6px); }
-      to { opacity: 1; transform: translateY(0); }
+      from { opacity: 0; }
+      to { opacity: 1; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -254,7 +265,6 @@
     <video
       id="app-splash-video"
       aria-hidden="true"
-      autoplay
       muted
       playsinline
       preload="auto"
@@ -295,11 +305,14 @@
     (function () {
       var overlay = document.getElementById('app-splash');
       var video = document.getElementById('app-splash-video');
+      var poster = document.getElementById('app-splash-poster');
       var retry = document.getElementById('app-splash-retry');
       if (!overlay || !video) return;
 
       var durationMs = 2500;
-      var fadeMs = 180;
+      var readinessMs = 1500;
+      var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      var fadeMs = reduceMotion ? 0 : 180;
       var startedAt = null;
       var deadlineAt = null;
       var appReady = false;
@@ -313,6 +326,9 @@
       var watchdogTimer = null;
       var frameRequest = null;
       var presentationRequest = null;
+      var readinessTimer = null;
+      var visualReady = false;
+      var posterReady = !!(poster && poster.complete && poster.naturalWidth > 0);
       var metrics = window.__appSplashMetrics = {
         targetDurationMs: durationMs,
         fadeMs: fadeMs,
@@ -358,12 +374,17 @@
         window.clearTimeout(deadlineTimer);
         window.clearTimeout(removeTimer);
         window.clearTimeout(watchdogTimer);
+        window.clearTimeout(readinessTimer);
         if (presentationRequest !== null) {
           window.cancelAnimationFrame(presentationRequest);
         }
         window.removeEventListener('delivery-mat3mk-web-splash-ready', onAppReady);
         window.removeEventListener('pageshow', onResume);
         document.removeEventListener('visibilitychange', onVisibilityChange);
+        if (poster) {
+          poster.removeEventListener('load', onPosterReady);
+          poster.removeEventListener('error', onPosterError);
+        }
         if (retry) retry.removeEventListener('click', reloadApp);
         metrics.hiddenAt = performance.now();
         metrics.removedAt = metrics.hiddenAt;
@@ -413,13 +434,15 @@
 
       function showVideoFrame() {
         frameRequest = null;
-        if (disposed || videoReleased || startedAt === null) return;
-        if (performance.now() >= deadlineAt) {
+        if (disposed || videoReleased) return;
+        if (deadlineAt !== null && performance.now() >= deadlineAt) {
           reachDeadline();
           return;
         }
         if (metrics.firstFrameAt === null) metrics.firstFrameAt = performance.now();
         overlay.classList.add('app-splash--video-ready');
+        visualReady = true;
+        schedulePresentation();
       }
 
       function fitPlaybackToDeadline() {
@@ -429,7 +452,7 @@
         if (remainingMs <= 0) {
           reachDeadline();
         } else if (remainingVideo > 0) {
-          // The packaged MP4 is already 2.5s. Compensate once for decode latency.
+          // Decode readiness precedes the visual clock. Preserve the timeline.
           video.playbackRate = Math.min(4, Math.max(1, remainingVideo * 1000 / remainingMs));
           metrics.playbackRate = video.playbackRate;
         }
@@ -447,24 +470,66 @@
 
       function onVideoError() {
         releaseVideo('media-error');
+        useFallbackWhenReady();
       }
 
       function startPresentation() {
         presentationRequest = null;
-        if (disposed || startedAt !== null || document.hidden) return;
+        if (disposed || startedAt !== null || document.hidden || !visualReady) return;
+        window.clearTimeout(readinessTimer);
         startedAt = performance.now();
         deadlineAt = startedAt + durationMs;
         metrics.startedAt = startedAt;
         metrics.deadlineAt = deadlineAt;
         fadeTimer = window.setTimeout(beginFade, durationMs - fadeMs);
         deadlineTimer = window.setTimeout(reachDeadline, durationMs);
+        fitPlaybackToDeadline();
+      }
+
+      function schedulePresentation() {
+        if (disposed || startedAt !== null || document.hidden || !visualReady) return;
+        if (presentationRequest === null) {
+          presentationRequest = window.requestAnimationFrame(startPresentation);
+        }
+      }
+
+      function useFallbackWhenReady() {
+        if (!videoReleased || !posterReady) return;
+        visualReady = true;
+        schedulePresentation();
+      }
+
+      function onPosterReady() {
+        posterReady = true;
+        useFallbackWhenReady();
+      }
+
+      function onPosterError() {
+        // The synchronous gradient and brand remain a safe fallback.
+        posterReady = true;
+        useFallbackWhenReady();
+      }
+
+      function preparePresentation() {
+        presentationRequest = null;
+        if (disposed || document.hidden || playbackAttempted) return;
+        playbackAttempted = true;
+        readinessTimer = window.setTimeout(function () {
+          if (disposed || startedAt !== null) return;
+          releaseVideo('media-readiness-timeout');
+          visualReady = true;
+          schedulePresentation();
+        }, readinessMs);
         watchdogTimer = window.setTimeout(function () {
           if (disposed || appReady) return;
           metrics.watchdogAt = performance.now();
           if (retry) retry.hidden = false;
         }, 15000);
-        if (videoReleased || playbackAttempted) return;
-        playbackAttempted = true;
+        if (reduceMotion) {
+          releaseVideo('reduced-motion');
+          useFallbackWhenReady();
+          return;
+        }
         video.muted = true;
         video.defaultMuted = true;
         video.playsInline = true;
@@ -474,19 +539,25 @@
           var promise = video.play();
           if (promise && typeof promise.catch === 'function') {
             promise.catch(function () {
-              if (!videoReleased) releaseVideo('autoplay-rejected');
+              if (!videoReleased) {
+                releaseVideo('autoplay-rejected');
+                useFallbackWhenReady();
+              }
             });
           }
         } catch (_) {
           releaseVideo('autoplay-rejected');
+          useFallbackWhenReady();
         }
       }
 
       function onResume() {
         if (disposed || document.hidden) return;
         if (startedAt === null) {
-          if (presentationRequest === null) {
-            presentationRequest = window.requestAnimationFrame(startPresentation);
+          if (!playbackAttempted && presentationRequest === null) {
+            presentationRequest = window.requestAnimationFrame(preparePresentation);
+          } else {
+            schedulePresentation();
           }
         } else if (performance.now() >= deadlineAt) {
           // Browser background throttling must never restart the video or timer.
@@ -495,8 +566,9 @@
       }
 
       function onVisibilityChange() {
-        if (document.hidden && startedAt !== null) {
+        if (document.hidden && playbackAttempted) {
           releaseVideo('backgrounded');
+          useFallbackWhenReady();
         } else {
           onResume();
         }
@@ -512,9 +584,13 @@
       video.addEventListener('loadedmetadata', fitPlaybackToDeadline);
       video.addEventListener('playing', onPlaying);
       video.addEventListener('error', onVideoError);
+      if (poster) {
+        poster.addEventListener('load', onPosterReady);
+        poster.addEventListener('error', onPosterError);
+      }
       if (retry) retry.addEventListener('click', reloadApp);
       // Keep this controller inline: the startup clock must not await a JS fetch.
-      presentationRequest = window.requestAnimationFrame(startPresentation);
+      presentationRequest = window.requestAnimationFrame(preparePresentation);
     })();
   </script>
 

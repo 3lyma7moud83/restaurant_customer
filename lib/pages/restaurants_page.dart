@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../core/ui/app_motion.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/localization/app_localizations.dart';
@@ -403,6 +404,7 @@ class _RestaurantsPageState extends State<RestaurantsPage>
     Navigator.push(
       context,
       AppTheme.platformPageRoute(
+        motion: AppRouteMotion.detail,
         builder: (_) => RestaurantMenuPage(
           managerId: managerId,
           restaurantId: restaurantId,
@@ -651,7 +653,7 @@ class _RestaurantsSearchField extends StatelessWidget {
           borderRadius: BorderRadius.circular(borderRadius),
           boxShadow: [
             BoxShadow(
-              color: const Color(0x14000000),
+              color: AppTheme.colorsOf(context).shadow,
               blurRadius: compact ? 14 : 20,
               offset: Offset(0, compact ? 8 : 12),
             ),
@@ -711,10 +713,10 @@ class _RestaurantsEmptyState extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
+          Icon(
             Icons.storefront_outlined,
             size: 58,
-            color: Color(0xFF98A2B3),
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
           const SizedBox(height: 12),
           Text(
@@ -755,10 +757,10 @@ class _RestaurantsErrorState extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
+          Icon(
             Icons.cloud_off_rounded,
             size: 62,
-            color: Color(0xFF98A2B3),
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
           const SizedBox(height: 12),
           Text(
