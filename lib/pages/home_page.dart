@@ -634,6 +634,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             showRestaurantInfoSheet(
                               context,
                               restaurant: restaurant,
+                              customerLatitude: userLat,
+                              customerLongitude: userLng,
                             );
                           },
                           onRestaurantTap: (context, restaurant) => unawaited(
@@ -1722,8 +1724,6 @@ class _MainDrawerState extends State<HomeMainDrawer> {
 
   Future<void> _openComplaintSheet() async {
     final sentMessage = context.tr('drawer.complaint_sent');
-    final cart = CartProvider.maybeOf(context);
-    final preferredRestaurantId = cart?.restaurantId?.trim();
 
     await InputFocusGuard.prepareForUiTransition(context: context);
     if (!mounted) {
@@ -1736,11 +1736,7 @@ class _MainDrawerState extends State<HomeMainDrawer> {
       return;
     }
 
-    final submitted = await showComplaintComposerSheet(
-      context,
-      restaurantId:
-          preferredRestaurantId?.isEmpty == true ? null : preferredRestaurantId,
-    );
+    final submitted = await showComplaintComposerSheet(context);
     if (!mounted || submitted != true) {
       return;
     }

@@ -504,6 +504,8 @@ class _RestaurantsPageState extends State<RestaurantsPage>
                               showRestaurantInfoSheet(
                                 context,
                                 restaurant: restaurant,
+                                customerLatitude: _userLat,
+                                customerLongitude: _userLng,
                               );
                             },
                             onRestaurantTap: (context, restaurant) => unawaited(

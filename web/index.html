@@ -355,7 +355,7 @@
           video.cancelVideoFrameCallback(frameRequest);
           frameRequest = null;
         }
-        video.removeEventListener('loadedmetadata', fitPlaybackToDeadline);
+        video.removeEventListener('loadedmetadata', configurePlaybackRate);
         video.removeEventListener('playing', onPlaying);
         video.removeEventListener('error', onVideoError);
         video.pause();
@@ -445,22 +445,19 @@
         schedulePresentation();
       }
 
-      function fitPlaybackToDeadline() {
-        if (videoReleased || deadlineAt === null || !isFinite(video.duration)) return;
-        var remainingMs = deadlineAt - performance.now();
-        var remainingVideo = video.duration - video.currentTime;
-        if (remainingMs <= 0) {
-          reachDeadline();
-        } else if (remainingVideo > 0) {
-          // Decode readiness precedes the visual clock. Preserve the timeline.
-          video.playbackRate = Math.min(4, Math.max(1, remainingVideo * 1000 / remainingMs));
-          metrics.playbackRate = video.playbackRate;
-        }
+      function configurePlaybackRate() {
+        if (videoReleased || !isFinite(video.duration) || video.duration <= 0) return;
+        // Use the asset's timeline, not the wall time remaining after buffering.
+        // A resumed `playing` event must not speed up decoding to catch up.
+        // The independent deadline still stops the splash after 2.5 seconds.
+        var rate = Math.min(4, Math.max(1, video.duration * 1000 / durationMs));
+        if (video.playbackRate !== rate) video.playbackRate = rate;
+        metrics.playbackRate = rate;
       }
 
       function onPlaying() {
         if (videoReleased) return;
-        fitPlaybackToDeadline();
+        configurePlaybackRate();
         if (video.requestVideoFrameCallback) {
           if (frameRequest === null) frameRequest = video.requestVideoFrameCallback(showVideoFrame);
         } else {
@@ -483,7 +480,7 @@
         metrics.deadlineAt = deadlineAt;
         fadeTimer = window.setTimeout(beginFade, durationMs - fadeMs);
         deadlineTimer = window.setTimeout(reachDeadline, durationMs);
-        fitPlaybackToDeadline();
+        configurePlaybackRate();
       }
 
       function schedulePresentation() {
@@ -534,7 +531,7 @@
         video.defaultMuted = true;
         video.playsInline = true;
         video.loop = false;
-        fitPlaybackToDeadline();
+        configurePlaybackRate();
         try {
           var promise = video.play();
           if (promise && typeof promise.catch === 'function') {
@@ -581,7 +578,7 @@
       window.addEventListener('delivery-mat3mk-web-splash-ready', onAppReady);
       window.addEventListener('pageshow', onResume);
       document.addEventListener('visibilitychange', onVisibilityChange);
-      video.addEventListener('loadedmetadata', fitPlaybackToDeadline);
+      video.addEventListener('loadedmetadata', configurePlaybackRate);
       video.addEventListener('playing', onPlaying);
       video.addEventListener('error', onVideoError);
       if (poster) {

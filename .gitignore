@@ -65,6 +65,7 @@ _tmp_*
 dumpsys_*.txt
 playwright-report/
 test-results/
+supabase/tests/node_modules/
 
 # Local recovery metadata created when repairing an interrupted Git transfer.
 .git.corrupt-backup-*/

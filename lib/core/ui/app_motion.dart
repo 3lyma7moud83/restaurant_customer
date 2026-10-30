@@ -68,8 +68,13 @@ class AppPageRoute<T> extends CupertinoPageRoute<T> {
       });
 
   @override
-  Duration get reverseTransitionDuration =>
-      _duration(AppMotion.contentDuration);
+  Duration get reverseTransitionDuration => transitionDuration;
+
+  // MaterialApp creates its initial route as MaterialPageRoute. Supplying the
+  // same visual delegate keeps that route in sync with subsequent app routes.
+  @override
+  DelegatedTransitionBuilder get delegatedTransition =>
+      AppPageTransitionsBuilder.outgoingTransition;
 
   @override
   Widget buildTransitions(
@@ -94,7 +99,38 @@ class AppPageTransitionsBuilder extends PageTransitionsBuilder {
   Duration get transitionDuration => AppMotion.pageDuration;
 
   @override
-  Duration get reverseTransitionDuration => AppMotion.contentDuration;
+  Duration get reverseTransitionDuration => AppMotion.pageDuration;
+
+  @override
+  DelegatedTransitionBuilder get delegatedTransition => outgoingTransition;
+
+  static Widget outgoingTransition(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    bool allowSnapshotting,
+    Widget? child,
+  ) {
+    if (AppMotion.reduceMotion(context)) {
+      return child ?? const SizedBox.shrink();
+    }
+    return _outgoing(context, secondaryAnimation, child);
+  }
+
+  static Widget _outgoing(
+      BuildContext context, Animation<double> animation, Widget? child) {
+    final progress = animation.drive(CurveTween(curve: Curves.easeInOutCubic));
+    return SlideTransition(
+      position: progress.drive(
+          Tween<Offset>(begin: Offset.zero, end: const Offset(-.025, 0))),
+      textDirection: Directionality.of(context),
+      transformHitTests: false,
+      child: FadeTransition(
+        opacity: progress.drive(Tween<double>(begin: 1, end: .92)),
+        child: child,
+      ),
+    );
+  }
 
   @override
   Widget buildTransitions<T>(
@@ -104,34 +140,31 @@ class AppPageTransitionsBuilder extends PageTransitionsBuilder {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
-    if (AppMotion.reduceMotion(context) || route.isFirst) return child;
-    final motion =
-        route is AppPageRoute<T> ? route.motion : AppRouteMotion.standard;
-    final progress = animation.drive(CurveTween(curve: AppMotion.curve));
-    final content = motion == AppRouteMotion.detail
-        ? ScaleTransition(
-            scale: progress.drive(Tween<double>(begin: 0.985, end: 1)),
-            child: child,
-          )
-        : child;
-    // Flutter owns/disposes the gesture controller and mirrors the slide in RTL.
-    // Keeping its gesture wrapper also preserves cancellation and PopScope.
+    if (AppMotion.reduceMotion(context)) return child;
+    // The initial MaterialApp route already has a completed animation. Do not
+    // bypass isFirst: replacement/stack-reset routes can become first while
+    // their entrance animation is still running.
+    final progress = animation.drive(CurveTween(curve: Curves.easeInOutCubic));
+    final content = _outgoing(
+      context,
+      secondaryAnimation,
+      SlideTransition(
+        position: progress.drive(
+            Tween<Offset>(begin: const Offset(.08, 0), end: Offset.zero)),
+        textDirection: Directionality.of(context),
+        child: FadeTransition(opacity: progress, child: child),
+      ),
+    );
+    if (route.isFirst) return content;
+    // Retain Flutter's back-gesture detector and controller, but neutralize its
+    // full-width Cupertino slide. The bounded fade/slide above owns the visuals.
+    // It follows the same route animation during a drag, cancellation and pop.
     return CupertinoRouteTransitionMixin.buildPageTransitions<T>(
       route,
       context,
-      animation,
-      secondaryAnimation,
-      FadeTransition(
-        opacity: animation.drive(
-          Tween<double>(
-                  begin: motion == AppRouteMotion.checkout ? 0.86 : 0.94,
-                  end: 1)
-              .chain(
-            CurveTween(curve: AppMotion.curve),
-          ),
-        ),
-        child: content,
-      ),
+      kAlwaysCompleteAnimation,
+      kAlwaysDismissedAnimation,
+      content,
     );
   }
 }

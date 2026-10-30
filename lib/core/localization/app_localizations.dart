@@ -111,6 +111,7 @@ class AppLocalizations {
       'restaurant.closing_time': 'موعد الغلق',
       'restaurant.address': 'العنوان',
       'restaurant.address_unavailable': 'العنوان غير متوفر',
+      'restaurant.details_unavailable': 'بيانات المطعم غير متاحة حاليًا',
       'complaint.heading': 'إرسال شكوى',
       'complaint.heading_with_restaurant': 'شكوى تخص {name}',
       'complaint.subtitle':
@@ -314,6 +315,8 @@ class AppLocalizations {
       'restaurant.closing_time': 'Closing time',
       'restaurant.address': 'Address',
       'restaurant.address_unavailable': 'Address unavailable',
+      'restaurant.details_unavailable':
+          'Restaurant details are currently unavailable',
       'complaint.heading': 'Submit complaint',
       'complaint.heading_with_restaurant': 'Complaint for {name}',
       'complaint.subtitle':

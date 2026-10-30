@@ -410,14 +410,17 @@ class RestaurantsService {
     return fee;
   }
 
-  static String restaurantAddressOf(Map<String, dynamic> restaurant) {
+  static String restaurantAddressOf(
+    Map<String, dynamic> restaurant, {
+    String fallback = 'العنوان غير متوفر',
+  }) {
     return _stringValue(restaurant['address']) ??
         _stringValue(restaurant['full_address']) ??
         _stringValue(restaurant['location_address']) ??
         _stringValue(restaurant['street_address']) ??
         _stringValue(restaurant['delivery_address']) ??
         _composeAddressFromParts(restaurant) ??
-        'العنوان غير متوفر';
+        fallback;
   }
 
   static double? restaurantLatOf(Map<String, dynamic> restaurant) {
@@ -603,24 +606,30 @@ class RestaurantsService {
     return earthRadius * c;
   }
 
-  static String openingTimeOf(Map<String, dynamic> restaurant) {
+  static String openingTimeOf(
+    Map<String, dynamic> restaurant, {
+    String fallback = 'غير محدد',
+  }) {
     return _formatTimeValue(
-          restaurant['opening_time'] ??
-              restaurant['open_time'] ??
-              restaurant['opens_at'] ??
-              restaurant['start_time'],
+          _stringValue(restaurant['open_time']) ??
+              _stringValue(restaurant['opening_time']) ??
+              _stringValue(restaurant['opens_at']) ??
+              _stringValue(restaurant['start_time']),
         ) ??
-        'غير محدد';
+        fallback;
   }
 
-  static String closingTimeOf(Map<String, dynamic> restaurant) {
+  static String closingTimeOf(
+    Map<String, dynamic> restaurant, {
+    String fallback = 'غير محدد',
+  }) {
     return _formatTimeValue(
-          restaurant['closing_time'] ??
-              restaurant['close_time'] ??
-              restaurant['closes_at'] ??
-              restaurant['end_time'],
+          _stringValue(restaurant['close_time']) ??
+              _stringValue(restaurant['closing_time']) ??
+              _stringValue(restaurant['closes_at']) ??
+              _stringValue(restaurant['end_time']),
         ) ??
-        'غير محدد';
+        fallback;
   }
 
   static Future<Map<String, dynamic>?> getManagerDetailsByRestaurantId(

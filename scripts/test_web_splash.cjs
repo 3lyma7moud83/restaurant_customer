@@ -156,6 +156,22 @@ test('short/ended video cannot shorten the visual deadline', () => {
   assert.equal(h.overlay.removed, true);
 });
 
+test('buffering resumes at the original speed without racing the deadline', () => {
+  const h = harness();
+  h.advance(32);
+  h.ready();
+  assert.equal(h.video.playbackRate, 1);
+  h.video.currentTime = 0.5;
+  h.advance(1800);
+  h.video.emit('playing');
+  h.video.presentFrame();
+  assert.equal(h.video.playbackRate, 1, 'buffering must not accelerate playback');
+  h.advance(2532);
+  assert.equal(h.overlay.removed, true);
+  assert.equal(h.video.playCalls, 1);
+  assert.equal(h.metrics.removedAt - h.metrics.startedAt, 2500);
+});
+
 for (const failure of ['autoplay-rejected', 'media-error']) {
   test(`${failure} preserves poster and removes at 2500ms when app is ready`, () => {
     const h = harness({rejectPlay: failure === 'autoplay-rejected'});

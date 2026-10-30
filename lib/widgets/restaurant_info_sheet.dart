@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/ui/app_motion.dart';
@@ -16,6 +18,8 @@ import 'restaurant_card_components.dart';
 Future<void> showRestaurantInfoSheet(
   BuildContext context, {
   required Map<String, dynamic> restaurant,
+  double? customerLatitude,
+  double? customerLongitude,
 }) async {
   await InputFocusGuard.prepareForUiTransition(context: context);
   if (!context.mounted) {
@@ -29,7 +33,11 @@ Future<void> showRestaurantInfoSheet(
     useSafeArea: true,
     showDragHandle: true,
     backgroundColor: Colors.transparent,
-    builder: (_) => _RestaurantQuickActionsSheet(restaurant: restaurant),
+    builder: (_) => _RestaurantQuickActionsSheet(
+      restaurant: restaurant,
+      customerLatitude: customerLatitude,
+      customerLongitude: customerLongitude,
+    ),
   );
 }
 
@@ -38,6 +46,7 @@ Future<bool?> showComplaintComposerSheet(
   String? restaurantId,
   String? restaurantName,
   String? orderId,
+  ComplaintsService? complaintsService,
 }) async {
   await InputFocusGuard.prepareForUiTransition(context: context);
   if (!context.mounted) {
@@ -54,6 +63,7 @@ Future<bool?> showComplaintComposerSheet(
       restaurantId: restaurantId,
       restaurantName: restaurantName,
       orderId: orderId,
+      complaintsService: complaintsService,
     ),
   );
 }
@@ -61,9 +71,13 @@ Future<bool?> showComplaintComposerSheet(
 class _RestaurantQuickActionsSheet extends StatefulWidget {
   const _RestaurantQuickActionsSheet({
     required this.restaurant,
+    this.customerLatitude,
+    this.customerLongitude,
   });
 
   final Map<String, dynamic> restaurant;
+  final double? customerLatitude;
+  final double? customerLongitude;
 
   @override
   State<_RestaurantQuickActionsSheet> createState() =>
@@ -71,9 +85,58 @@ class _RestaurantQuickActionsSheet extends StatefulWidget {
 }
 
 class _RestaurantQuickActionsSheetState
-    extends State<_RestaurantQuickActionsSheet> {
-  late final Future<Map<String, dynamic>?> _restaurantDetailsFuture =
-      _loadRestaurantDetails();
+    extends State<_RestaurantQuickActionsSheet> with WidgetsBindingObserver {
+  late Map<String, dynamic> _restaurantDetails;
+  Future<void>? _refreshFuture;
+  int _loadGeneration = 0;
+  bool _detailsUnavailable = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _restaurantDetails = Map<String, dynamic>.from(widget.restaurant);
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_refreshRestaurantDetails());
+  }
+
+  @override
+  void didUpdateWidget(covariant _RestaurantQuickActionsSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.restaurant != widget.restaurant ||
+        oldWidget.customerLatitude != widget.customerLatitude ||
+        oldWidget.customerLongitude != widget.customerLongitude) {
+      _loadGeneration++;
+      _refreshFuture = null;
+      _restaurantDetails = Map<String, dynamic>.from(widget.restaurant);
+      _detailsUnavailable = false;
+      unawaited(_refreshRestaurantDetails());
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshRestaurantDetails());
+    }
+  }
+
+  @override
+  void dispose() {
+    _loadGeneration++;
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  Future<void> _refreshRestaurantDetails() {
+    final current = _refreshFuture;
+    if (current != null) return current;
+    final generation = _loadGeneration;
+    final future = _loadRestaurantDetails(generation).whenComplete(() {
+      if (generation == _loadGeneration) _refreshFuture = null;
+    });
+    _refreshFuture = future;
+    return future;
+  }
 
   Future<void> _openComplaintComposer() async {
     final isAuthenticated = await ensureUserAuthenticated(context);
@@ -81,22 +144,9 @@ class _RestaurantQuickActionsSheetState
       return;
     }
 
-    final restaurantDetails = await _restaurantDetailsFuture;
-    if (!mounted) {
-      return;
-    }
-    final fallbackRestaurantId = RestaurantsService.restaurantIdOf(
-      widget.restaurant,
-    );
-    final fallbackRestaurantName = RestaurantsService.restaurantNameOf(
-      widget.restaurant,
-    );
-    final restaurantId = restaurantDetails == null
-        ? fallbackRestaurantId
-        : RestaurantsService.restaurantIdOf(restaurantDetails);
-    final restaurantName = restaurantDetails == null
-        ? fallbackRestaurantName
-        : RestaurantsService.restaurantNameOf(restaurantDetails);
+    final restaurantId = RestaurantsService.restaurantIdOf(widget.restaurant);
+    final restaurantName =
+        RestaurantsService.restaurantNameOf(_restaurantDetails);
     final submitted = await showComplaintComposerSheet(
       context,
       restaurantId: restaurantId.isEmpty ? null : restaurantId,
@@ -110,24 +160,49 @@ class _RestaurantQuickActionsSheetState
     }
   }
 
-  Future<Map<String, dynamic>?> _loadRestaurantDetails() async {
+  Future<void> _loadRestaurantDetails(int generation) async {
     final restaurantId = RestaurantsService.restaurantIdOf(widget.restaurant);
-    if (restaurantId.isEmpty) {
-      return null;
+    final latitude = widget.customerLatitude;
+    final longitude = widget.customerLongitude;
+    if (restaurantId.isEmpty || latitude == null || longitude == null) {
+      return;
     }
 
     try {
-      final details = await RestaurantsService.getManagerDetailsByRestaurantId(
-        restaurantId,
-      );
-      return details;
+      // Customer access is authorized by the nearby RPC. Direct managers reads
+      // are restricted to staff by RLS, including for realtime subscriptions.
+      final restaurants = await RestaurantsService.getNearby(
+        latitude: latitude,
+        longitude: longitude,
+        forceRefresh: true,
+      ).timeout(const Duration(seconds: 12));
+      if (!mounted || generation != _loadGeneration) return;
+      Map<String, dynamic>? details;
+      for (final restaurant in restaurants) {
+        if (RestaurantsService.restaurantIdOf(restaurant) == restaurantId) {
+          details = restaurant;
+          break;
+        }
+      }
+      setState(() {
+        _detailsUnavailable = details == null;
+        // Do not retain old facts when the server no longer returns this venue.
+        _restaurantDetails = details ??
+            <String, dynamic>{
+              'restaurant_id': restaurantId,
+              'name': RestaurantsService.restaurantNameOf(widget.restaurant),
+              'image_url':
+                  RestaurantsService.restaurantImageOf(widget.restaurant),
+              'restaurant_type':
+                  RestaurantsService.cardTypeOf(widget.restaurant),
+            };
+      });
     } catch (error, stack) {
       await ErrorLogger.logError(
         module: 'restaurant_info_sheet.load_details',
         error: error,
         stack: stack,
       );
-      return null;
     }
   }
 
@@ -170,116 +245,95 @@ class _RestaurantQuickActionsSheetState
         color: Theme.of(context).colorScheme.surface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
       ),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            FutureBuilder<Map<String, dynamic>?>(
-              future: _restaurantDetailsFuture,
-              builder: (context, snapshot) {
-                final details = snapshot.data;
-                final name = _displayOrUnspecified(
-                  context,
-                  _firstNonEmptyString(details, const [
-                    'restaurant_name',
-                    'name',
-                  ]),
-                );
-                final imageUrl =
-                    _firstNonEmptyString(details, const ['image_url']);
-                final type = RestaurantsService.cardTypeOf(
-                        details ?? <String, dynamic>{})
-                    ?.trim();
-                final openingTime = _displayOrUnspecified(
-                  context,
-                  _firstNonEmptyString(details, const [
-                    'opening_time',
-                    'open_time',
-                  ]),
-                );
-                final closingTime = _displayOrUnspecified(
-                  context,
-                  _firstNonEmptyString(details, const [
-                    'closing_time',
-                    'close_time',
-                  ]),
-                );
-                final safeAddress = _displayOrUnspecified(
-                  context,
-                  _firstNonEmptyString(details, const ['address']),
-                );
+      child: RefreshIndicator(
+        onRefresh: _refreshRestaurantDetails,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Builder(
+                builder: (context) {
+                  final details = _restaurantDetails;
+                  final name = _displayOrUnspecified(
+                    context,
+                    _firstNonEmptyString(details, const [
+                      'restaurant_name',
+                      'name',
+                    ]),
+                  );
+                  final imageUrl =
+                      _firstNonEmptyString(details, const ['image_url']);
+                  final type = RestaurantsService.cardTypeOf(details)?.trim();
+                  final unavailable = _detailsUnavailable
+                      ? context.tr('restaurant.details_unavailable')
+                      : _notSpecified(context);
+                  final openingTime = RestaurantsService.openingTimeOf(
+                    details,
+                    fallback: unavailable,
+                  );
+                  final closingTime = RestaurantsService.closingTimeOf(
+                    details,
+                    fallback: unavailable,
+                  );
+                  final safeAddress = RestaurantsService.restaurantAddressOf(
+                    details,
+                    fallback: unavailable,
+                  );
 
-                return Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(24),
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        Theme.of(context).colorScheme.surfaceContainerHigh,
-                        Theme.of(context).colorScheme.surfaceContainerLow,
-                      ],
+                  return Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(24),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Theme.of(context).colorScheme.surfaceContainerHigh,
+                          Theme.of(context).colorScheme.surfaceContainerLow,
+                        ],
+                      ),
                     ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      SizedBox(
-                        height: 142,
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            if (imageUrl != null && imageUrl.isNotEmpty)
-                              AppCachedImage(
-                                imageUrl: imageUrl,
-                                borderRadius: const BorderRadius.vertical(
-                                  top: Radius.circular(24),
-                                ),
-                                errorWidget: const SizedBox.shrink(),
-                              ),
-                            if (imageUrl != null && imageUrl.isNotEmpty)
-                              DecoratedBox(
-                                decoration: BoxDecoration(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SizedBox(
+                          height: 142,
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              if (imageUrl != null && imageUrl.isNotEmpty)
+                                AppCachedImage(
+                                  imageUrl: imageUrl,
                                   borderRadius: const BorderRadius.vertical(
                                     top: Radius.circular(24),
                                   ),
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      Colors.black.withValues(alpha: 0.08),
-                                      Colors.black.withValues(alpha: 0.42),
-                                    ],
-                                  ),
+                                  errorWidget: const SizedBox.shrink(),
                                 ),
-                              ),
-                            Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  Text(
-                                    name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    textAlign: TextAlign.right,
-                                    style: TextStyle(
-                                      color: imageUrl != null &&
-                                              imageUrl.isNotEmpty
-                                          ? Colors.white
-                                          : Theme.of(context)
-                                              .colorScheme
-                                              .onSurface,
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.w900,
+                              if (imageUrl != null && imageUrl.isNotEmpty)
+                                DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    borderRadius: const BorderRadius.vertical(
+                                      top: Radius.circular(24),
+                                    ),
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        Colors.black.withValues(alpha: 0.08),
+                                        Colors.black.withValues(alpha: 0.42),
+                                      ],
                                     ),
                                   ),
-                                  if (type != null && type.isNotEmpty) ...[
-                                    const SizedBox(height: 4),
+                                ),
+                              Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
                                     Text(
-                                      type,
+                                      name,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       textAlign: TextAlign.right,
@@ -289,54 +343,73 @@ class _RestaurantQuickActionsSheetState
                                             ? Colors.white
                                             : Theme.of(context)
                                                 .colorScheme
-                                                .onSurfaceVariant,
-                                        fontWeight: FontWeight.w700,
+                                                .onSurface,
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.w900,
                                       ),
                                     ),
+                                    if (type != null && type.isNotEmpty) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        type,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        textAlign: TextAlign.right,
+                                        style: TextStyle(
+                                          color: imageUrl != null &&
+                                                  imageUrl.isNotEmpty
+                                              ? Colors.white
+                                              : Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurfaceVariant,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ],
                                   ],
-                                ],
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-                        child: Column(
-                          children: [
-                            _InfoFactRow(
-                              icon: Icons.access_time_rounded,
-                              title: context.tr('restaurant.opening_time'),
-                              value: openingTime,
-                            ),
-                            const SizedBox(height: 8),
-                            _InfoFactRow(
-                              icon: Icons.nightlight_round_rounded,
-                              title: context.tr('restaurant.closing_time'),
-                              value: closingTime,
-                            ),
-                            const SizedBox(height: 8),
-                            _InfoFactRow(
-                              icon: Icons.location_on_rounded,
-                              title: context.tr('restaurant.address'),
-                              value: safeAddress,
-                              maxLines: 2,
-                            ),
-                          ],
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+                          child: Column(
+                            children: [
+                              _InfoFactRow(
+                                icon: Icons.access_time_rounded,
+                                title: context.tr('restaurant.opening_time'),
+                                value: openingTime,
+                              ),
+                              const SizedBox(height: 8),
+                              _InfoFactRow(
+                                icon: Icons.nightlight_round_rounded,
+                                title: context.tr('restaurant.closing_time'),
+                                value: closingTime,
+                              ),
+                              const SizedBox(height: 8),
+                              _InfoFactRow(
+                                icon: Icons.location_on_rounded,
+                                title: context.tr('restaurant.address'),
+                                value: safeAddress,
+                                maxLines: 2,
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 18),
-            _SheetActionTile(
-              icon: Icons.report_gmailerrorred_rounded,
-              title: context.tr('drawer.complaint'),
-              onTap: _openComplaintComposer,
-            ),
-          ],
+                      ],
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 18),
+              _SheetActionTile(
+                icon: Icons.report_gmailerrorred_rounded,
+                title: context.tr('drawer.complaint'),
+                onTap: _openComplaintComposer,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -504,11 +577,13 @@ class _ComplaintComposerSheet extends StatefulWidget {
     this.restaurantId,
     this.restaurantName,
     this.orderId,
+    this.complaintsService,
   });
 
   final String? restaurantId;
   final String? restaurantName;
   final String? orderId;
+  final ComplaintsService? complaintsService;
 
   @override
   State<_ComplaintComposerSheet> createState() =>
@@ -542,20 +617,18 @@ class _ComplaintComposerSheetState extends State<_ComplaintComposerSheet> {
       return;
     }
 
-    final isAuthenticated = await ensureUserAuthenticated(context);
-    if (!mounted || !isAuthenticated) {
-      return;
-    }
-
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) {
-      _showSnack(context.tr('complaint.login_required'));
-      return;
-    }
-
     setState(() => _sending = true);
     try {
-      await ComplaintsService.submitComplaint(
+      final isAuthenticated = await ensureUserAuthenticated(context);
+      if (!mounted || !isAuthenticated) return;
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) {
+        _showSnack(context.tr('complaint.login_required'));
+        return;
+      }
+      final submit =
+          widget.complaintsService?.submit ?? ComplaintsService.submitComplaint;
+      await submit(
         userId: user.id,
         restaurantId: widget.restaurantId,
         orderId: widget.orderId,
@@ -572,11 +645,13 @@ class _ComplaintComposerSheetState extends State<_ComplaintComposerSheet> {
       }
       Navigator.pop(context, true);
     } catch (error, stack) {
-      await ErrorLogger.logError(
-        module: 'restaurant_info_sheet.complaint.submit',
-        error: error,
-        stack: stack,
-      );
+      if (error is! ComplaintSubmissionException) {
+        unawaited(ErrorLogger.logError(
+          module: 'restaurant_info_sheet.complaint.submit',
+          error: error,
+          stack: stack,
+        ));
+      }
       if (mounted) {
         final errorText = error.toString();
         final normalizedError = errorText.startsWith('Exception: ')
@@ -644,6 +719,7 @@ class _ComplaintComposerSheetState extends State<_ComplaintComposerSheet> {
               const SizedBox(height: 16),
               TextFormField(
                 controller: _titleController,
+                enabled: !_sending,
                 textAlign: isRtl ? TextAlign.right : TextAlign.left,
                 onTapOutside: (_) => InputFocusGuard.dismiss(),
                 textInputAction: TextInputAction.next,
@@ -667,6 +743,7 @@ class _ComplaintComposerSheetState extends State<_ComplaintComposerSheet> {
               const SizedBox(height: 10),
               TextFormField(
                 controller: _descriptionController,
+                enabled: !_sending,
                 textAlign: isRtl ? TextAlign.right : TextAlign.left,
                 onTapOutside: (_) => InputFocusGuard.dismiss(),
                 minLines: 4,
